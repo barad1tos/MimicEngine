@@ -1,4 +1,5 @@
 import { browser } from 'wxt/browser';
+import type { CoverageReport } from './coverage';
 import type { StrategyPlan } from './decisionTable';
 import type { PageMetrics } from './pageMetrics';
 
@@ -6,6 +7,7 @@ export type PlanDiagnostics = {
   siteKey: string;
   plan: StrategyPlan;
   metrics: PageMetrics;
+  coverage?: CoverageReport;
   updatedAt: string;
 };
 

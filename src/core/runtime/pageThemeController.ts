@@ -1,8 +1,11 @@
 import { composeStylesheet } from '../engine/composeStylesheet';
+import { buildColorMapping, extractSitePalette } from '../engine/colorMap';
+import { computeCoverage } from '../engine/coverage';
 import { decideStrategies, type StrategyPlan } from '../engine/decisionTable';
 import { writePlanDiagnostics } from '../engine/diagnostics';
 import { collectPageFacts } from '../engine/pageFacts';
 import { deriveMetrics } from '../engine/pageMetrics';
+import { guardContrast } from '../engine/contrastGuard';
 import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
 import { observeDomChanges, type DomChangeObserver } from '../live/observeDomChanges';
 import {
@@ -105,7 +108,26 @@ export function createPageThemeController(): PageThemeController {
       stopDomObserver();
     }
 
-    await writePlanDiagnostics({ siteKey, plan, metrics, updatedAt: new Date().toISOString() });
+    let coverage;
+    if (plan.strategies.includes('authoredRemap') || plan.strategies.includes('computedFallback')) {
+      const palette = extractSitePalette(facts);
+      const mapping = guardContrast(
+        buildColorMapping(palette, theme, {
+          preserveBrandColors: siteSettings.preserveBrandColors,
+        }),
+        palette,
+        theme,
+      ).mapping;
+      coverage = computeCoverage(palette, mapping);
+    }
+
+    await writePlanDiagnostics({
+      siteKey,
+      plan,
+      metrics,
+      ...(coverage && { coverage }),
+      updatedAt: new Date().toISOString(),
+    });
   };
 
   return {
