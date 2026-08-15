@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DECISION_TABLE, TABLE_VERSION, decideStrategies } from './decisionTable';
+import { DECISION_TABLE, TABLE_VERSION, decideStrategies, planStrategies } from './decisionTable';
 import type { PageMetrics } from './pageMetrics';
 
 const baseMetrics: PageMetrics = {
@@ -19,10 +19,11 @@ describe('decideStrategies', () => {
 
     const plan = decideStrategies(metrics, 'auto');
 
-    expect(plan.strategies).toEqual(['baseline', 'variableRemap', 'authoredRemap']);
+    expect(planStrategies(plan)).toEqual(['baseline', 'variableRemap', 'authoredRemap']);
     expect(plan.provenance).toEqual({
       kind: 'auto',
       rule: 'calm-variables-rich',
+      strategies: ['baseline', 'variableRemap', 'authoredRemap'],
       reasons: [
         { metric: 'colorCustomPropertyCount', value: 8, condition: { gte: 8 } },
         { metric: 'mutationRate', value: 5, condition: { lte: 5 } },
@@ -36,10 +37,11 @@ describe('decideStrategies', () => {
 
     const plan = decideStrategies(metrics, 'auto');
 
-    expect(plan.strategies).toEqual(['baseline', 'variableRemap']);
+    expect(planStrategies(plan)).toEqual(['baseline', 'variableRemap']);
     expect(plan.provenance).toEqual({
       kind: 'auto',
       rule: 'variables-capable',
+      strategies: ['baseline', 'variableRemap'],
       reasons: [{ metric: 'colorCustomPropertyCount', value: 8, condition: { gte: 8 } }],
       tableVersion: TABLE_VERSION,
     });
@@ -50,10 +52,11 @@ describe('decideStrategies', () => {
 
     const plan = decideStrategies(metrics, 'auto');
 
-    expect(plan.strategies).toEqual(['baseline', 'authoredRemap']);
+    expect(planStrategies(plan)).toEqual(['baseline', 'authoredRemap']);
     expect(plan.provenance).toEqual({
       kind: 'auto',
       rule: 'authored-rich',
+      strategies: ['baseline', 'authoredRemap'],
       reasons: [
         { metric: 'authoredColorCount', value: 12, condition: { gte: 12 } },
         { metric: 'mutationRate', value: 5, condition: { lte: 5 } },
@@ -67,10 +70,11 @@ describe('decideStrategies', () => {
 
     const plan = decideStrategies(metrics, 'auto');
 
-    expect(plan.strategies).toEqual(['baseline']);
+    expect(planStrategies(plan)).toEqual(['baseline']);
     expect(plan.provenance).toEqual({
       kind: 'auto',
       rule: 'default',
+      strategies: ['baseline'],
       reasons: [],
       tableVersion: TABLE_VERSION,
     });
@@ -81,10 +85,11 @@ describe('decideStrategies', () => {
 
     const plan = decideStrategies(metrics, 'auto');
 
-    expect(plan.strategies).toEqual(['baseline', 'computedFallback']);
+    expect(planStrategies(plan)).toEqual(['baseline', 'computedFallback']);
     expect(plan.provenance).toEqual({
       kind: 'auto',
       rule: 'opaque-styles',
+      strategies: ['baseline', 'computedFallback'],
       reasons: [{ metric: 'unreadableStylesheetRatio', value: 0.5, condition: { gte: 0.5 } }],
       tableVersion: TABLE_VERSION,
     });
@@ -93,10 +98,11 @@ describe('decideStrategies', () => {
   it('falls through to default when no other row matches', () => {
     const plan = decideStrategies(baseMetrics, 'auto');
 
-    expect(plan.strategies).toEqual(['baseline']);
+    expect(planStrategies(plan)).toEqual(['baseline']);
     expect(plan.provenance).toEqual({
       kind: 'auto',
       rule: 'default',
+      strategies: ['baseline'],
       reasons: [],
       tableVersion: TABLE_VERSION,
     });
@@ -106,16 +112,16 @@ describe('decideStrategies', () => {
     const atBoundary = decideStrategies({ ...baseMetrics, colorCustomPropertyCount: 8 }, 'auto');
     const belowBoundary = decideStrategies({ ...baseMetrics, colorCustomPropertyCount: 7 }, 'auto');
 
-    expect(atBoundary.strategies).toEqual(['baseline', 'variableRemap', 'authoredRemap']);
-    expect(belowBoundary.strategies).toEqual(['baseline']);
+    expect(planStrategies(atBoundary)).toEqual(['baseline', 'variableRemap', 'authoredRemap']);
+    expect(planStrategies(belowBoundary)).toEqual(['baseline']);
   });
 
   it('boundary: authoredColorCount 12 selects authored-rich, 11 falls through to default', () => {
     const atBoundary = decideStrategies({ ...baseMetrics, authoredColorCount: 12 }, 'auto');
     const belowBoundary = decideStrategies({ ...baseMetrics, authoredColorCount: 11 }, 'auto');
 
-    expect(atBoundary.strategies).toEqual(['baseline', 'authoredRemap']);
-    expect(belowBoundary.strategies).toEqual(['baseline']);
+    expect(planStrategies(atBoundary)).toEqual(['baseline', 'authoredRemap']);
+    expect(planStrategies(belowBoundary)).toEqual(['baseline']);
   });
 
   it('boundary: mutationRate 5 keeps calm-variables-rich, 6 drops to variables-capable', () => {
@@ -128,8 +134,8 @@ describe('decideStrategies', () => {
       'auto',
     );
 
-    expect(atBoundary.strategies).toEqual(['baseline', 'variableRemap', 'authoredRemap']);
-    expect(aboveBoundary.strategies).toEqual(['baseline', 'variableRemap']);
+    expect(planStrategies(atBoundary)).toEqual(['baseline', 'variableRemap', 'authoredRemap']);
+    expect(planStrategies(aboveBoundary)).toEqual(['baseline', 'variableRemap']);
   });
 
   it('boundary: unreadableStylesheetRatio 0.5 selects opaque-styles, 0.49 falls through to default', () => {
@@ -139,15 +145,14 @@ describe('decideStrategies', () => {
       'auto',
     );
 
-    expect(atBoundary.strategies).toEqual(['baseline', 'computedFallback']);
-    expect(belowBoundary.strategies).toEqual(['baseline']);
+    expect(planStrategies(atBoundary)).toEqual(['baseline', 'computedFallback']);
+    expect(planStrategies(belowBoundary)).toEqual(['baseline']);
   });
 
   it('manual override bypasses the table entirely', () => {
     const plan = decideStrategies(baseMetrics, 'variableRemap');
 
     expect(plan).toEqual({
-      strategies: ['variableRemap'],
       provenance: { kind: 'manual', strategy: 'variableRemap' },
     });
   });

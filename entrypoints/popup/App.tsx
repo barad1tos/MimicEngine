@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
-import type { PlanReason, StrategyPlan } from '@/src/core/engine/decisionTable';
+import {
+  planStrategies,
+  type PlanReason,
+  type StrategyPlan,
+} from '@/src/core/engine/decisionTable';
 import {
   planStorageKey,
   readPlanDiagnostics,
@@ -67,7 +71,7 @@ function PlanDiagnosticsPanel({ diagnostics }: Readonly<{ diagnostics: PlanDiagn
   return (
     <section className="panel diagnostics">
       <div className="chip-row">
-        {diagnostics.plan.strategies.map((id) => (
+        {planStrategies(diagnostics.plan).map((id) => (
           <span key={id} className="chip">
             {getStrategyLabel(id)}
           </span>

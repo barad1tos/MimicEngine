@@ -1,8 +1,8 @@
 import { passesContrast } from '../color/contrast';
 import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
-import { parseCssColor, toHex } from '../color/parseColor';
+import { parseCssColor, toHex, type HexColor } from '../color/parseColor';
 import type { PaletteTheme } from '../themes';
-import type { ColorMapping, SitePaletteEntry } from './colorMap';
+import { themeTokenHex, type ColorMapping, type SitePaletteEntry } from './colorMap';
 import { compareStrings } from './sort';
 
 export type GuardedMapping = { mapping: ColorMapping; adjustments: number };
@@ -33,10 +33,10 @@ function resolveBackgroundHex(
   palette: readonly SitePaletteEntry[],
   mapping: ColorMapping,
   theme: PaletteTheme,
-): string {
+): HexColor {
   const heaviest = heaviestBackgroundEntry(palette);
   const mapped = heaviest ? mapping.get(heaviest.hex) : undefined;
-  return mapped ?? theme.tokens.canvas;
+  return mapped ?? themeTokenHex(theme, 'canvas');
 }
 
 function clampLightness(value: number): number {
@@ -53,7 +53,11 @@ function stepAwayFromBackground(target: Oklch, backgroundL: number, step: number
 // MAX_LIGHTNESS_STEPS, re-checking WCAG contrast via a hex round-trip after
 // each step. The first passing hex wins; if none pass, the curated theme
 // `text` token is the deterministic fallback.
-function repairTextTarget(targetHex: string, backgroundHex: string, themeTextHex: string): string {
+function repairTextTarget(
+  targetHex: HexColor,
+  backgroundHex: HexColor,
+  themeTextHex: HexColor,
+): HexColor {
   if (passesContrast(targetHex, backgroundHex)) return targetHex;
 
   const targetColor = parseCssColor(targetHex);
@@ -87,6 +91,7 @@ export function guardContrast(
 
   let adjustments = 0;
   const repaired: ColorMapping = new Map();
+  const themeTextHex = themeTokenHex(theme, 'text');
 
   for (const [hex, target] of mapping) {
     if (paletteByHex.get(hex)?.bucket !== 'text') {
@@ -94,7 +99,7 @@ export function guardContrast(
       continue;
     }
 
-    const repairedHex = repairTextTarget(target, backgroundHex, theme.tokens.text);
+    const repairedHex = repairTextTarget(target, backgroundHex, themeTextHex);
     if (repairedHex !== target) adjustments += 1;
     repaired.set(hex, repairedHex);
   }
@@ -119,17 +124,18 @@ export function guardContrast(
 function repairBrandText(
   palette: readonly SitePaletteEntry[],
   mapping: ColorMapping,
-  backgroundHex: string,
+  backgroundHex: HexColor,
   theme: PaletteTheme,
   repaired: ColorMapping,
 ): number {
   let adjustments = 0;
+  const themeTextHex = themeTokenHex(theme, 'text');
 
   for (const entry of palette) {
     if (entry.bucket !== 'text') continue;
     if (mapping.has(entry.hex)) continue;
 
-    const repairedHex = repairTextTarget(entry.hex, backgroundHex, theme.tokens.text);
+    const repairedHex = repairTextTarget(entry.hex, backgroundHex, themeTextHex);
     if (repairedHex === entry.hex) continue;
 
     repaired.set(entry.hex, repairedHex);

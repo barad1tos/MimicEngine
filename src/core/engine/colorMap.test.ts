@@ -1,7 +1,7 @@
 // src/core/engine/colorMap.test.ts
 import { describe, expect, it } from 'vitest';
 import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
-import { parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
+import { parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
 import { buildColorMapping, extractSitePalette, type SitePaletteEntry } from './colorMap';
 import type { AuthoredColorDeclaration, PageFacts } from './pageFacts';
@@ -14,6 +14,13 @@ function requireColor(hex: string): RgbaColor {
   const color = parseCssColor(hex);
   if (!color) throw new Error(`bad test hex ${hex}`);
   return color;
+}
+
+// Converts a plain CSS color literal to the branded HexColor type ColorMapping
+// and SitePaletteEntry now require — the same toHex(parseCssColor(...)) path
+// production code uses, just wrapped for test-fixture literals.
+function hex(value: string): HexColor {
+  return toHex(requireColor(value));
 }
 
 function oklchOf(hex: string): Oklch {
@@ -45,7 +52,7 @@ function makeFacts(
 }
 
 function entry(hex: string, bucket: PaletteBucket, weight = 1): SitePaletteEntry {
-  return { hex, color: requireColor(hex), weight, bucket };
+  return { hex: toHex(requireColor(hex)), color: requireColor(hex), weight, bucket };
 }
 
 describe('extractSitePalette', () => {
@@ -160,11 +167,11 @@ describe('buildColorMapping — background ladder', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get('#101010')).toBe(catppuccinFrappe.tokens.canvas);
-    expect(mapping.get('#404040')).toBe(catppuccinFrappe.tokens.surface1);
-    expect(mapping.get('#808080')).toBe(catppuccinFrappe.tokens.surface2);
-    expect(mapping.get('#c0c0c0')).toBe(catppuccinFrappe.tokens.surface3);
-    expect(mapping.get('#f0f0f0')).toBe(catppuccinFrappe.tokens.surface3);
+    expect(mapping.get(hex('#101010'))).toBe(catppuccinFrappe.tokens.canvas);
+    expect(mapping.get(hex('#404040'))).toBe(catppuccinFrappe.tokens.surface1);
+    expect(mapping.get(hex('#808080'))).toBe(catppuccinFrappe.tokens.surface2);
+    expect(mapping.get(hex('#c0c0c0'))).toBe(catppuccinFrappe.tokens.surface3);
+    expect(mapping.get(hex('#f0f0f0'))).toBe(catppuccinFrappe.tokens.surface3);
   });
 
   it('walks the ladder descending by l in light mode', () => {
@@ -176,8 +183,8 @@ describe('buildColorMapping — background ladder', () => {
       { preserveBrandColors: false },
     );
 
-    expect(mapping.get('#f0f0f0')).toBe(lightTheme.tokens.canvas);
-    expect(mapping.get('#101010')).toBe(lightTheme.tokens.surface1);
+    expect(mapping.get(hex('#f0f0f0'))).toBe(lightTheme.tokens.canvas);
+    expect(mapping.get(hex('#101010'))).toBe(lightTheme.tokens.surface1);
   });
 
   it('breaks equal-l ties by ascending hex', () => {
@@ -186,14 +193,14 @@ describe('buildColorMapping — background ladder', () => {
     // input order — decides the ladder position.
     const sharedColor = requireColor('#505050');
     const palette: SitePaletteEntry[] = [
-      { hex: '#bbbbbb', color: sharedColor, weight: 1, bucket: 'background' },
-      { hex: '#aaaaaa', color: sharedColor, weight: 1, bucket: 'background' },
+      { hex: hex('#bbbbbb'), color: sharedColor, weight: 1, bucket: 'background' },
+      { hex: hex('#aaaaaa'), color: sharedColor, weight: 1, bucket: 'background' },
     ];
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: false });
 
-    expect(mapping.get('#aaaaaa')).toBe(catppuccinFrappe.tokens.canvas);
-    expect(mapping.get('#bbbbbb')).toBe(catppuccinFrappe.tokens.surface1);
+    expect(mapping.get(hex('#aaaaaa'))).toBe(catppuccinFrappe.tokens.canvas);
+    expect(mapping.get(hex('#bbbbbb'))).toBe(catppuccinFrappe.tokens.surface1);
   });
 });
 
@@ -205,8 +212,8 @@ describe('buildColorMapping — text bucket', () => {
       { preserveBrandColors: false },
     );
 
-    expect(mapping.get('#cccccc')).toBe(catppuccinFrappe.tokens.text);
-    expect(mapping.get('#eeeeee')).toBe(catppuccinFrappe.tokens.textMuted);
+    expect(mapping.get(hex('#cccccc'))).toBe(catppuccinFrappe.tokens.text);
+    expect(mapping.get(hex('#eeeeee'))).toBe(catppuccinFrappe.tokens.textMuted);
   });
 });
 
@@ -218,8 +225,8 @@ describe('buildColorMapping — border bucket', () => {
       { preserveBrandColors: false },
     );
 
-    expect(mapping.get('#333333')).toBe(catppuccinFrappe.tokens.border);
-    expect(mapping.get('#444444')).toBe(catppuccinFrappe.tokens.border);
+    expect(mapping.get(hex('#333333'))).toBe(catppuccinFrappe.tokens.border);
+    expect(mapping.get(hex('#444444'))).toBe(catppuccinFrappe.tokens.border);
   });
 });
 
@@ -234,7 +241,7 @@ describe('buildColorMapping — accents', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(successHex)).toBe(catppuccinFrappe.tokens.success);
+    expect(mapping.get(hex(successHex))).toBe(catppuccinFrappe.tokens.success);
   });
 
   it('breaks hue-distance ties using the fixed accent, link, success, warning, danger order', () => {
@@ -248,7 +255,7 @@ describe('buildColorMapping — accents', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(accentHex)).toBe(catppuccinFrappe.tokens.accent);
+    expect(mapping.get(hex(accentHex))).toBe(catppuccinFrappe.tokens.accent);
   });
 
   it('still maps accents in the 0.09 < c <= 0.14 band when preserveBrandColors is true', () => {
@@ -290,9 +297,9 @@ describe('buildColorMapping — high-chroma text-bucket entries (finding 7)', ()
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(successHex)).toBe(catppuccinFrappe.tokens.success);
-    expect(mapping.get(successHex)).not.toBe(catppuccinFrappe.tokens.text);
-    expect(mapping.get(successHex)).not.toBe(catppuccinFrappe.tokens.textMuted);
+    expect(mapping.get(hex(successHex))).toBe(catppuccinFrappe.tokens.success);
+    expect(mapping.get(hex(successHex))).not.toBe(catppuccinFrappe.tokens.text);
+    expect(mapping.get(hex(successHex))).not.toBe(catppuccinFrappe.tokens.textMuted);
   });
 
   it('excludes a high-chroma (>0.14) text-bucket entry from the map when preserveBrandColors is set — guardContrast, not colorMap, owns its legibility repair (finding 5)', () => {
@@ -302,7 +309,7 @@ describe('buildColorMapping — high-chroma text-bucket entries (finding 7)', ()
       preserveBrandColors: true,
     });
 
-    expect(mapping.has(brandTextHex)).toBe(false);
+    expect(mapping.has(hex(brandTextHex))).toBe(false);
   });
 });
 
@@ -327,7 +334,7 @@ describe('buildColorMapping — other bucket', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get('#909090')).toBe(catppuccinFrappe.tokens.surface1);
+    expect(mapping.get(hex('#909090'))).toBe(catppuccinFrappe.tokens.surface1);
   });
 });
 

@@ -20,13 +20,17 @@ const facts: PageFacts = {
 };
 
 const emptyPlan: StrategyPlan = {
-  strategies: [],
-  provenance: { kind: 'auto', rule: 'default', reasons: [], tableVersion: 1 },
+  provenance: { kind: 'auto', rule: 'default', strategies: [], reasons: [], tableVersion: 1 },
 };
 
 const fullPlan: StrategyPlan = {
-  strategies: ['baseline', 'variableRemap'],
-  provenance: { kind: 'auto', rule: 'variables-capable', reasons: [], tableVersion: 1 },
+  provenance: {
+    kind: 'auto',
+    rule: 'variables-capable',
+    strategies: ['baseline', 'variableRemap'],
+    reasons: [],
+    tableVersion: 1,
+  },
 };
 
 function siteSettingsWithOverrides(): SiteSettings {
@@ -52,8 +56,24 @@ describe('composeStylesheet', () => {
 
   it('produces the same bytes regardless of plan strategy order', () => {
     const siteSettings = createDefaultSiteSettings(theme.id);
-    const forwardOrder: StrategyPlan = { ...fullPlan, strategies: ['baseline', 'variableRemap'] };
-    const reverseOrder: StrategyPlan = { ...fullPlan, strategies: ['variableRemap', 'baseline'] };
+    const forwardOrder: StrategyPlan = {
+      provenance: {
+        kind: 'auto',
+        rule: 'variables-capable',
+        strategies: ['baseline', 'variableRemap'],
+        reasons: [],
+        tableVersion: 1,
+      },
+    };
+    const reverseOrder: StrategyPlan = {
+      provenance: {
+        kind: 'auto',
+        rule: 'variables-capable',
+        strategies: ['variableRemap', 'baseline'],
+        reasons: [],
+        tableVersion: 1,
+      },
+    };
 
     const forward = composeStylesheet(theme, siteSettings, facts, forwardOrder);
     const reverse = composeStylesheet(theme, siteSettings, facts, reverseOrder);

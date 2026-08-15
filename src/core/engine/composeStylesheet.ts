@@ -1,7 +1,7 @@
 import { buildOverrideRule } from '../injector/buildBaseStylesheet';
 import type { SiteSettings } from '../storage/settingsStore';
 import type { PaletteTheme } from '../themes';
-import type { StrategyPlan } from './decisionTable';
+import { planStrategies, type StrategyPlan } from './decisionTable';
 import type { PageFacts } from './pageFacts';
 import { strategyRegistry } from './registry';
 import { compareStrings } from './sort';
@@ -20,9 +20,10 @@ export function composeStylesheet(
   facts: PageFacts,
   plan: StrategyPlan,
 ): string {
+  const selectedStrategies = planStrategies(plan);
   const strategyBlocks = strategyRegistry
-    .filter((engine) => plan.strategies.includes(engine.id))
-    .map((engine) => engine.produceCss(theme, siteSettings, facts));
+    .filter((engine) => selectedStrategies.includes(engine.id))
+    .map((engine) => engine.produceCss(theme, siteSettings, facts, plan));
 
   const overrideBlocks = [...siteSettings.overrides]
     .sort(compareOverrides)

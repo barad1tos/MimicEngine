@@ -12,10 +12,10 @@ describe('PlanDiagnostics', () => {
     const diagnostics: PlanDiagnostics = {
       siteKey: 'example.com',
       plan: {
-        strategies: ['baseline', 'variableRemap'],
         provenance: {
           kind: 'auto',
           rule: 'variables-capable',
+          strategies: ['baseline', 'variableRemap'],
           reasons: [{ metric: 'colorCustomPropertyCount', value: 8, condition: { gte: 8 } }],
           tableVersion: 1,
         },
@@ -42,10 +42,10 @@ describe('PlanDiagnostics', () => {
     const diagnostics: PlanDiagnostics = {
       siteKey: 'example.com',
       plan: {
-        strategies: ['baseline', 'variableRemap'],
         provenance: {
           kind: 'auto',
           rule: 'variables-capable',
+          strategies: ['baseline', 'variableRemap'],
           reasons: [{ metric: 'colorCustomPropertyCount', value: 8, condition: { gte: 8 } }],
           tableVersion: 1,
         },

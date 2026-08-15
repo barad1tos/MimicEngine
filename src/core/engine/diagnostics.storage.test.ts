@@ -31,10 +31,10 @@ function buildDiagnostics(siteKey: string): PlanDiagnostics {
   return {
     siteKey,
     plan: {
-      strategies: ['baseline'],
       provenance: {
         kind: 'auto',
         rule: 'variables-capable',
+        strategies: ['baseline'],
         reasons: [],
         tableVersion: 1,
       },

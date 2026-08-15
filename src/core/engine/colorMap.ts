@@ -1,20 +1,38 @@
 import { hueDistance, rgbaToOklch, type Oklch } from '../color/oklch';
-import { isOpaque, parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
+import { isOpaque, parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import type { PaletteTheme, ThemeTokenName } from '../themes';
 import type { AuthoredColorDeclaration, PageFacts } from './pageFacts';
 import { compareStrings } from './sort';
 
 export type SitePaletteEntry = {
-  hex: string;
+  hex: HexColor;
   color: RgbaColor;
   weight: number;
+  // Dominant declaration context this entry was extracted from — decides
+  // which colorMap assignment path (background ladder, text, border, other)
+  // it flows into. Not "how it's used" in a CSS sense; a coarse win-by-count
+  // bucket over the possible origins (see dominantBucket).
   bucket: AuthoredColorDeclaration['bucket'];
 };
 
 // Site hex (lowercase #rrggbb) -> target CSS value. Values are theme token
 // HEX literals, never `var(--pm-token)`: the contrast guard needs literal
 // pairs to verify against, not indirections.
-export type ColorMapping = Map<string, string>;
+export type ColorMapping = Map<HexColor, HexColor>;
+
+// A theme token's own configured CSS value, converted to HexColor. Every
+// theme token value entering a ColorMapping goes through this (or a direct
+// toHex(parseCssColor(...)) call) — never a bare `theme.tokens[x]` string —
+// so the branded type actually guarantees what it claims. Throws on an
+// invalid theme token, same contract as themeTokenOklch below: theme tokens
+// are authored data, not user input, so a parse failure here is a theme bug.
+export function themeTokenHex(theme: PaletteTheme, token: ThemeTokenName): HexColor {
+  const color = parseCssColor(theme.tokens[token]);
+  if (!color) {
+    throw new Error(`invalid theme token color for ${token}: ${theme.tokens[token]}`);
+  }
+  return toHex(color);
+}
 
 type PaletteBucket = AuthoredColorDeclaration['bucket'];
 
@@ -49,7 +67,7 @@ function isCustomPropertyDeclaration(declaration: AuthoredColorDeclaration): boo
 
 function accumulatePaletteEntries(
   declarations: readonly AuthoredColorDeclaration[],
-  accumulators: Map<string, PaletteAccumulator>,
+  accumulators: Map<HexColor, PaletteAccumulator>,
 ): void {
   for (const declaration of declarations) {
     if (isCustomPropertyDeclaration(declaration)) continue;
@@ -83,7 +101,7 @@ function dominantBucket(bucketCounts: Record<PaletteBucket, number>): PaletteBuc
 // (`property` starting with `--`) belong to the variableRemap path, not the
 // literal palette.
 export function extractSitePalette(facts: PageFacts): SitePaletteEntry[] {
-  const accumulators = new Map<string, PaletteAccumulator>();
+  const accumulators = new Map<HexColor, PaletteAccumulator>();
   accumulatePaletteEntries(facts.authoredRules, accumulators);
   accumulatePaletteEntries(facts.inlineStyleColors, accumulators);
 
@@ -127,7 +145,7 @@ export function mapAccent(
   entry: SitePaletteEntry,
   theme: PaletteTheme,
   preserveBrandColors: boolean,
-): string | null {
+): HexColor | null {
   const entryOklch = rgbaToOklch(entry.color);
   if (preserveBrandColors && entryOklch.c > BRAND_PRESERVE_CHROMA_THRESHOLD) {
     return null;
@@ -143,7 +161,7 @@ export function mapAccent(
     { token: 'accent', distance: Number.POSITIVE_INFINITY },
   );
 
-  return theme.tokens[nearest.token];
+  return themeTokenHex(theme, nearest.token);
 }
 
 // Accents are pulled out of their buckets before the bucket steps run: an
@@ -152,8 +170,8 @@ function partitionAccents(
   palette: readonly SitePaletteEntry[],
   theme: PaletteTheme,
   preserveBrandColors: boolean,
-): { accents: Map<string, string>; rest: SitePaletteEntry[] } {
-  const accents = new Map<string, string>();
+): { accents: Map<HexColor, HexColor>; rest: SitePaletteEntry[] } {
+  const accents = new Map<HexColor, HexColor>();
   const rest: SitePaletteEntry[] = [];
 
   for (const entry of palette) {
@@ -178,7 +196,7 @@ function ladderTokenAt(index: number): ThemeTokenName {
 }
 
 type LadderResult = {
-  assignments: Map<string, string>;
+  assignments: Map<HexColor, HexColor>;
   // Distinct tokens actually used, in ladder order (canvas, surface1, ...).
   assignedTokens: readonly ThemeTokenName[];
 };
@@ -197,13 +215,13 @@ function assignLadder(entries: readonly SitePaletteEntry[], theme: PaletteTheme)
     return compareStrings(a.entry.hex, b.entry.hex);
   });
 
-  const assignments = new Map<string, string>();
+  const assignments = new Map<HexColor, HexColor>();
   const assignedTokens: ThemeTokenName[] = [];
   const seenTokens = new Set<ThemeTokenName>();
 
   withLightness.forEach(({ entry }, index) => {
     const token = ladderTokenAt(index);
-    assignments.set(entry.hex, theme.tokens[token]);
+    assignments.set(entry.hex, themeTokenHex(theme, token));
     if (!seenTokens.has(token)) {
       seenTokens.add(token);
       assignedTokens.push(token);
@@ -220,11 +238,13 @@ function assignLadder(entries: readonly SitePaletteEntry[], theme: PaletteTheme)
 function assignTextBucket(
   entries: readonly SitePaletteEntry[],
   theme: PaletteTheme,
-): Map<string, string> {
+): Map<HexColor, HexColor> {
   const sorted = [...entries].sort(comparePaletteEntries);
-  const assignments = new Map<string, string>();
+  const assignments = new Map<HexColor, HexColor>();
+  const textHex = themeTokenHex(theme, 'text');
+  const textMutedHex = themeTokenHex(theme, 'textMuted');
   sorted.forEach((entry, index) => {
-    assignments.set(entry.hex, index === 0 ? theme.tokens.text : theme.tokens.textMuted);
+    assignments.set(entry.hex, index === 0 ? textHex : textMutedHex);
   });
   return assignments;
 }
@@ -232,10 +252,11 @@ function assignTextBucket(
 function assignBorderBucket(
   entries: readonly SitePaletteEntry[],
   theme: PaletteTheme,
-): Map<string, string> {
-  const assignments = new Map<string, string>();
+): Map<HexColor, HexColor> {
+  const assignments = new Map<HexColor, HexColor>();
+  const borderHex = themeTokenHex(theme, 'border');
   for (const entry of entries) {
-    assignments.set(entry.hex, theme.tokens.border);
+    assignments.set(entry.hex, borderHex);
   }
   return assignments;
 }
@@ -260,13 +281,14 @@ function assignOtherBucket(
   entries: readonly SitePaletteEntry[],
   theme: PaletteTheme,
   ladder: LadderResult,
-): Map<string, string> {
-  const assignments = new Map<string, string>();
+): Map<HexColor, HexColor> {
+  const assignments = new Map<HexColor, HexColor>();
   if (entries.length === 0) return assignments;
 
   if (ladder.assignedTokens.length === 0) {
+    const surface1Hex = themeTokenHex(theme, 'surface1');
     for (const entry of entries) {
-      assignments.set(entry.hex, theme.tokens.surface1);
+      assignments.set(entry.hex, surface1Hex);
     }
     return assignments;
   }
@@ -279,7 +301,7 @@ function assignOtherBucket(
   for (const entry of entries) {
     const entryL = rgbaToOklch(entry.color).l;
     const nearest = nearestByLightness(tokenLightness, entryL);
-    assignments.set(entry.hex, theme.tokens[nearest]);
+    assignments.set(entry.hex, themeTokenHex(theme, nearest));
   }
 
   return assignments;
@@ -301,7 +323,7 @@ export function buildColorMapping(
 
   const ladder = assignLadder(backgroundEntries, theme);
 
-  const targetsByHex = new Map<string, string>([
+  const targetsByHex = new Map<HexColor, HexColor>([
     ...accents,
     ...ladder.assignments,
     ...assignTextBucket(textEntries, theme),
