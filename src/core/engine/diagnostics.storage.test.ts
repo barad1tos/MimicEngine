@@ -67,18 +67,45 @@ describe('writePlanDiagnostics', () => {
     );
   });
 
-  it('swallows a thrown storage error and warns instead of throwing', async () => {
+  // Covers the background service worker's cold-start race: the content
+  // script's first `apply()` can run before `storage.session.setAccessLevel`
+  // executes, so the very first write throws once and then succeeds.
+  it('retries once after a 1s delay and stores the value without warning when the retry succeeds', async () => {
+    vi.useFakeTimers();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const diagnostics = buildDiagnostics('example.com');
     fakeBrowser.storage.session.set.mockImplementationOnce(() => {
+      throw new Error('storage unavailable during worker cold start');
+    });
+
+    const writePromise = writePlanDiagnostics(diagnostics);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(writePromise).resolves.toBeUndefined();
+
+    expect(fakeBrowser.storage.session.data.get(planStorageKey('example.com'))).toEqual(
+      diagnostics,
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('swallows the error and warns once when both the write and the retry throw', async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fakeBrowser.storage.session.set.mockImplementation(() => {
       throw new Error('storage unavailable');
     });
 
-    await expect(writePlanDiagnostics(buildDiagnostics('example.com'))).resolves.toBeUndefined();
+    const writePromise = writePlanDiagnostics(buildDiagnostics('example.com'));
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(writePromise).resolves.toBeUndefined();
 
+    expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('[Palette Mimicry]'),
       expect.any(Error),
     );
+    vi.useRealTimers();
   });
 });
 
