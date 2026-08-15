@@ -77,7 +77,9 @@ export function App() {
 
   async function resetSite() {
     if (!siteKey) return;
-    const { [siteKey]: _removed, ...remainingSites } = settings.sites;
+    const remainingSites = Object.fromEntries(
+      Object.entries(settings.sites).filter(([key]) => key !== siteKey),
+    );
     await persist({ ...settings, sites: remainingSites });
   }
 

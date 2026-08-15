@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import { defineConfig } from 'eslint/config';
 import reactHooks from 'eslint-plugin-react-hooks';
+import { configs as sonarjsConfigs } from 'eslint-plugin-sonarjs';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
@@ -8,6 +9,7 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
+  sonarjsConfigs.recommended,
   {
     languageOptions: {
       parserOptions: {
@@ -30,6 +32,7 @@ export default defineConfig(
           ignoreRestSiblings: true,
         },
       ],
+      'no-nested-ternary': 'error',
     },
   },
   {
