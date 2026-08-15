@@ -15,14 +15,30 @@ export function planStorageKey(siteKey: string): string {
   return `${PLAN_STORAGE_PREFIX}${siteKey}`;
 }
 
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function setDiagnostics(diagnostics: PlanDiagnostics): Promise<void> {
+  const key = planStorageKey(diagnostics.siteKey);
+  await browser.storage.session.set<Record<string, PlanDiagnostics>>({ [key]: diagnostics });
+}
+
 // Diagnostics are a debugging aid, never load-bearing for theming — a failed
 // write here must never surface as a theming failure, hence the swallow-and-warn.
+// The first write can race the background service worker's cold-start call to
+// `storage.session.setAccessLevel(...)`; one bounded retry after a short delay
+// covers that startup window without turning this into an unbounded retry loop.
 export async function writePlanDiagnostics(diagnostics: PlanDiagnostics): Promise<void> {
   try {
-    const key = planStorageKey(diagnostics.siteKey);
-    await browser.storage.session.set<Record<string, PlanDiagnostics>>({ [key]: diagnostics });
-  } catch (error) {
-    console.warn('[Palette Mimicry] failed to write plan diagnostics', error);
+    await setDiagnostics(diagnostics);
+  } catch {
+    try {
+      await delay(1000);
+      await setDiagnostics(diagnostics);
+    } catch (error) {
+      console.warn('[Palette Mimicry] failed to write plan diagnostics', error);
+    }
   }
 }
 
