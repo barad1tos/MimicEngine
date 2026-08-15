@@ -98,6 +98,7 @@ describe('saveSettings', () => {
           themeId: 'placeholder-theme',
           strategy: 'auto',
           preserveImages: true,
+          preserveBrandColors: true,
           overrides: [],
         },
       },
@@ -127,6 +128,7 @@ describe('getEffectiveSiteSettings', () => {
       themeId: 'placeholder-theme',
       strategy: 'variableRemap',
       preserveImages: false,
+      preserveBrandColors: true,
       overrides: [],
     });
   });
