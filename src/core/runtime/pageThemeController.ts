@@ -29,6 +29,10 @@ export function createPageThemeController(): PageThemeController {
   const siteKey = normalizeHostname(window.location.hostname);
   let stopSettingsListener: (() => void) | null = null;
   let domObserver: DomChangeObserver | null = null;
+  // Set once the cap trips; stays true (blocking observer re-creation, even
+  // from an apply() that started before the trip and resolves after it) until
+  // the settings-changed handler clears it. See the cap-revival race note below.
+  let capTripped = false;
   let mutationRate = 0;
   let mutationWindowStart = 0;
   let mutationCountInWindow = 0;
@@ -39,7 +43,9 @@ export function createPageThemeController(): PageThemeController {
   };
 
   // Rolling mutation-rate window: a simple counter+windowStart pair rather than
-  // a timestamp array, reset whenever the 60s window elapses. Feeds
+  // a timestamp array, reset whenever the 60s window elapses. mutationRate is
+  // expressed as callbacks per minute (the window IS a minute), so it reads
+  // directly against the decision table's calm-page thresholds. Feeds
   // deriveMetrics on the next re-apply so a mutation-heavy page can be steered
   // away from the richer, facts-dependent strategy combinations.
   const registerMutationCallback = (): number => {
@@ -49,19 +55,22 @@ export function createPageThemeController(): PageThemeController {
       mutationCountInWindow = 0;
     }
     mutationCountInWindow += 1;
-    mutationRate = mutationCountInWindow / (MUTATION_WINDOW_MS / 1000);
+    mutationRate = mutationCountInWindow;
     return mutationCountInWindow;
   };
 
+  // Gated on capTripped (not just domObserver === null): without this gate, an
+  // apply() that started before the cap tripped can resolve afterward, still
+  // see domObserver === null, and re-create the observer — silently defeating
+  // the cap and breaking the single-warn guarantee. capTripped only clears in
+  // the settings-changed handler, so the observer stays off until then.
   const ensureDomObserver = (): void => {
-    if (domObserver) return;
-    mutationWindowStart = Date.now();
-    mutationCountInWindow = 0;
-    mutationRate = 0;
+    if (capTripped || domObserver) return;
 
     domObserver = observeDomChanges(() => {
       const countInWindow = registerMutationCallback();
       if (countInWindow > MAX_REAPPLIES_PER_MINUTE) {
+        capTripped = true;
         stopDomObserver();
         console.warn(
           '[Palette Mimicry] re-apply cap reached, pausing live observation until settings change',
@@ -103,6 +112,10 @@ export function createPageThemeController(): PageThemeController {
     async start() {
       await apply();
       stopSettingsListener = onSettingsChanged(() => {
+        capTripped = false;
+        mutationWindowStart = 0;
+        mutationCountInWindow = 0;
+        mutationRate = 0;
         apply().catch((error: unknown) => {
           console.error('[Palette Mimicry] apply failed', error);
         });
