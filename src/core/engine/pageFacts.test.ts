@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // src/core/engine/pageFacts.test.ts
 import { describe, expect, it } from 'vitest';
+import { STYLE_ELEMENT_ID } from '../injector/styleElement';
 import { collectPageFacts } from './pageFacts';
 
 function buildDocument(css: string, bodyHtml = '<p>hi</p>'): Document {
@@ -27,8 +28,11 @@ describe('collectPageFacts', () => {
 
   it('skips var() chained declarations and our own style element', () => {
     document.head.innerHTML = `
-      <style>:root { --alias: var(--brand-bg); }</style>
-      <style id="palette-mimicry-generated-style">:root { --pm-canvas: #000000; }</style>
+      <style>
+        .theme { --brand-bg: #101010; }
+        :root { --alias: var(--brand-bg); }
+      </style>
+      <style id="${STYLE_ELEMENT_ID}">:root { --pm-canvas: #000000; }</style>
     `;
     const facts = collectPageFacts(document);
     expect(facts.customProperties.map((p) => p.name)).toEqual([]);

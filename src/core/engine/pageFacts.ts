@@ -1,4 +1,5 @@
 import { parseCssColor, type RgbaColor } from '../color/parseColor';
+import { STYLE_ELEMENT_ID } from '../injector/styleElement';
 
 export type CustomPropertyFact = {
   name: string;
@@ -26,8 +27,6 @@ const DEFAULT_OPTIONS: CollectPageFactsOptions = {
   maxCustomProperties: 200,
   maxElements: 1500,
 };
-
-const OWN_STYLE_ELEMENT_ID = 'palette-mimicry-generated-style';
 
 export function collectPageFacts(
   doc: Document,
@@ -81,7 +80,7 @@ export function collectPageFacts(
 }
 
 function getOwnStyleSheet(doc: Document): CSSStyleSheet | null {
-  const ownElement = doc.getElementById(OWN_STYLE_ELEMENT_ID);
+  const ownElement = doc.getElementById(STYLE_ELEMENT_ID);
   return ownElement instanceof HTMLStyleElement ? ownElement.sheet : null;
 }
 
