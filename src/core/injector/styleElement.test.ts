@@ -79,7 +79,7 @@ describe('apply(apply(page)) idempotency invariant', () => {
       // (Finding 1's fix) — otherwise the second pass would see one more DOM
       // element than the first and domElementCount would drift.
       const facts = collectPageFacts(document);
-      const metrics = deriveMetrics(facts);
+      const metrics = deriveMetrics(facts, { mutationRate: 0 });
       const plan = decideStrategies(metrics, siteSettings.strategy);
       const css = composeStylesheet(theme, siteSettings, facts, plan);
       injectStylesheet(css);

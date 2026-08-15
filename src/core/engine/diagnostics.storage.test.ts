@@ -44,6 +44,10 @@ function buildDiagnostics(siteKey: string): PlanDiagnostics {
       domElementCount: 10,
       shadowRootCount: 0,
       unreadableStylesheetRatio: 0,
+      authoredColorCount: 0,
+      inlineStyleColorCount: 0,
+      customPropertyColorRatio: 0,
+      mutationRate: 0,
     },
     updatedAt: '2026-08-15T00:00:00.000Z',
   };
