@@ -3,17 +3,12 @@ import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
 import { parseCssColor, toHex } from '../color/parseColor';
 import type { PaletteTheme } from '../themes';
 import type { ColorMapping, SitePaletteEntry } from './colorMap';
+import { compareStrings } from './sort';
 
 export type GuardedMapping = { mapping: ColorMapping; adjustments: number };
 
 const LIGHTNESS_STEP = 0.05;
 const MAX_LIGHTNESS_STEPS = 8;
-
-function compareHexAscending(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
 
 // Same weight-desc/hex-asc ordering colorMap.ts uses to pick the dominant
 // entry within a bucket, scoped here to the background bucket only.
@@ -26,7 +21,7 @@ function heaviestBackgroundEntry(
       if (!best) return candidate;
       if (candidate.weight !== best.weight)
         return candidate.weight > best.weight ? candidate : best;
-      return compareHexAscending(candidate.hex, best.hex) < 0 ? candidate : best;
+      return compareStrings(candidate.hex, best.hex) < 0 ? candidate : best;
     }, undefined);
 }
 

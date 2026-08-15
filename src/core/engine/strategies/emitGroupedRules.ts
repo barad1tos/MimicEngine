@@ -1,12 +1,8 @@
-function compareCodepoint(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
+import { compareStrings } from '../sort';
 
 function emitSelectorBlock(selector: string, declarations: Map<string, string>): string {
   const lines = Array.from(declarations.entries())
-    .sort(([propertyA], [propertyB]) => compareCodepoint(propertyA, propertyB))
+    .sort(([propertyA], [propertyB]) => compareStrings(propertyA, propertyB))
     .map(([property, value]) => `  ${property}: ${value} !important;`)
     .join('\n');
 

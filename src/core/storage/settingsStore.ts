@@ -70,7 +70,7 @@ export function onSettingsChanged(callback: () => void): () => void {
 }
 
 export function normalizeSettings(value: unknown): AppSettings {
-  if (!isObject(value)) return DEFAULT_SETTINGS;
+  if (!isObject(value)) return { ...DEFAULT_SETTINGS, sites: {} };
 
   const globalThemeId =
     typeof value.globalThemeId === 'string' ? value.globalThemeId : DEFAULT_THEME_ID;
@@ -92,7 +92,7 @@ function normalizeSites(
       ...createDefaultSiteSettings(fallbackThemeId),
       themeId:
         typeof rawSiteSettings.themeId === 'string' ? rawSiteSettings.themeId : fallbackThemeId,
-      ...resolveEnabledAndStrategy(rawSiteSettings),
+      ...migrateSiteStrategy(rawSiteSettings),
       preserveImages:
         typeof rawSiteSettings.preserveImages === 'boolean' ? rawSiteSettings.preserveImages : true,
       preserveBrandColors:
@@ -111,7 +111,7 @@ function normalizeSites(
 // passes through unchanged; otherwise a legacy `mode: 'off'` forces enabled:false,
 // and any other/missing mode falls back to strategy:'auto' with enabled read from
 // the stored boolean (default true). Invalid strategy strings also land here.
-function resolveEnabledAndStrategy(
+function migrateSiteStrategy(
   rawSiteSettings: Record<string, unknown>,
 ): Pick<SiteSettings, 'enabled' | 'strategy'> {
   const rawStrategy = rawSiteSettings.strategy;

@@ -144,6 +144,23 @@ describe('assignTokens', () => {
     expect(assignments.get('--bg-3')).toBe('surface3');
     expect(assignments.get('--bg-4')).toBe('surface3');
   });
+
+  it('gives a canvas-family name priority for the canvas slot over a lighter surface-family entry', () => {
+    // Light mode alone would hand `canvas` to whichever entry has the
+    // highest luminance — here that's --card-panel (surface-family
+    // pattern). The name-priority rule overrides that: --page-bg matched
+    // the canvas-family pattern, so it wins canvas regardless, and
+    // --card-panel is demoted to surface1.
+    const properties = [
+      colorProperty('--card-panel', GRAY(200)),
+      colorProperty('--page-bg', GRAY(120)),
+    ];
+
+    const assignments = assignTokens(properties, 'light');
+
+    expect(assignments.get('--page-bg')).toBe('canvas');
+    expect(assignments.get('--card-panel')).toBe('surface1');
+  });
 });
 
 describe('variableRemap strategy', () => {

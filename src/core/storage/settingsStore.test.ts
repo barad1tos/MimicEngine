@@ -118,4 +118,17 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings('nonsense')).toEqual(DEFAULT_SETTINGS);
     expect(DEFAULT_SETTINGS.schemaVersion).toBe(2);
   });
+
+  it('returns a fresh clone for garbage input, never the shared DEFAULT_SETTINGS reference', () => {
+    const first = normalizeSettings(null);
+    const second = normalizeSettings(null);
+
+    expect(first).not.toBe(second);
+    expect(first.sites).not.toBe(second.sites);
+
+    first.sites['example.com'] = createDefaultSiteSettings();
+
+    expect(second.sites['example.com']).toBeUndefined();
+    expect(DEFAULT_SETTINGS.sites['example.com']).toBeUndefined();
+  });
 });

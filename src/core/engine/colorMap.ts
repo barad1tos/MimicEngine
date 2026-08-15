@@ -2,6 +2,7 @@ import { hueDistance, rgbaToOklch, type Oklch } from '../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
 import type { PaletteTheme, ThemeTokenName } from '../themes';
 import type { AuthoredColorDeclaration, PageFacts } from './pageFacts';
+import { compareStrings } from './sort';
 
 export type SitePaletteEntry = {
   hex: string;
@@ -29,15 +30,9 @@ const ACCENT_TOKEN_ORDER: readonly ThemeTokenName[] = [
 const ACCENT_CHROMA_THRESHOLD = 0.09;
 const BRAND_PRESERVE_CHROMA_THRESHOLD = 0.14;
 
-function compareHexAscending(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
-
 function comparePaletteEntries(a: SitePaletteEntry, b: SitePaletteEntry): number {
   if (b.weight !== a.weight) return b.weight - a.weight;
-  return compareHexAscending(a.hex, b.hex);
+  return compareStrings(a.hex, b.hex);
 }
 
 // Extraction
@@ -188,7 +183,7 @@ function assignLadder(entries: readonly SitePaletteEntry[], theme: PaletteTheme)
   withLightness.sort((a, b) => {
     const deltaL = (a.l - b.l) * direction;
     if (deltaL !== 0) return deltaL;
-    return compareHexAscending(a.entry.hex, b.entry.hex);
+    return compareStrings(a.entry.hex, b.entry.hex);
   });
 
   const assignments = new Map<string, string>();

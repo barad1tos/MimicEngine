@@ -1,6 +1,7 @@
 import { parseCssColor, type RgbaColor } from '../color/parseColor';
 import { STYLE_ELEMENT_ID } from '../injector/styleElement';
 import { buildSelectorHint } from './selectorHint';
+import { compareStrings } from './sort';
 
 export type CustomPropertyFact = {
   name: string;
@@ -203,13 +204,17 @@ function collectRuleColors(rule: CSSStyleRule, state: RuleWalkState): void {
 
 const USAGE_PATTERN = /var\(\s*(--[\w-]+)/gi;
 
+function emptyUsage(): CustomPropertyFact['usage'] {
+  return { background: 0, text: 0, border: 0, other: 0 };
+}
+
 function collectUsage(rule: CSSStyleRule, usage: Map<string, CustomPropertyFact['usage']>): void {
   for (const property of Array.from(rule.style)) {
     const value = rule.style.getPropertyValue(property);
     for (const match of value.matchAll(USAGE_PATTERN)) {
       const name = match[1];
       if (!name) continue;
-      const bucket = usage.get(name) ?? { background: 0, text: 0, border: 0, other: 0 };
+      const bucket = usage.get(name) ?? emptyUsage();
       bucket[usageBucket(property)] += 1;
       usage.set(name, bucket);
     }
@@ -241,13 +246,13 @@ function buildCustomProperties(
 ): CustomPropertyFact[] {
   return Array.from(declarations.entries())
     .filter(([, value]) => !value.includes('var('))
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => compareStrings(a, b))
     .slice(0, maxCustomProperties)
     .map(([name, value]) => ({
       name,
       value,
       color: parseCssColor(value),
-      usage: usage.get(name) ?? { background: 0, text: 0, border: 0, other: 0 },
+      usage: usage.get(name) ?? emptyUsage(),
     }));
 }
 
