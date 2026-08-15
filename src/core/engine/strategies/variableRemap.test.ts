@@ -18,9 +18,8 @@ function anySiteSettings(): SiteSettings {
   return {
     enabled: true,
     themeId: 'placeholder-theme',
-    mode: 'basic',
+    strategy: 'auto',
     preserveImages: true,
-    preserveBrandColors: true,
     overrides: [],
   };
 }
