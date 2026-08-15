@@ -121,7 +121,7 @@ describe('authoredRemap strategy', () => {
     );
 
     const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
-    const selectorOrder = [...css.matchAll(/html\[data-pm-active="true"\] (\S+) \{/g)].map(
+    const selectorOrder = [...css.matchAll(/html\[data-pm-active="true"] (\S+) \{/g)].map(
       (match) => match[1],
     );
 
@@ -135,7 +135,7 @@ describe('authoredRemap strategy', () => {
     );
 
     const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
-    const blockCount = [...css.matchAll(/html\[data-pm-active="true"\] \.btn \{/g)].length;
+    const blockCount = [...css.matchAll(/html\[data-pm-active="true"] \.btn \{/g)].length;
 
     expect(blockCount).toBe(1);
     expect(css).toContain('color:');
