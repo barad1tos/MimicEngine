@@ -138,16 +138,17 @@ export function App() {
           </label>
 
           <label className="field">
-            <span>Mode</span>
+            <span>Strategy</span>
             <select
-              value={siteSettings.mode}
-              onChange={(event) => updateSite({ mode: event.target.value as SiteSettings['mode'] })}
+              value={siteSettings.strategy}
+              onChange={(event) =>
+                updateSite({ strategy: event.target.value as SiteSettings['strategy'] })
+              }
               disabled={!siteSettings.enabled}
             >
-              <option value="basic">Basic</option>
-              <option value="semantic">Semantic placeholder</option>
-              <option value="aggressive">Aggressive placeholder</option>
-              <option value="off">Off</option>
+              <option value="auto">Auto</option>
+              <option value="baseline">Baseline</option>
+              <option value="variableRemap">Variable remap</option>
             </select>
           </label>
 
@@ -157,15 +158,6 @@ export function App() {
               type="checkbox"
               checked={siteSettings.preserveImages}
               onChange={(event) => updateSite({ preserveImages: event.target.checked })}
-            />
-          </div>
-
-          <div className="row">
-            <span>Preserve brand colors</span>
-            <input
-              type="checkbox"
-              checked={siteSettings.preserveBrandColors}
-              onChange={(event) => updateSite({ preserveBrandColors: event.target.checked })}
             />
           </div>
 

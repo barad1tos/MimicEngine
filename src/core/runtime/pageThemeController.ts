@@ -1,8 +1,7 @@
 import { buildBaseStylesheet } from '../injector/buildBaseStylesheet';
 import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
 import { getThemeById } from '../themes';
-import { observeDomChanges, type DomChangeObserver } from '../live/observeDomChanges';
-import { collectComputedColors } from '../analyzer/collectComputedColors';
+import type { DomChangeObserver } from '../live/observeDomChanges';
 import { getEffectiveSiteSettings, onSettingsChanged } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
 
@@ -21,19 +20,10 @@ export function createPageThemeController(): PageThemeController {
     domObserver = null;
   };
 
-  const ensureDomObserver = (): void => {
-    if (domObserver) return;
-    domObserver = observeDomChanges(() => {
-      apply().catch((error: unknown) => {
-        console.error('[Palette Mimicry] reapply failed', error);
-      });
-    });
-  };
-
   const apply = async (): Promise<void> => {
     const siteSettings = await getEffectiveSiteSettings(siteKey);
 
-    if (!siteSettings.enabled || siteSettings.mode === 'off') {
+    if (!siteSettings.enabled) {
       removeStylesheet();
       stopDomObserver();
       return;
@@ -42,14 +32,7 @@ export function createPageThemeController(): PageThemeController {
     const theme = getThemeById(siteSettings.themeId);
     const stylesheet = buildBaseStylesheet(theme);
     injectStylesheet(stylesheet);
-
-    if (siteSettings.mode === 'semantic' || siteSettings.mode === 'aggressive') {
-      ensureDomObserver();
-      // Foundation only: this proves the analyzer can run without changing behavior yet.
-      collectComputedColors(document, { maxElements: 300 });
-    } else {
-      stopDomObserver();
-    }
+    stopDomObserver();
   };
 
   return {
