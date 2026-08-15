@@ -40,7 +40,7 @@ function comparePaletteEntries(a: SitePaletteEntry, b: SitePaletteEntry): number
   return compareHexAscending(a.hex, b.hex);
 }
 
-// --- extraction -------------------------------------------------------
+// Extraction
 
 type PaletteAccumulator = {
   color: RgbaColor;
@@ -99,7 +99,7 @@ export function extractSitePalette(facts: PageFacts): SitePaletteEntry[] {
   return entries.sort(comparePaletteEntries);
 }
 
-// --- accents ------------------------------------------------------------
+// Accents
 
 function themeTokenOklch(theme: PaletteTheme, token: ThemeTokenName): Oklch {
   const color = parseCssColor(theme.tokens[token]);
@@ -164,7 +164,7 @@ function partitionAccents(
   return { accents, rest };
 }
 
-// --- background ladder ---------------------------------------------------
+// Background ladder
 
 function ladderTokenAt(index: number): ThemeTokenName {
   const clamped = Math.min(index, SURFACE_LADDER.length - 1);
@@ -207,7 +207,7 @@ function assignLadder(entries: readonly SitePaletteEntry[], theme: PaletteTheme)
   return { assignments, assignedTokens };
 }
 
-// --- text / border / other -----------------------------------------------
+// Text, border, and other buckets
 
 // Sorted by weight (desc, hex asc tie-break): the heaviest text entry ->
 // text, everything else -> textMuted.
@@ -279,7 +279,7 @@ function assignOtherBucket(
   return assignments;
 }
 
-// --- orchestration --------------------------------------------------------
+// Orchestration
 
 export function buildColorMapping(
   palette: SitePaletteEntry[],
