@@ -166,6 +166,6 @@ export function toHex({ r, g, b }: RgbaColor): string {
   return `#${[r, g, b].map((channel) => clampChannel(channel).toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function clampChannel(value: number): number {
+function clampChannel(value: number): number {
   return Math.max(0, Math.min(255, Math.round(value)));
 }

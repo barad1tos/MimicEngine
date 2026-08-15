@@ -4,13 +4,14 @@ import type { PaletteTheme } from '../themes';
 import type { StrategyPlan } from './decisionTable';
 import type { PageFacts } from './pageFacts';
 import { strategyRegistry } from './registry';
+import { compareStrings } from './sort';
 import { tokenVariablesCss } from './tokenVariables';
 
 function compareOverrides(
   a: SiteSettings['overrides'][number],
   b: SiteSettings['overrides'][number],
 ): number {
-  return a.selector.localeCompare(b.selector) || a.property.localeCompare(b.property);
+  return compareStrings(a.selector, b.selector) || compareStrings(a.property, b.property);
 }
 
 export function composeStylesheet(
