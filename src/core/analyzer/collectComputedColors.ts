@@ -1,3 +1,5 @@
+import { buildSelectorHint } from '../engine/selectorHint';
+
 export type ComputedColorSample = {
   selectorHint: string;
   property: 'color' | 'backgroundColor' | 'borderTopColor';
@@ -52,13 +54,4 @@ export function collectComputedColors(
 function isProbablyVisible(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
-}
-
-function buildSelectorHint(element: Element): string {
-  if (element.id) return `#${CSS.escape(element.id)}`;
-  const className = [...element.classList]
-    .slice(0, 2)
-    .map((item) => `.${CSS.escape(item)}`)
-    .join('');
-  return `${element.tagName.toLowerCase()}${className}`;
 }
