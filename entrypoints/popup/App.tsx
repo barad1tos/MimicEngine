@@ -47,8 +47,13 @@ export function App() {
 
   async function persist(nextSettings: AppSettings) {
     setSettings(nextSettings);
-    await saveSettings(nextSettings);
-    setStatus('Saved');
+    try {
+      await saveSettings(nextSettings);
+      setStatus('Saved');
+    } catch (error) {
+      console.error('[Palette Mimicry] failed to save settings', error);
+      setStatus('Save failed');
+    }
   }
 
   async function updateGlobalTheme(themeId: string) {

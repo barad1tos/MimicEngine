@@ -26,4 +26,16 @@ describe('contrastRatio', () => {
     expect(passesContrast('#000000', '#ffffff')).toBe(true);
     expect(passesContrast('#777777', '#888888')).toBe(false);
   });
+
+  it('composites translucent foreground over the background', () => {
+    const nearlyWhiteOnWhite = contrastRatio('rgba(0, 0, 0, 0.1)', '#ffffff');
+    expect(nearlyWhiteOnWhite).not.toBeNull();
+    expect(nearlyWhiteOnWhite).toBeLessThan(1.5);
+    expect(passesContrast('rgba(0, 0, 0, 0.1)', '#ffffff')).toBe(false);
+  });
+
+  it('returns null for a translucent background with an unknown backdrop', () => {
+    expect(contrastRatio('#000000', 'rgba(255, 255, 255, 0.5)')).toBeNull();
+    expect(contrastRatio('#000000', 'rgba(255, 255, 255, 0)')).toBeNull();
+  });
 });

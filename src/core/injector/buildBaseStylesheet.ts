@@ -1,10 +1,7 @@
 import type { PaletteTheme } from '../themes';
-import type { SiteOverride, ThemeMode } from '../storage/settingsStore';
+import type { SiteOverride } from '../storage/settingsStore';
 
 export type BuildBaseStylesheetOptions = {
-  mode: ThemeMode;
-  preserveImages: boolean;
-  preserveBrandColors: boolean;
   overrides: SiteOverride[];
 };
 
@@ -13,16 +10,6 @@ export function buildBaseStylesheet(
   options: BuildBaseStylesheetOptions,
 ): string {
   const { tokens } = theme;
-  const preserveMedia = options.preserveImages
-    ? `
-html[data-pm-active="true"] img,
-html[data-pm-active="true"] video,
-html[data-pm-active="true"] canvas,
-html[data-pm-active="true"] picture {
-  filter: none !important;
-}`
-    : '';
-
   const overrideCss = options.overrides.map(buildOverrideRule).join('\n');
 
   return `
@@ -111,7 +98,6 @@ html[data-pm-active="true"] ::selection {
   color: var(--pm-text) !important;
 }
 
-${preserveMedia}
 ${overrideCss}
 `.trim();
 }

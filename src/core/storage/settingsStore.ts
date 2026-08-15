@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { DEFAULT_THEME_ID, type ThemeTokenName } from '../themes';
+import { DEFAULT_THEME_ID, THEME_TOKEN_NAMES, type ThemeTokenName } from '../themes';
 
 export type ThemeMode = 'off' | 'basic' | 'semantic' | 'aggressive';
 
@@ -57,7 +57,7 @@ export async function getEffectiveSiteSettings(siteKey: string): Promise<SiteSet
 
 export function onSettingsChanged(callback: () => void): () => void {
   const listener = (changes: Record<string, unknown>, areaName: string) => {
-    if (areaName === 'local' && Object.prototype.hasOwnProperty.call(changes, STORAGE_KEY)) {
+    if (areaName === 'local' && Object.hasOwn(changes, STORAGE_KEY)) {
       callback();
     }
   };
@@ -99,11 +99,31 @@ function normalizeSites(
         typeof rawSiteSettings.preserveBrandColors === 'boolean'
           ? rawSiteSettings.preserveBrandColors
           : true,
-      overrides: Array.isArray(rawSiteSettings.overrides) ? [] : [],
+      overrides: normalizeOverrides(rawSiteSettings.overrides),
     };
   }
 
   return sites;
+}
+
+function normalizeOverrides(value: unknown): SiteOverride[] {
+  if (!Array.isArray(value)) return [];
+
+  const overrides: SiteOverride[] = [];
+  for (const entry of value) {
+    if (!isObject(entry)) continue;
+    if (typeof entry.selector !== 'string' || entry.selector.length === 0) continue;
+    if (typeof entry.property !== 'string' || entry.property.length === 0) continue;
+    if (!isThemeTokenName(entry.token)) continue;
+
+    overrides.push({ selector: entry.selector, property: entry.property, token: entry.token });
+  }
+
+  return overrides;
+}
+
+function isThemeTokenName(value: unknown): value is ThemeTokenName {
+  return typeof value === 'string' && (THEME_TOKEN_NAMES as readonly string[]).includes(value);
 }
 
 function isThemeMode(value: unknown): value is ThemeMode {
