@@ -7,11 +7,22 @@ import { collectPageFacts } from '../engine/pageFacts';
 import { deriveMetrics } from '../engine/pageMetrics';
 import { createDefaultSiteSettings, type SiteSettings } from '../storage/settingsStore';
 import { builtInThemes } from '../themes';
-import { injectStylesheet, removeStylesheet, STYLE_ELEMENT_ID } from './styleElement';
+import {
+  injectStylesheet,
+  removeStylesheet,
+  STYLE_ELEMENT_ID,
+  withStylesheetDisabled,
+} from './styleElement';
 
 afterEach(() => {
   removeStylesheet();
 });
+
+function requireStyleElement(): HTMLStyleElement {
+  const element = document.getElementById(STYLE_ELEMENT_ID);
+  if (!(element instanceof HTMLStyleElement)) throw new Error('expected style element to exist');
+  return element;
+}
 
 describe('injectStylesheet / removeStylesheet', () => {
   it('creates the style element with the right id and marks documentElement active', () => {
@@ -45,6 +56,51 @@ describe('injectStylesheet / removeStylesheet', () => {
     // Different css -> content updates.
     injectStylesheet(':root { --pm-canvas: #ffffff; }');
     expect(element?.textContent).toBe(':root { --pm-canvas: #ffffff; }');
+  });
+});
+
+describe('withStylesheetDisabled', () => {
+  it('disables the style element during fn and restores it after', () => {
+    injectStylesheet(':root { --pm-canvas: #000000; }');
+    const element = requireStyleElement();
+
+    let disabledDuringFn: boolean | undefined;
+    withStylesheetDisabled(() => {
+      disabledDuringFn = element.disabled;
+    });
+
+    expect(disabledDuringFn).toBe(true);
+    expect(element.disabled).toBe(false);
+  });
+
+  it('restores disabled=false even when fn throws', () => {
+    injectStylesheet(':root { --pm-canvas: #000000; }');
+    const element = requireStyleElement();
+
+    expect(() =>
+      withStylesheetDisabled(() => {
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+
+    expect(element.disabled).toBe(false);
+  });
+
+  it('returns the value fn produces', () => {
+    injectStylesheet(':root { --pm-canvas: #000000; }');
+
+    const result = withStylesheetDisabled(() => 42);
+
+    expect(result).toBe(42);
+  });
+
+  it('is a no-op wrapper (just runs fn) when the style element is absent', () => {
+    expect(document.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+
+    const result = withStylesheetDisabled(() => 'ran');
+
+    expect(result).toBe('ran');
+    expect(document.getElementById(STYLE_ELEMENT_ID)).toBeNull();
   });
 });
 

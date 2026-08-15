@@ -3,6 +3,7 @@ import { buildColorMapping, extractSitePalette, type ColorMapping } from '../col
 import { guardContrast } from '../contrastGuard';
 import type { AuthoredColorDeclaration } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
+import { emitGroupedRules } from './emitGroupedRules';
 
 export const authoredRemap: PaletteEngine = {
   id: 'authoredRemap',
@@ -19,7 +20,7 @@ export const authoredRemap: PaletteEngine = {
       facts.inlineStyleColors,
       guardedMapping,
     );
-    return groups.size === 0 ? '' : emitCss(groups);
+    return emitGroupedRules(groups);
   },
 };
 
@@ -55,25 +56,4 @@ function buildSelectorGroups(
   }
 
   return groups;
-}
-
-function compareCodepoint(a: string, b: string): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
-
-function emitSelectorBlock(selector: string, declarations: Map<string, string>): string {
-  const lines = Array.from(declarations.entries())
-    .sort(([propertyA], [propertyB]) => compareCodepoint(propertyA, propertyB))
-    .map(([property, value]) => `  ${property}: ${value} !important;`)
-    .join('\n');
-
-  return `html[data-pm-active="true"] ${selector} {\n${lines}\n}`;
-}
-
-function emitCss(groups: Map<string, Map<string, string>>): string {
-  return Array.from(groups.entries())
-    .map(([selector, declarations]) => emitSelectorBlock(selector, declarations))
-    .join('\n\n');
 }
