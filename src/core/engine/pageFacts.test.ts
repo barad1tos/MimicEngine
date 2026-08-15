@@ -26,6 +26,16 @@ describe('collectPageFacts', () => {
     expect(facts.customProperties[2]?.color).toBeNull();
   });
 
+  it('counts usage when var() has whitespace after the opening paren', () => {
+    const doc = buildDocument(`
+      :root { --brand-bg: #1f2430; }
+      body { background-color: var( --brand-bg); }
+    `);
+    const facts = collectPageFacts(doc);
+    const bg = facts.customProperties.find((p) => p.name === '--brand-bg');
+    expect(bg?.usage).toEqual({ background: 1, text: 0, border: 0, other: 0 });
+  });
+
   it('skips var() chained declarations and our own style element', () => {
     document.head.innerHTML = `
       <style>

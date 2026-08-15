@@ -93,7 +93,7 @@ function collectDeclarations(rule: CSSStyleRule, declarations: Map<string, strin
   }
 }
 
-const USAGE_PATTERN = /var\((--[a-z0-9-_]+)/gi;
+const USAGE_PATTERN = /var\(\s*(--[\w-]+)/gi;
 
 function collectUsage(rule: CSSStyleRule, usage: Map<string, CustomPropertyFact['usage']>): void {
   for (const property of Array.from(rule.style)) {

@@ -118,7 +118,7 @@ function surfaceTokenAt(index: number): ThemeTokenName {
 function emitCss(assignments: Map<string, ThemeTokenName>): string {
   const declarations = [...assignments.entries()]
     .sort(([nameA], [nameB]) => nameA.localeCompare(nameB))
-    .map(([name, token]) => `  ${name}: var(--pm-${tokenToCssVariableSuffix(token)});`)
+    .map(([name, token]) => `  ${name}: var(--pm-${tokenToCssVariableSuffix(token)}) !important;`)
     .join('\n');
 
   return `html[data-pm-active="true"] {\n${declarations}\n}`;

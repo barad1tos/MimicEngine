@@ -166,9 +166,25 @@ describe('variableRemap strategy', () => {
 
     expect(css).toMatchInlineSnapshot(`
       "html[data-pm-active="true"] {
-        --body-text: var(--pm-text);
-        --page-bg: var(--pm-canvas);
+        --body-text: var(--pm-text) !important;
+        --page-bg: var(--pm-canvas) !important;
       }"
     `);
+  });
+
+  it('marks every emitted declaration !important so it beats inline styles', () => {
+    const facts: PageFacts = {
+      ...emptyFacts(),
+      customProperties: [
+        colorProperty('--body-text', GRAY(230)),
+        colorProperty('--page-bg', GRAY(20)),
+      ],
+    };
+
+    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), facts);
+    const declarationLines = css.split('\n').filter((line) => line.trim().startsWith('--'));
+
+    expect(declarationLines.length).toBeGreaterThan(0);
+    expect(declarationLines.every((line) => line.trimEnd().endsWith('!important;'))).toBe(true);
   });
 });
