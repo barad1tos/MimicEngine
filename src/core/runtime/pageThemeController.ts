@@ -16,7 +16,21 @@ export function createPageThemeController(): PageThemeController {
   let stopSettingsListener: (() => void) | null = null;
   let domObserver: DomChangeObserver | null = null;
 
-  async function apply() {
+  const stopDomObserver = (): void => {
+    domObserver?.stop();
+    domObserver = null;
+  };
+
+  const ensureDomObserver = (): void => {
+    if (domObserver) return;
+    domObserver = observeDomChanges(() => {
+      apply().catch((error: unknown) => {
+        console.error('[Palette Mimicry] reapply failed', error);
+      });
+    });
+  };
+
+  const apply = async (): Promise<void> => {
     const siteSettings = await getEffectiveSiteSettings(siteKey);
 
     if (!siteSettings.enabled || siteSettings.mode === 'off') {
@@ -36,21 +50,7 @@ export function createPageThemeController(): PageThemeController {
     } else {
       stopDomObserver();
     }
-  }
-
-  function ensureDomObserver() {
-    if (domObserver) return;
-    domObserver = observeDomChanges(() => {
-      apply().catch((error: unknown) => {
-        console.error('[Palette Mimicry] reapply failed', error);
-      });
-    });
-  }
-
-  function stopDomObserver() {
-    domObserver?.stop();
-    domObserver = null;
-  }
+  };
 
   return {
     async start() {

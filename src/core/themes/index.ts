@@ -17,4 +17,5 @@ export function getThemeById(themeId: string): PaletteTheme {
   return builtInThemes.find((theme) => theme.id === themeId) ?? catppuccinFrappe;
 }
 
+export { THEME_TOKEN_NAMES } from './themeTypes';
 export type { PaletteTheme, ThemeTokenName, ThemeTokens } from './themeTypes';
