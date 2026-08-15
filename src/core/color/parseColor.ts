@@ -5,6 +5,12 @@ export type RgbaColor = {
   a: number;
 };
 
+// A lowercase `#rrggbb` string, branded so a plain string (a raw CSS literal,
+// an authored value, ...) can never stand in for one without going through
+// `toHex`. The engine's color maps are keyed and valued by this type — see
+// `ColorMapping` in colorMap.ts.
+export type HexColor = string & { readonly __hexColor: unique symbol };
+
 export function parseCssColor(value: string): RgbaColor | null {
   const normalized = value.trim().toLowerCase();
 
@@ -162,8 +168,9 @@ function getHslRgbComponents(h: number, chroma: number, x: number): [number, num
   return [chroma, 0, x];
 }
 
-export function toHex({ r, g, b }: RgbaColor): string {
-  return `#${[r, g, b].map((channel) => clampChannel(channel).toString(16).padStart(2, '0')).join('')}`;
+export function toHex({ r, g, b }: RgbaColor): HexColor {
+  const hex = `#${[r, g, b].map((channel) => clampChannel(channel).toString(16).padStart(2, '0')).join('')}`;
+  return hex as HexColor;
 }
 
 // Shared opacity predicate: `toHex` drops alpha, so anywhere a color is

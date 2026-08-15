@@ -3,6 +3,7 @@ import { oklchToRgba } from '../../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../../color/parseColor';
 import type { SiteSettings } from '../../storage/settingsStore';
 import { builtInThemes } from '../../themes';
+import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import { authoredRemap } from './authoredRemap';
 
@@ -53,9 +54,26 @@ function anySiteSettings(preserveBrandColors = true): SiteSettings {
   };
 }
 
+function anyPlan(): StrategyPlan {
+  return {
+    provenance: {
+      kind: 'auto',
+      rule: 'test',
+      strategies: ['baseline', 'variableRemap', 'authoredRemap', 'computedFallback'],
+      reasons: [],
+      tableVersion: TABLE_VERSION,
+    },
+  };
+}
+
 describe('authoredRemap strategy', () => {
   it('returns an empty string when there are no mappable declarations', () => {
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), emptyFacts());
+    const css = authoredRemap.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      anyPlan(),
+    );
 
     expect(css).toBe('');
   });
@@ -67,7 +85,7 @@ describe('authoredRemap strategy', () => {
       decl('.header', 'border-color', '#3a3a44', 'border'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
 
     expect(css).toMatchInlineSnapshot(`
       "html[data-pm-active="true"] .card {
@@ -87,7 +105,7 @@ describe('authoredRemap strategy', () => {
       decl('.card', 'background-color', '#101014', 'background'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
     const declarationLines = css
       .split('\n')
       .filter((line) => line.trimEnd().endsWith(';') && line.includes(':'));
@@ -99,7 +117,7 @@ describe('authoredRemap strategy', () => {
   it('skips --custom-property declarations even when parsed color is present', () => {
     const pageFacts = facts([decl('.card', '--brand-bg', '#101014', 'background')]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
 
     expect(css).toBe('');
   });
@@ -109,7 +127,7 @@ describe('authoredRemap strategy', () => {
       { selector: '.card', property: 'color', value: 'currentColor', color: null, bucket: 'text' },
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
 
     expect(css).toBe('');
   });
@@ -120,7 +138,7 @@ describe('authoredRemap strategy', () => {
       [decl('.first', 'color', '#f5f5f7', 'text')],
     );
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
     const selectorOrder = [...css.matchAll(/html\[data-pm-active="true"] (\S+) \{/g)].map(
       (match) => match[1],
     );
@@ -134,7 +152,7 @@ describe('authoredRemap strategy', () => {
       [decl('.btn', 'border-color', '#3a3a44', 'border')],
     );
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
     const blockCount = [...css.matchAll(/html\[data-pm-active="true"] \.btn \{/g)].length;
 
     expect(blockCount).toBe(1);
@@ -152,7 +170,7 @@ describe('authoredRemap strategy', () => {
       decl('.a', 'color', '#c9c9d1', 'text'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
     const colorLines = css.split('\n').filter((line) => line.trim().startsWith('color:'));
 
     expect(colorLines).toHaveLength(1);
@@ -167,7 +185,7 @@ describe('authoredRemap strategy', () => {
       decl('.card', 'border-color', '#3a3a44', 'border'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
     const propertyOrder = css
       .split('\n')
       .filter((line) => line.includes(':') && line.trim().endsWith(';'))
@@ -180,7 +198,12 @@ describe('authoredRemap strategy', () => {
     const brandHex = toHex(oklchToRgba({ l: 0.55, c: 0.24, h: 260 }));
     const pageFacts = facts([decl('.brand', 'background-color', brandHex, 'other')]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(true), pageFacts);
+    const css = authoredRemap.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(true),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toBe('');
   });
@@ -197,7 +220,7 @@ describe('authoredRemap strategy', () => {
       },
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
 
     expect(css).toContain('.solid');
     expect(css).not.toContain('.scrim');
@@ -207,7 +230,12 @@ describe('authoredRemap strategy', () => {
     const brandHex = toHex(oklchToRgba({ l: 0.55, c: 0.24, h: 260 }));
     const pageFacts = facts([decl('.brand', 'background-color', brandHex, 'other')]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(false), pageFacts);
+    const css = authoredRemap.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(false),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toContain('.brand');
     expect(css).toContain('background-color:');

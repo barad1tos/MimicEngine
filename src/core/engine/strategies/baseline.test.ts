@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { builtInThemes } from '../../themes';
+import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { PageFacts } from '../pageFacts';
 import type { SiteSettings } from '../../storage/settingsStore';
 import { baseline } from './baseline';
@@ -12,6 +13,18 @@ function anySiteSettings(): SiteSettings {
     preserveImages: true,
     preserveBrandColors: true,
     overrides: [],
+  };
+}
+
+function anyPlan(): StrategyPlan {
+  return {
+    provenance: {
+      kind: 'auto',
+      rule: 'test',
+      strategies: ['baseline', 'variableRemap', 'authoredRemap', 'computedFallback'],
+      reasons: [],
+      tableVersion: TABLE_VERSION,
+    },
   };
 }
 
@@ -31,7 +44,7 @@ describe('baseline strategy', () => {
   it('emits gated generic rules without the :root preamble', () => {
     const theme = builtInThemes[0];
 
-    const css = baseline.produceCss(theme, anySiteSettings(), emptyFacts());
+    const css = baseline.produceCss(theme, anySiteSettings(), emptyFacts(), anyPlan());
 
     expect(css).toContain('html[data-pm-active="true"]');
     expect(css).not.toContain(':root {');

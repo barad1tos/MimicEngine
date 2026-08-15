@@ -1,5 +1,5 @@
 import type { PageMetrics } from './pageMetrics';
-import type { StrategyId } from './strategyId';
+import type { StrategyId, StrategySelection } from './strategyId';
 
 export type MetricCondition = { gte?: number; lte?: number };
 
@@ -38,11 +38,24 @@ export const DECISION_TABLE: readonly DecisionRow[] = [
 export type PlanReason = { metric: keyof PageMetrics; value: number; condition: MetricCondition };
 
 export type StrategyPlan = {
-  strategies: StrategyId[];
   provenance:
-    | { kind: 'auto'; rule: string; reasons: PlanReason[]; tableVersion: number }
+    | {
+        kind: 'auto';
+        rule: string;
+        strategies: StrategyId[];
+        reasons: PlanReason[];
+        tableVersion: number;
+      }
     | { kind: 'manual'; strategy: StrategyId };
 };
+
+// The strategies a plan selects, regardless of provenance: an auto plan's
+// table-chosen list, or a manual override's single strategy wrapped in one.
+export function planStrategies(plan: StrategyPlan): StrategyId[] {
+  return plan.provenance.kind === 'manual'
+    ? [plan.provenance.strategy]
+    : plan.provenance.strategies;
+}
 
 function conditionHolds(value: number, condition: MetricCondition): boolean {
   if (condition.gte !== undefined && value < condition.gte) return false;
@@ -62,12 +75,9 @@ function matchReasons(row: DecisionRow, metrics: PageMetrics): PlanReason[] | nu
   return reasons;
 }
 
-export function decideStrategies(
-  metrics: PageMetrics,
-  override: 'auto' | StrategyId,
-): StrategyPlan {
+export function decideStrategies(metrics: PageMetrics, override: StrategySelection): StrategyPlan {
   if (override !== 'auto') {
-    return { strategies: [override], provenance: { kind: 'manual', strategy: override } };
+    return { provenance: { kind: 'manual', strategy: override } };
   }
 
   for (const row of DECISION_TABLE) {
@@ -75,8 +85,13 @@ export function decideStrategies(
     if (reasons === null) continue;
 
     return {
-      strategies: row.strategies,
-      provenance: { kind: 'auto', rule: row.name, reasons, tableVersion: TABLE_VERSION },
+      provenance: {
+        kind: 'auto',
+        rule: row.name,
+        strategies: row.strategies,
+        reasons,
+        tableVersion: TABLE_VERSION,
+      },
     };
   }
 

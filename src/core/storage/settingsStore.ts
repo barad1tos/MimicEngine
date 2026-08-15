@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { isStrategyId, type StrategyId } from '../engine/strategyId';
+import { isStrategyId, type StrategySelection } from '../engine/strategyId';
 import { DEFAULT_THEME_ID, THEME_TOKEN_NAMES, type ThemeTokenName } from '../themes';
 
 export type SiteOverride = {
@@ -11,7 +11,7 @@ export type SiteOverride = {
 export type SiteSettings = {
   enabled: boolean;
   themeId: string;
-  strategy: 'auto' | StrategyId;
+  strategy: StrategySelection;
   preserveImages: boolean;
   preserveBrandColors: boolean;
   overrides: SiteOverride[];

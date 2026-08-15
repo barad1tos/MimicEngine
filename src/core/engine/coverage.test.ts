@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { toHex, type HexColor } from '../color/parseColor';
 import type { ColorMapping, SitePaletteEntry } from './colorMap';
 import { computeCoverage } from './coverage';
+
+function hex(r: number, g: number, b: number): HexColor {
+  return toHex({ r, g, b, a: 1 });
+}
 
 describe('computeCoverage', () => {
   it('returns {0, 0, 0} for an empty palette', () => {
@@ -14,13 +19,13 @@ describe('computeCoverage', () => {
 
   it('computes ratio correctly for partial mapping', () => {
     const palette: SitePaletteEntry[] = [
-      { hex: '#ff0000', color: { r: 255, g: 0, b: 0, a: 1 }, weight: 1, bucket: 'text' },
-      { hex: '#00ff00', color: { r: 0, g: 255, b: 0, a: 1 }, weight: 1, bucket: 'text' },
-      { hex: '#0000ff', color: { r: 0, g: 0, b: 255, a: 1 }, weight: 1, bucket: 'text' },
+      { hex: hex(255, 0, 0), color: { r: 255, g: 0, b: 0, a: 1 }, weight: 1, bucket: 'text' },
+      { hex: hex(0, 255, 0), color: { r: 0, g: 255, b: 0, a: 1 }, weight: 1, bucket: 'text' },
+      { hex: hex(0, 0, 255), color: { r: 0, g: 0, b: 255, a: 1 }, weight: 1, bucket: 'text' },
     ];
     const mapping: ColorMapping = new Map([
-      ['#ff0000', '#ffffff'],
-      ['#00ff00', '#000000'],
+      [hex(255, 0, 0), hex(255, 255, 255)],
+      [hex(0, 255, 0), hex(0, 0, 0)],
     ]);
 
     const result = computeCoverage(palette, mapping);
@@ -30,12 +35,12 @@ describe('computeCoverage', () => {
 
   it('returns ratio 1 for fully mapped palette', () => {
     const palette: SitePaletteEntry[] = [
-      { hex: '#ff0000', color: { r: 255, g: 0, b: 0, a: 1 }, weight: 1, bucket: 'text' },
-      { hex: '#00ff00', color: { r: 0, g: 255, b: 0, a: 1 }, weight: 1, bucket: 'text' },
+      { hex: hex(255, 0, 0), color: { r: 255, g: 0, b: 0, a: 1 }, weight: 1, bucket: 'text' },
+      { hex: hex(0, 255, 0), color: { r: 0, g: 255, b: 0, a: 1 }, weight: 1, bucket: 'text' },
     ];
     const mapping: ColorMapping = new Map([
-      ['#ff0000', '#ffffff'],
-      ['#00ff00', '#000000'],
+      [hex(255, 0, 0), hex(255, 255, 255)],
+      [hex(0, 255, 0), hex(0, 0, 0)],
     ]);
 
     const result = computeCoverage(palette, mapping);

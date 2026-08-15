@@ -3,6 +3,7 @@ import type { RgbaColor } from '../../color/parseColor';
 import { toHex } from '../../color/parseColor';
 import { builtInThemes } from '../../themes';
 import type { SiteSettings } from '../../storage/settingsStore';
+import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { CustomPropertyFact, PageFacts } from '../pageFacts';
 import { assignTokens, variableRemap } from './variableRemap';
 
@@ -34,6 +35,18 @@ function emptyFacts(): PageFacts {
     shadowRootCount: 0,
     styleSheetCount: 0,
     unreadableStyleSheetCount: 0,
+  };
+}
+
+function anyPlan(): StrategyPlan {
+  return {
+    provenance: {
+      kind: 'auto',
+      rule: 'test',
+      strategies: ['baseline', 'variableRemap', 'authoredRemap', 'computedFallback'],
+      reasons: [],
+      tableVersion: TABLE_VERSION,
+    },
   };
 }
 
@@ -186,7 +199,12 @@ describe('assignTokens', () => {
 
 describe('variableRemap strategy', () => {
   it('returns an empty string when nothing can be classified', () => {
-    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), emptyFacts());
+    const css = variableRemap.produceCss(
+      builtInThemes[0],
+      anySiteSettings(),
+      emptyFacts(),
+      anyPlan(),
+    );
 
     expect(css).toBe('');
   });
@@ -203,7 +221,7 @@ describe('variableRemap strategy', () => {
       ],
     };
 
-    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), facts);
+    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), facts, anyPlan());
 
     expect(css).toMatchInlineSnapshot(`
       "html[data-pm-active="true"] {
@@ -222,7 +240,7 @@ describe('variableRemap strategy', () => {
       ],
     };
 
-    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), facts);
+    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), facts, anyPlan());
     const declarationLines = css.split('\n').filter((line) => line.trim().startsWith('--'));
 
     expect(declarationLines.length).toBeGreaterThan(0);

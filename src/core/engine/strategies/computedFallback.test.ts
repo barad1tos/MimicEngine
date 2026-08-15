@@ -5,7 +5,9 @@ import * as collectComputedColorsModule from '../../analyzer/collectComputedColo
 import { injectStylesheet, removeStylesheet, STYLE_ELEMENT_ID } from '../../injector/styleElement';
 import type { SiteSettings } from '../../storage/settingsStore';
 import { builtInThemes } from '../../themes';
+import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
+import type { StrategyId } from '../strategyId';
 import { computedFallback } from './computedFallback';
 
 const catppuccinFrappe = builtInThemes[0];
@@ -49,6 +51,25 @@ function factsWithAuthoredRule(rule: AuthoredColorDeclaration): PageFacts {
   return { ...emptyFacts(), authoredRules: [rule] };
 }
 
+function planWith(strategies: StrategyId[]): StrategyPlan {
+  return {
+    provenance: {
+      kind: 'auto',
+      rule: 'test',
+      strategies,
+      reasons: [],
+      tableVersion: TABLE_VERSION,
+    },
+  };
+}
+
+// Matches produceCss's real call site (composeStylesheet only invokes a
+// strategy when it's in the plan), so the default fixture always includes
+// computedFallback alongside authoredRemap — exercising the stoplist
+// suppression these tests are built around.
+const planWithAuthoredRemap = planWith(['baseline', 'authoredRemap', 'computedFallback']);
+const planWithoutAuthoredRemap = planWith(['baseline', 'computedFallback']);
+
 function requireStyleElement(): HTMLStyleElement {
   const element = document.getElementById(STYLE_ELEMENT_ID);
   if (!(element instanceof HTMLStyleElement)) throw new Error('expected style element to exist');
@@ -71,7 +92,12 @@ afterEach(() => {
 
 describe('computedFallback strategy', () => {
   it('returns an empty string when there is nothing to sample', () => {
-    const css = computedFallback.produceCss(catppuccinFrappe, anySiteSettings(), emptyFacts());
+    const css = computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithAuthoredRemap,
+    );
 
     expect(css).toBe('');
   });
@@ -88,7 +114,12 @@ describe('computedFallback strategy', () => {
       return original(...args);
     });
 
-    computedFallback.produceCss(catppuccinFrappe, anySiteSettings(), emptyFacts());
+    computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithAuthoredRemap,
+    );
 
     expect(disabledDuringSampling).toBe(true);
     expect(styleElement.disabled).toBe(false);
@@ -106,16 +137,82 @@ describe('computedFallback strategy', () => {
       bucket: 'text',
     });
 
-    const css = computedFallback.produceCss(catppuccinFrappe, anySiteSettings(), facts);
+    const css = computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      facts,
+      planWithAuthoredRemap,
+    );
 
     expect(css).toBe('');
+  });
+
+  it('remaps an authored-covered color when the plan has no authoredRemap (stoplist not built)', () => {
+    // Same fixture as the suppression test above, but authoredRemap is not
+    // in the plan — e.g. an opaque page where computedFallback is the only
+    // strategy that can see colors at all. Without authoredRemap running,
+    // there is nothing for the stoplist to protect against double-emission,
+    // so the red the page actually authored must still get remapped.
+    document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
+    document.body.innerHTML = '<p class="hero">text</p>';
+
+    const facts = factsWithAuthoredRule({
+      selector: '.hero',
+      property: 'color',
+      value: '#ff0000',
+      color: { r: 255, g: 0, b: 0, a: 1 },
+      bucket: 'text',
+    });
+
+    const css = computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      facts,
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).toContain('html[data-pm-active="true"] p.hero {');
+    expect(css).toContain('color:');
+  });
+
+  it('does not let a translucent authored declaration suppress an opaque novel sample of the same RGB', () => {
+    // The authored side has only a translucent (a: 0.5) red; the page's
+    // actual computed color for .hero is fully opaque. The stoplist must not
+    // treat the translucent authored entry as covering the opaque sample —
+    // isOpaque gates what enters collectAuthoredHexes, same as line 97 gates
+    // what enters the sample pipeline itself.
+    document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
+    document.body.innerHTML = '<p class="hero">text</p>';
+
+    const facts = factsWithAuthoredRule({
+      selector: '.scrim',
+      property: 'color',
+      value: 'rgba(255, 0, 0, 0.5)',
+      color: { r: 255, g: 0, b: 0, a: 0.5 },
+      bucket: 'text',
+    });
+
+    const css = computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      facts,
+      planWithAuthoredRemap,
+    );
+
+    expect(css).toContain('html[data-pm-active="true"] p.hero {');
+    expect(css).toContain('color:');
   });
 
   it('maps and emits a novel color invisible to authored analysis, marked !important', () => {
     document.head.innerHTML = '<style>.hero { color: rgb(20, 30, 40); }</style>';
     document.body.innerHTML = '<p class="hero">text</p>';
 
-    const css = computedFallback.produceCss(catppuccinFrappe, anySiteSettings(), emptyFacts());
+    const css = computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithAuthoredRemap,
+    );
 
     expect(css).toContain('html[data-pm-active="true"] p.hero {');
     expect(css).toContain('color:');
@@ -126,7 +223,12 @@ describe('computedFallback strategy', () => {
     document.head.innerHTML = '<style>.scrim { color: rgba(20, 30, 40, 0.5); }</style>';
     document.body.innerHTML = '<p class="scrim">text</p>';
 
-    const css = computedFallback.produceCss(catppuccinFrappe, anySiteSettings(), emptyFacts());
+    const css = computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithAuthoredRemap,
+    );
 
     expect(css).toBe('');
   });
@@ -140,7 +242,12 @@ describe('computedFallback strategy', () => {
     `;
     document.body.innerHTML = '<p class="hero">text</p><div class="panel">panel text</div>';
 
-    const css = computedFallback.produceCss(catppuccinFrappe, anySiteSettings(), emptyFacts());
+    const css = computedFallback.produceCss(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithAuthoredRemap,
+    );
 
     expect(css).toMatchInlineSnapshot(`
       "html[data-pm-active="true"] p.hero {

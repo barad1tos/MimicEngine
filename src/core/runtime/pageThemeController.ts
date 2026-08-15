@@ -2,7 +2,7 @@ import { buildColorMapping, extractSitePalette } from '../engine/colorMap';
 import { collectPageFacts } from '../engine/pageFacts';
 import { composeStylesheet } from '../engine/composeStylesheet';
 import { computeCoverage } from '../engine/coverage';
-import { decideStrategies, type StrategyPlan } from '../engine/decisionTable';
+import { decideStrategies, planStrategies, type StrategyPlan } from '../engine/decisionTable';
 import { deriveMetrics } from '../engine/pageMetrics';
 import { guardContrast } from '../engine/contrastGuard';
 import { writePlanDiagnostics } from '../engine/diagnostics';
@@ -25,7 +25,7 @@ const MAX_REAPPLIES_PER_MINUTE = 12;
 const MUTATION_WINDOW_MS = 60_000;
 
 function needsLiveObserver(siteSettings: SiteSettings, plan: StrategyPlan): boolean {
-  return siteSettings.strategy === 'auto' || plan.strategies.some((id) => id !== 'baseline');
+  return siteSettings.strategy === 'auto' || planStrategies(plan).some((id) => id !== 'baseline');
 }
 
 export function createPageThemeController(): PageThemeController {
@@ -113,7 +113,7 @@ export function createPageThemeController(): PageThemeController {
     // require a strategy-interface seam (deferred). Omit coverage for plans without
     // authoredRemap.
     let coverage;
-    if (plan.strategies.includes('authoredRemap')) {
+    if (planStrategies(plan).includes('authoredRemap')) {
       const palette = extractSitePalette(facts);
       const mapping = guardContrast(
         buildColorMapping(palette, theme, {
