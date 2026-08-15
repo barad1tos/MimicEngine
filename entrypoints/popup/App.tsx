@@ -244,6 +244,15 @@ export function App() {
             />
           </div>
 
+          <div className="row">
+            <span>Preserve brand colors</span>
+            <input
+              type="checkbox"
+              checked={siteSettings.preserveBrandColors}
+              onChange={(event) => updateSite({ preserveBrandColors: event.target.checked })}
+            />
+          </div>
+
           <button type="button" className="secondary" onClick={resetSite}>
             Reset domain settings
           </button>

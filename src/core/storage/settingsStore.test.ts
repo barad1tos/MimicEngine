@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, normalizeSettings } from './settingsStore';
+import { DEFAULT_SETTINGS, createDefaultSiteSettings, normalizeSettings } from './settingsStore';
 
 describe('normalizeSettings', () => {
+  it('defaults preserveBrandColors to true on a freshly created site', () => {
+    expect(createDefaultSiteSettings().preserveBrandColors).toBe(true);
+  });
+
   it('migrates a legacy mode:"off" site to enabled:false, strategy:"auto"', () => {
     const settings = normalizeSettings({
       globalThemeId: 'placeholder-theme',
@@ -56,7 +60,7 @@ describe('normalizeSettings', () => {
     expect(settings.sites['example.com']).toMatchObject({ strategy: 'auto' });
   });
 
-  it('drops preserveBrandColors silently', () => {
+  it('carries over a legacy preserveBrandColors boolean', () => {
     const settings = normalizeSettings({
       globalThemeId: 'placeholder-theme',
       sites: {
@@ -64,12 +68,27 @@ describe('normalizeSettings', () => {
           enabled: true,
           themeId: 'placeholder-theme',
           mode: 'basic',
-          preserveBrandColors: true,
+          preserveBrandColors: false,
         },
       },
     });
 
-    expect(settings.sites['example.com']).not.toHaveProperty('preserveBrandColors');
+    expect(settings.sites['example.com']).toMatchObject({ preserveBrandColors: false });
+  });
+
+  it('defaults preserveBrandColors to true for a non-boolean value', () => {
+    const settings = normalizeSettings({
+      globalThemeId: 'placeholder-theme',
+      sites: {
+        'example.com': {
+          enabled: true,
+          themeId: 'placeholder-theme',
+          preserveBrandColors: 'yes',
+        },
+      },
+    });
+
+    expect(settings.sites['example.com']).toMatchObject({ preserveBrandColors: true });
   });
 
   it('keeps a valid override and drops a garbage one', () => {

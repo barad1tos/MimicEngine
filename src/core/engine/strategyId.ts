@@ -1,4 +1,4 @@
-export const STRATEGY_IDS = ['baseline', 'variableRemap'] as const;
+export const STRATEGY_IDS = ['baseline', 'variableRemap', 'authoredRemap'] as const;
 
 export type StrategyId = (typeof STRATEGY_IDS)[number];
 

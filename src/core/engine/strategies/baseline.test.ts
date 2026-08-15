@@ -10,6 +10,7 @@ function anySiteSettings(): SiteSettings {
     themeId: 'placeholder-theme',
     strategy: 'auto',
     preserveImages: true,
+    preserveBrandColors: true,
     overrides: [],
   };
 }

@@ -13,6 +13,7 @@ export type SiteSettings = {
   themeId: string;
   strategy: 'auto' | StrategyId;
   preserveImages: boolean;
+  preserveBrandColors: boolean;
   overrides: SiteOverride[];
 };
 
@@ -36,6 +37,7 @@ export function createDefaultSiteSettings(themeId = DEFAULT_THEME_ID): SiteSetti
     themeId,
     strategy: 'auto',
     preserveImages: true,
+    preserveBrandColors: true,
     overrides: [],
   };
 }
@@ -93,6 +95,10 @@ function normalizeSites(
       ...resolveEnabledAndStrategy(rawSiteSettings),
       preserveImages:
         typeof rawSiteSettings.preserveImages === 'boolean' ? rawSiteSettings.preserveImages : true,
+      preserveBrandColors:
+        typeof rawSiteSettings.preserveBrandColors === 'boolean'
+          ? rawSiteSettings.preserveBrandColors
+          : true,
       overrides: normalizeOverrides(rawSiteSettings.overrides),
     };
   }
