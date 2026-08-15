@@ -1,5 +1,5 @@
 // src/core/engine/contrastGuard.test.ts
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { contrastRatio } from '../color/contrast';
 import { oklchToRgba, rgbaToOklch } from '../color/oklch';
 import { parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
@@ -188,6 +188,31 @@ describe('guardContrast', () => {
 
     expect(adjustments).toBe(0);
     expect(guarded.has(hex(passingBrandTextHex))).toBe(false);
+  });
+
+  it('warns and falls back to the theme text token when the mapped target is unparseable', () => {
+    // HexColor is a type-level guarantee (branded, produced by toHex), not a
+    // runtime one — this hand-builds a mapping entry that bypasses toHex to
+    // exercise the defensive path a corrupted/unexpected value would hit.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const canvas = catppuccinFrappe.tokens.canvas;
+    const palette: SitePaletteEntry[] = [
+      entry('#111111', 'background', 10),
+      entry('#222222', 'text', 5),
+    ];
+    const mapping: ColorMapping = new Map([
+      [hex('#111111'), hex(canvas)],
+      [hex('#222222'), 'not-a-color' as HexColor],
+    ]);
+
+    const { mapping: repaired, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
+
+    expect(adjustments).toBe(1);
+    expect(repaired.get(hex('#222222'))).toBe(catppuccinFrappe.tokens.text);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[Palette Mimicry] unparseable color in contrast repair',
+      expect.objectContaining({ targetHex: 'not-a-color' }),
+    );
   });
 
   it('does not mutate the input mapping', () => {

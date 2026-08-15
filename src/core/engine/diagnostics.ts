@@ -17,6 +17,32 @@ export function planStorageKey(siteKey: string): string {
   return `${PLAN_STORAGE_PREFIX}${siteKey}`;
 }
 
+// Shared shape guard for every place an untyped value claims to be
+// PlanDiagnostics: readPlanDiagnostics' storage read, and the popup's
+// storage.onChanged listener (which receives the raw newValue from a
+// browser API, not something this module controls). Deliberately shallow —
+// object-ness, provenance.kind, and array-ness of an 'auto' provenance's
+// strategies list — not a full deep validator; a value that passes this but
+// is otherwise malformed is a display bug, not a theming or storage-safety
+// one. Invalid input is the caller's job to turn into null/ignore.
+export function isPlanDiagnostics(value: unknown): value is PlanDiagnostics {
+  if (typeof value !== 'object' || value === null) return false;
+
+  const plan = (value as { plan?: unknown }).plan;
+  if (typeof plan !== 'object' || plan === null) return false;
+
+  const provenance = (plan as { provenance?: unknown }).provenance;
+  if (typeof provenance !== 'object' || provenance === null) return false;
+
+  const kind = (provenance as { kind?: unknown }).kind;
+  if (kind !== 'auto' && kind !== 'manual') return false;
+  if (kind === 'auto' && !Array.isArray((provenance as { strategies?: unknown }).strategies)) {
+    return false;
+  }
+
+  return true;
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -47,8 +73,9 @@ export async function writePlanDiagnostics(diagnostics: PlanDiagnostics): Promis
 export async function readPlanDiagnostics(siteKey: string): Promise<PlanDiagnostics | null> {
   try {
     const key = planStorageKey(siteKey);
-    const result = await browser.storage.session.get<Record<string, PlanDiagnostics>>(key);
-    return result[key] ?? null;
+    const result = await browser.storage.session.get<Record<string, unknown>>(key);
+    const value = result[key];
+    return isPlanDiagnostics(value) ? value : null;
   } catch (error) {
     console.warn('[Palette Mimicry] failed to read plan diagnostics', error);
     return null;

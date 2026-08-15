@@ -63,6 +63,7 @@ describe('deriveMetrics', () => {
           value: '#fff',
           color: whiteColor,
           bucket: 'text',
+          conditions: [],
         },
         {
           selector: '.b',
@@ -70,6 +71,7 @@ describe('deriveMetrics', () => {
           value: 'not-a-color',
           color: null,
           bucket: 'background',
+          conditions: [],
         },
         {
           selector: '.c',
@@ -77,6 +79,7 @@ describe('deriveMetrics', () => {
           value: '#000',
           color: blackColor,
           bucket: 'text',
+          conditions: [],
         },
       ],
     };
@@ -93,6 +96,7 @@ describe('deriveMetrics', () => {
           value: '#fff',
           color: whiteColor,
           bucket: 'text',
+          conditions: [],
         },
         {
           selector: 'body',
@@ -100,6 +104,7 @@ describe('deriveMetrics', () => {
           value: '#000',
           color: blackColor,
           bucket: 'background',
+          conditions: [],
         },
         // Same color as first (white) — should dedupe
         {
@@ -108,6 +113,7 @@ describe('deriveMetrics', () => {
           value: '#ffffff',
           color: whiteColor,
           bucket: 'text',
+          conditions: [],
         },
       ],
       inlineStyleColors: [
@@ -117,6 +123,7 @@ describe('deriveMetrics', () => {
           value: '#f00',
           color: redColor,
           bucket: 'text',
+          conditions: [],
         },
         // Same color as authoredRules white — should dedupe
         {
@@ -125,6 +132,7 @@ describe('deriveMetrics', () => {
           value: '#fff',
           color: whiteColor,
           bucket: 'background',
+          conditions: [],
         },
       ],
     };
@@ -142,6 +150,7 @@ describe('deriveMetrics', () => {
           value: '#fff',
           color: whiteColor,
           bucket: 'text',
+          conditions: [],
         },
         {
           selector: 'body',
@@ -149,6 +158,7 @@ describe('deriveMetrics', () => {
           value: '14px',
           color: null,
           bucket: 'other',
+          conditions: [],
         },
       ],
       inlineStyleColors: [
@@ -158,35 +168,11 @@ describe('deriveMetrics', () => {
           value: 'not-a-color',
           color: null,
           bucket: 'background',
+          conditions: [],
         },
       ],
     };
     expect(deriveMetrics(facts, { mutationRate: 0 }).authoredColorCount).toBe(1);
-  });
-
-  it('excludes custom-property declarations from authoredColorCount', () => {
-    const facts: PageFacts = {
-      ...base,
-      authoredRules: [
-        {
-          selector: ':root',
-          property: '--x',
-          value: '#123456',
-          color: { r: 0x12, g: 0x34, b: 0x56, a: 1 },
-          bucket: 'other',
-        },
-      ],
-      inlineStyleColors: [
-        {
-          selector: '.a',
-          property: '--y',
-          value: '#654321',
-          color: { r: 0x65, g: 0x43, b: 0x21, a: 1 },
-          bucket: 'other',
-        },
-      ],
-    };
-    expect(deriveMetrics(facts, { mutationRate: 0 }).authoredColorCount).toBe(0);
   });
 
   it('computes customPropertyColorRatio with positive values', () => {
@@ -213,6 +199,7 @@ describe('deriveMetrics', () => {
           value: '#f00',
           color: redColor,
           bucket: 'text',
+          conditions: [],
         },
       ],
     };
@@ -286,6 +273,7 @@ describe('deriveMetrics', () => {
               value: '#fff',
               color: whiteColor,
               bucket: 'text',
+              conditions: [],
             },
           ],
         },

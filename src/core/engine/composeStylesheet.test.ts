@@ -107,4 +107,58 @@ describe('composeStylesheet', () => {
     expect(css).toContain(':root {');
     expect(css).toContain(`--pm-canvas: ${theme.tokens.canvas}`);
   });
+
+  it('override-wins cascade contract: a SiteOverride beats a higher-raw-specificity strategy rule', () => {
+    // The strategy (authoredRemap) rule targets a deliberately high-specificity
+    // selector; the override targets a plain, low-specificity one that still
+    // matches the same element. Per emitGroupedRules' :where(...) wrapping,
+    // the strategy rule's selector contributes zero specificity beyond the
+    // gate, so the override's own selector — however plain — always wins,
+    // and composeStylesheet emits overrides last as a source-order backstop
+    // for any tie.
+    const authoredRemapPlan: StrategyPlan = {
+      provenance: {
+        kind: 'auto',
+        rule: 'test',
+        strategies: ['authoredRemap'],
+        reasons: [],
+        tableVersion: 1,
+      },
+    };
+    const factsWithHighSpecificityRule: PageFacts = {
+      ...facts,
+      authoredRules: [
+        {
+          selector: '#app .card.featured.special',
+          property: 'color',
+          value: '#c9c9d1',
+          color: { r: 0xc9, g: 0xc9, b: 0xd1, a: 1 },
+          bucket: 'text',
+          conditions: [],
+        },
+      ],
+    };
+    const siteSettings: SiteSettings = {
+      ...createDefaultSiteSettings(theme.id),
+      overrides: [{ selector: '.card', property: 'color', token: 'success' }],
+    };
+
+    const css = composeStylesheet(
+      theme,
+      siteSettings,
+      factsWithHighSpecificityRule,
+      authoredRemapPlan,
+    );
+
+    // The strategy rule's site selector is neutralized inside :where(...).
+    expect(css).toContain(':where(#app .card.featured.special)');
+    // The override rule is unwrapped, at full specificity.
+    const overrideRule = '.card { color: var(--pm-success) !important; }';
+    expect(css).toContain(overrideRule);
+    // Source order: the override trails the strategy block, the tiebreak
+    // backstop if specificity were ever equal.
+    expect(css.indexOf(overrideRule)).toBeGreaterThan(
+      css.indexOf(':where(#app .card.featured.special)'),
+    );
+  });
 });

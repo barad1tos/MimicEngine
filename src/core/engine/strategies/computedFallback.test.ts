@@ -135,6 +135,7 @@ describe('computedFallback strategy', () => {
       value: '#ff0000',
       color: { r: 255, g: 0, b: 0, a: 1 },
       bucket: 'text',
+      conditions: [],
     });
 
     const css = computedFallback.produceCss(
@@ -162,6 +163,7 @@ describe('computedFallback strategy', () => {
       value: '#ff0000',
       color: { r: 255, g: 0, b: 0, a: 1 },
       bucket: 'text',
+      conditions: [],
     });
 
     const css = computedFallback.produceCss(
@@ -171,7 +173,7 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    expect(css).toContain('html[data-pm-active="true"] p.hero {');
+    expect(css).toContain('html[data-pm-active="true"] :where(p.hero) {');
     expect(css).toContain('color:');
   });
 
@@ -190,6 +192,7 @@ describe('computedFallback strategy', () => {
       value: 'rgba(255, 0, 0, 0.5)',
       color: { r: 255, g: 0, b: 0, a: 0.5 },
       bucket: 'text',
+      conditions: [],
     });
 
     const css = computedFallback.produceCss(
@@ -199,7 +202,7 @@ describe('computedFallback strategy', () => {
       planWithAuthoredRemap,
     );
 
-    expect(css).toContain('html[data-pm-active="true"] p.hero {');
+    expect(css).toContain('html[data-pm-active="true"] :where(p.hero) {');
     expect(css).toContain('color:');
   });
 
@@ -214,7 +217,7 @@ describe('computedFallback strategy', () => {
       planWithAuthoredRemap,
     );
 
-    expect(css).toContain('html[data-pm-active="true"] p.hero {');
+    expect(css).toContain('html[data-pm-active="true"] :where(p.hero) {');
     expect(css).toContain('color:');
     expect(css).toContain('!important');
   });
@@ -250,11 +253,11 @@ describe('computedFallback strategy', () => {
     );
 
     expect(css).toMatchInlineSnapshot(`
-      "html[data-pm-active="true"] p.hero {
+      "html[data-pm-active="true"] :where(p.hero) {
         color: #c6d0f5 !important;
       }
 
-      html[data-pm-active="true"] div.panel {
+      html[data-pm-active="true"] :where(div.panel) {
         background-color: #303446 !important;
       }"
     `);

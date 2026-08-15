@@ -33,7 +33,7 @@ function decl(
   property = 'color',
   selector = '.el',
 ): AuthoredColorDeclaration {
-  return { selector, property, value: hex, color: parseCssColor(hex), bucket };
+  return { selector, property, value: hex, color: parseCssColor(hex), bucket, conditions: [] };
 }
 
 function makeFacts(
@@ -128,7 +128,14 @@ describe('extractSitePalette', () => {
 
   it('skips entries with a null color', () => {
     const facts = makeFacts([
-      { selector: '.el', property: 'color', value: 'currentColor', color: null, bucket: 'other' },
+      {
+        selector: '.el',
+        property: 'color',
+        value: 'currentColor',
+        color: null,
+        bucket: 'other',
+        conditions: [],
+      },
     ]);
 
     expect(extractSitePalette(facts)).toEqual([]);
@@ -143,6 +150,7 @@ describe('extractSitePalette', () => {
         value: 'rgba(17, 34, 51, 0.5)',
         color: parseCssColor('rgba(17, 34, 51, 0.5)'),
         bucket: 'background',
+        conditions: [],
       },
     ]);
 

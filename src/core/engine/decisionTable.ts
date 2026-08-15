@@ -9,7 +9,7 @@ export type DecisionRow = {
   strategies: StrategyId[];
 };
 
-export const TABLE_VERSION = 2;
+export const TABLE_VERSION = 3;
 
 export const DECISION_TABLE: readonly DecisionRow[] = [
   {
@@ -21,6 +21,22 @@ export const DECISION_TABLE: readonly DecisionRow[] = [
     name: 'variables-capable',
     when: { colorCustomPropertyCount: { gte: 8 } },
     strategies: ['baseline', 'variableRemap'],
+  },
+  // Above authored-rich: a page can be both authored-color-rich AND largely
+  // opaque-stylesheet (cross-origin sheets, CSP-blocked sheets, ...) at the
+  // same time. Without this row, authored-rich's earlier table position
+  // would win and the opaque-stylesheet signal — which authoredRemap alone
+  // can't see into — would be silently dropped. mixed-visibility catches
+  // that combination first and adds computedFallback to cover what
+  // authoredRemap's readable-sheet analysis misses.
+  {
+    name: 'mixed-visibility',
+    when: {
+      authoredColorCount: { gte: 12 },
+      unreadableStylesheetRatio: { gte: 0.5 },
+      mutationRate: { lte: 5 },
+    },
+    strategies: ['baseline', 'authoredRemap', 'computedFallback'],
   },
   {
     name: 'authored-rich',

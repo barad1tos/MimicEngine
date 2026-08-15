@@ -3,7 +3,7 @@ import { buildColorMapping, extractSitePalette, type ColorMapping } from '../col
 import { guardContrast } from '../contrastGuard';
 import type { AuthoredColorDeclaration } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
-import { emitGroupedRules } from './emitGroupedRules';
+import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
 
 export const authoredRemap: PaletteEngine = {
   id: 'authoredRemap',
@@ -37,27 +37,35 @@ function mappedValueFor(
   return mapping.get(toHex(declaration.color)) ?? null;
 }
 
-// Groups mappable declarations by selector: one Map entry per selector, in
-// first-appearance order across authoredRules then inlineStyleColors (the
-// two arrays are walked as a single combined sequence, so a selector shared
-// between both sources merges into the same group). Within a selector, a
-// repeated property keeps the LAST value seen in that combined sequence,
-// matching CSS cascade semantics where a later authored declaration wins.
+// Groups mappable declarations by (conditions, selector), in first-appearance
+// order across authoredRules then inlineStyleColors (the two arrays are
+// walked as a single combined sequence, so a selector shared between both
+// sources under the same condition chain merges into the same group).
+// authoredRules carry real, authored selectors — repeated
+// (conditions, selector, property) keeps the LAST value seen, ordinary CSS
+// cascade semantics. inlineStyleColors carry buildSelectorHint approximations
+// instead of real selectors, so they're ambiguity-tracked: see groupSelectors'
+// doc comment for why a hint collision drops the property rather than
+// guessing a winner.
 function buildSelectorGroups(
   authoredRules: readonly AuthoredColorDeclaration[],
   inlineStyleColors: readonly AuthoredColorDeclaration[],
   mapping: ColorMapping,
-): Map<string, Map<string, string>> {
-  const groups = new Map<string, Map<string, string>>();
+): SelectorGroup[] {
+  const resolved: {
+    declaration: AuthoredColorDeclaration;
+    mappedValue: string;
+    isSelectorHint: boolean;
+  }[] = [];
 
-  for (const declaration of [...authoredRules, ...inlineStyleColors]) {
+  for (const declaration of authoredRules) {
     const mappedValue = mappedValueFor(declaration, mapping);
-    if (mappedValue === null) continue;
-
-    const group = groups.get(declaration.selector) ?? new Map<string, string>();
-    group.set(declaration.property, mappedValue);
-    groups.set(declaration.selector, group);
+    if (mappedValue !== null) resolved.push({ declaration, mappedValue, isSelectorHint: false });
+  }
+  for (const declaration of inlineStyleColors) {
+    const mappedValue = mappedValueFor(declaration, mapping);
+    if (mappedValue !== null) resolved.push({ declaration, mappedValue, isSelectorHint: true });
   }
 
-  return groups;
+  return groupSelectors(resolved);
 }

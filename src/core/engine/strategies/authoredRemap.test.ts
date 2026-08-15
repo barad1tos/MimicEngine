@@ -20,8 +20,9 @@ function decl(
   property: string,
   hex: string,
   bucket: AuthoredColorDeclaration['bucket'] = 'other',
+  conditions: string[] = [],
 ): AuthoredColorDeclaration {
-  return { selector, property, value: hex, color: requireColor(hex), bucket };
+  return { selector, property, value: hex, color: requireColor(hex), bucket, conditions };
 }
 
 function emptyFacts(): PageFacts {
@@ -88,12 +89,12 @@ describe('authoredRemap strategy', () => {
     const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
 
     expect(css).toMatchInlineSnapshot(`
-      "html[data-pm-active="true"] .card {
+      "html[data-pm-active="true"] :where(.card) {
         background-color: #303446 !important;
         color: #c6d0f5 !important;
       }
 
-      html[data-pm-active="true"] .header {
+      html[data-pm-active="true"] :where(.header) {
         border-color: #626880 !important;
       }"
     `);
@@ -124,7 +125,14 @@ describe('authoredRemap strategy', () => {
 
   it('skips declarations whose color did not parse', () => {
     const pageFacts = facts([
-      { selector: '.card', property: 'color', value: 'currentColor', color: null, bucket: 'text' },
+      {
+        selector: '.card',
+        property: 'color',
+        value: 'currentColor',
+        color: null,
+        bucket: 'text',
+        conditions: [],
+      },
     ]);
 
     const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
@@ -139,7 +147,7 @@ describe('authoredRemap strategy', () => {
     );
 
     const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
-    const selectorOrder = [...css.matchAll(/html\[data-pm-active="true"] (\S+) \{/g)].map(
+    const selectorOrder = [...css.matchAll(/html\[data-pm-active="true"] :where\((\S+)\) \{/g)].map(
       (match) => match[1],
     );
 
@@ -153,7 +161,7 @@ describe('authoredRemap strategy', () => {
     );
 
     const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
-    const blockCount = [...css.matchAll(/html\[data-pm-active="true"] \.btn \{/g)].length;
+    const blockCount = [...css.matchAll(/html\[data-pm-active="true"] :where\(\.btn\) \{/g)].length;
 
     expect(blockCount).toBe(1);
     expect(css).toContain('color:');
@@ -217,6 +225,7 @@ describe('authoredRemap strategy', () => {
         value: 'rgba(16, 16, 20, 0.5)',
         color: parseCssColor('rgba(16, 16, 20, 0.5)'),
         bucket: 'background',
+        conditions: [],
       },
     ]);
 
@@ -239,5 +248,52 @@ describe('authoredRemap strategy', () => {
 
     expect(css).toContain('.brand');
     expect(css).toContain('background-color:');
+  });
+
+  it('wraps a @media-nested declaration in its condition chain, never top-level', () => {
+    const pageFacts = facts([
+      decl('.top', 'color', '#f5f5f7', 'text'),
+      decl('.nested', 'border-color', '#3a3a44', 'border', ['@media print']),
+    ]);
+
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+
+    expect(css).toContain('@media print {');
+    // The nested block is indented inside the @media wrapper.
+    expect(css).toMatch(/@media print \{\n {2}html\[data-pm-active="true"] :where\(\.nested\)/);
+    // The top-level declaration is never pulled inside the @media wrapper.
+    const mediaBlockStart = css.indexOf('@media print {');
+    const mediaBlockEnd = css.indexOf('\n}', mediaBlockStart) + 2;
+    const outsideMediaBlock = css.slice(0, mediaBlockStart) + css.slice(mediaBlockEnd);
+    expect(outsideMediaBlock).toContain('.top');
+    expect(outsideMediaBlock).not.toContain('@media');
+  });
+
+  it('drops an ambiguous inline-style property when the same hint maps to different values', () => {
+    // Both declarations share the hint "div.card" (two different elements
+    // that happen to produce the same fabricated selector) but authored
+    // different colors — #c9c9d1 maps to text, #f5f5f7 maps to textMuted
+    // (same weight-1/hex-asc tie-break as the cascade test above). Ambiguous:
+    // the property must be dropped, not silently resolved to one winner.
+    const pageFacts = facts(
+      [],
+      [decl('div.card', 'color', '#c9c9d1', 'text'), decl('div.card', 'color', '#f5f5f7', 'text')],
+    );
+
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+
+    expect(css).toBe('');
+  });
+
+  it('keeps a single declaration when the same inline-style hint repeats the identical value', () => {
+    const pageFacts = facts(
+      [],
+      [decl('div.card', 'color', '#c9c9d1', 'text'), decl('div.card', 'color', '#c9c9d1', 'text')],
+    );
+
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const colorLines = css.split('\n').filter((line) => line.trim().startsWith('color:'));
+
+    expect(colorLines).toHaveLength(1);
   });
 });

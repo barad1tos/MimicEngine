@@ -99,8 +99,33 @@ describe('collectPageFacts', () => {
       value: '#123456',
       color: { r: 0x12, g: 0x34, b: 0x56, a: 1 },
       bucket: 'text',
+      conditions: ['@media (min-width: 1px)'],
     });
-    expect(facts.authoredRules.some((rule) => rule.selector === '.plain')).toBe(true);
+    const plain = facts.authoredRules.find((rule) => rule.selector === '.plain');
+    expect(plain?.conditions).toEqual([]);
+  });
+
+  it('records @supports conditionText alongside @media mediaText, outermost-first', () => {
+    const doc = buildDocument(`
+      @supports (display: grid) {
+        @media print {
+          .nested { color: #123456; }
+        }
+      }
+    `);
+    const facts = collectPageFacts(doc);
+    const nested = facts.authoredRules.find((rule) => rule.selector === '.nested');
+    expect(nested?.conditions).toEqual(['@supports (display: grid)', '@media print']);
+  });
+
+  it('never appends a custom-property declaration to authoredRules or inlineStyleColors', () => {
+    document.head.innerHTML = '<style>:root { --brand-bg: #101010; }</style>';
+    document.body.innerHTML = '<p style="--brand-fg: #202020; color: #303030;">hi</p>';
+    const facts = collectPageFacts(document);
+
+    expect(facts.authoredRules.some((rule) => rule.property.startsWith('--'))).toBe(false);
+    expect(facts.inlineStyleColors.some((rule) => rule.property.startsWith('--'))).toBe(false);
+    expect(facts.inlineStyleColors.map((rule) => rule.property)).toEqual(['color']);
   });
 
   it('matches custom properties from an arbitrary comma-separated selector list containing :root/html', () => {
@@ -123,6 +148,7 @@ describe('collectPageFacts', () => {
         value: '#123456',
         color: { r: 0x12, g: 0x34, b: 0x56, a: 1 },
         bucket: 'text',
+        conditions: [],
       },
     ]);
   });

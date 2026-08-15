@@ -125,6 +125,15 @@ describe('readPlanDiagnostics', () => {
     await expect(readPlanDiagnostics('absent.example')).resolves.toBeNull();
   });
 
+  it('returns null for a malformed stored value instead of surfacing it', async () => {
+    fakeBrowser.storage.session.data.set(planStorageKey('malformed.example'), {
+      siteKey: 'malformed.example',
+      plan: { provenance: { kind: 'bogus' } },
+    });
+
+    await expect(readPlanDiagnostics('malformed.example')).resolves.toBeNull();
+  });
+
   it('swallows a thrown storage error, warns, and returns null instead of throwing', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     fakeBrowser.storage.session.get.mockImplementationOnce(() => {
