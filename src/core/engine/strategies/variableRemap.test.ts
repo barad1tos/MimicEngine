@@ -27,6 +27,8 @@ function anySiteSettings(): SiteSettings {
 function emptyFacts(): PageFacts {
   return {
     customProperties: [],
+    authoredRules: [],
+    inlineStyleColors: [],
     domElementCount: 0,
     shadowRootCount: 0,
     styleSheetCount: 0,

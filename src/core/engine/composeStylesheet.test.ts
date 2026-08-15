@@ -11,6 +11,8 @@ const theme = builtInThemes[0];
 
 const facts: PageFacts = {
   customProperties: [],
+  authoredRules: [],
+  inlineStyleColors: [],
   domElementCount: 100,
   shadowRootCount: 0,
   styleSheetCount: 0,
