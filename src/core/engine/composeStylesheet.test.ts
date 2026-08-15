@@ -62,13 +62,17 @@ describe('composeStylesheet', () => {
   it('emits override rules last, sorted by selector then property', () => {
     const siteSettings = siteSettingsWithOverrides();
 
-    const css = composeStylesheet(theme, siteSettings, facts, emptyPlan);
+    const css = composeStylesheet(theme, siteSettings, facts, fullPlan);
 
+    // Unique to buildBaseStylesheet's output — proves overrides trail strategy CSS,
+    // not just the preamble.
+    const baselineMarker = css.indexOf('::selection');
     const alphaBackground = css.indexOf('.alpha { background-color:');
     const alphaBorder = css.indexOf('.alpha { border-color:');
     const zebraColor = css.indexOf('.zebra { color:');
 
-    expect(alphaBackground).toBeGreaterThanOrEqual(0);
+    expect(baselineMarker).toBeGreaterThanOrEqual(0);
+    expect(alphaBackground).toBeGreaterThan(baselineMarker);
     expect(alphaBorder).toBeGreaterThan(alphaBackground);
     expect(zebraColor).toBeGreaterThan(alphaBorder);
   });
