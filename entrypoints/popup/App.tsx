@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
-import { builtInThemes } from '../../src/core/themes';
+import { builtInThemes } from '@/src/core/themes';
 import {
   type AppSettings,
   type SiteSettings,
@@ -8,8 +8,8 @@ import {
   createDefaultSiteSettings,
   getSettings,
   saveSettings,
-} from '../../src/core/storage/settingsStore';
-import { getSiteKeyFromUrl } from '../../src/core/storage/siteKey';
+} from '@/src/core/storage/settingsStore';
+import { getSiteKeyFromUrl } from '@/src/core/storage/siteKey';
 
 export function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);

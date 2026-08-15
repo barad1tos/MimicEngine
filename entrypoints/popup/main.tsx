@@ -3,7 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './style.css';
 
-createRoot(document.getElementById('root')!).render(
+const rootElement = document.getElementById('root');
+if (!rootElement) throw new Error('Palette Mimicry popup: #root element is missing in index.html');
+
+createRoot(rootElement).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,

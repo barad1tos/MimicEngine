@@ -41,7 +41,7 @@ export function collectComputedColors(
         property,
         value,
         tagName: element.tagName.toLowerCase(),
-        textLength: element.innerText?.length ?? 0,
+        textLength: element.innerText.length,
       });
     }
   }
@@ -56,6 +56,9 @@ function isProbablyVisible(element: HTMLElement): boolean {
 
 function buildSelectorHint(element: Element): string {
   if (element.id) return `#${CSS.escape(element.id)}`;
-  const className = [...element.classList].slice(0, 2).map((item) => `.${CSS.escape(item)}`).join('');
+  const className = [...element.classList]
+    .slice(0, 2)
+    .map((item) => `.${CSS.escape(item)}`)
+    .join('');
   return `${element.tagName.toLowerCase()}${className}`;
 }

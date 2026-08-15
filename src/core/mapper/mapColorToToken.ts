@@ -1,4 +1,4 @@
-import type { ThemeTokenName } from '../themes/themeTypes';
+import type { ThemeTokenName } from '../themes';
 import type { SemanticRole } from './semanticRoles';
 
 export function mapRoleToToken(role: SemanticRole): ThemeTokenName {
