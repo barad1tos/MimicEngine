@@ -44,7 +44,7 @@ export function createPageThemeController(): PageThemeController {
 
     const theme = getThemeById(siteSettings.themeId);
     const facts = collectPageFacts(document);
-    const metrics = deriveMetrics(facts);
+    const metrics = deriveMetrics(facts, { mutationRate: 0 });
     const plan = decideStrategies(metrics, siteSettings.strategy);
     injectStylesheet(composeStylesheet(theme, siteSettings, facts, plan));
 

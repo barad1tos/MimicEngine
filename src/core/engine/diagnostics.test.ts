@@ -25,6 +25,10 @@ describe('PlanDiagnostics', () => {
         domElementCount: 120,
         shadowRootCount: 1,
         unreadableStylesheetRatio: 0.25,
+        authoredColorCount: 5,
+        inlineStyleColorCount: 2,
+        customPropertyColorRatio: 0.6,
+        mutationRate: 1.5,
       },
       updatedAt: '2026-08-15T00:00:00.000Z',
     };

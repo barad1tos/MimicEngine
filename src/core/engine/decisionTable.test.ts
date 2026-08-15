@@ -7,6 +7,10 @@ const baseMetrics: PageMetrics = {
   domElementCount: 100,
   shadowRootCount: 0,
   unreadableStylesheetRatio: 0,
+  authoredColorCount: 0,
+  inlineStyleColorCount: 0,
+  customPropertyColorRatio: 0,
+  mutationRate: 0,
 };
 
 describe('decideStrategies', () => {
