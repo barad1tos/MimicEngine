@@ -162,6 +162,20 @@ describe('collectPageFacts', () => {
     expect(facts.authoredRules.some((rule) => rule.selector.includes(','))).toBe(false);
   });
 
+  it('keeps a comma inside :is(...) as part of one selector (paren-aware split)', () => {
+    const doc = buildDocument(':is(.a, .b) .x { color: #123456; }');
+    const facts = collectPageFacts(doc);
+    expect(facts.authoredRules).toHaveLength(1);
+    expect(facts.authoredRules[0]?.selector).toBe(':is(.a, .b) .x');
+  });
+
+  it('keeps a comma inside an attribute-value string as part of one selector (quote-aware split)', () => {
+    const doc = buildDocument('[title="a,b"] { color: #123456; }');
+    const facts = collectPageFacts(doc);
+    expect(facts.authoredRules).toHaveLength(1);
+    expect(facts.authoredRules[0]?.selector).toBe('[title="a,b"]');
+  });
+
   it('counts an unreadable stylesheet without throwing, via the collectFromSheets seam', () => {
     const throwingSheet = {
       get cssRules(): CSSRuleList {

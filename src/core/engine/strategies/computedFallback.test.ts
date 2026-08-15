@@ -122,6 +122,15 @@ describe('computedFallback strategy', () => {
     expect(css).toContain('!important');
   });
 
+  it('does not emit a translucent computed color, even though it is otherwise novel', () => {
+    document.head.innerHTML = '<style>.scrim { color: rgba(20, 30, 40, 0.5); }</style>';
+    document.body.innerHTML = '<p class="scrim">text</p>';
+
+    const css = computedFallback.produceCss(catppuccinFrappe, anySiteSettings(), emptyFacts());
+
+    expect(css).toBe('');
+  });
+
   it('snapshot: emits a grouped stylesheet from novel sampled colors', () => {
     document.head.innerHTML = `
       <style>

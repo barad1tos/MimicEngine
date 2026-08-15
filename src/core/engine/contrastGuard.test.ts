@@ -4,7 +4,7 @@ import { contrastRatio } from '../color/contrast';
 import { oklchToRgba, rgbaToOklch } from '../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
-import type { ColorMapping, SitePaletteEntry } from './colorMap';
+import { buildColorMapping, type ColorMapping, type SitePaletteEntry } from './colorMap';
 import { guardContrast, type GuardedMapping } from './contrastGuard';
 
 const catppuccinFrappe = builtInThemes[0];
@@ -141,6 +141,46 @@ describe('guardContrast', () => {
 
     expect(adjustments).toBe(0);
     expect(repaired.get('#333333')).toBe(borderTarget);
+  });
+
+  it('repairs a brand-preserved text entry that fails contrast, stepping lightness only (hue preserved, finding 5)', () => {
+    // Own chroma ~0.172 (past BRAND_PRESERVE_CHROMA_THRESHOLD), own hue
+    // ~142.5 — colorMap.ts's mapAccent excludes it from the accent map
+    // entirely when preserveBrandColors is set, so `mapping` never contains
+    // it; guardContrast must pick it up straight from `palette`.
+    const canvas = catppuccinFrappe.tokens.canvas;
+    const brandTextHex = '#007b00';
+    expectFailingPair(brandTextHex, canvas);
+    const palette: SitePaletteEntry[] = [entry(brandTextHex, 'text', 1)];
+
+    const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
+    expect(mapping.has(brandTextHex)).toBe(false);
+
+    const { mapping: guarded, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
+
+    expect(adjustments).toBe(1);
+    const repairedHex = guarded.get(brandTextHex);
+    expect(repairedHex).toBeDefined();
+    expect(contrastRatio(repairedHex ?? '', canvas)).toBeGreaterThanOrEqual(4.5);
+
+    const originalHue = rgbaToOklch(requireColor(brandTextHex)).h;
+    const repairedHue = rgbaToOklch(requireColor(repairedHex ?? '')).h;
+    expect(Math.abs(repairedHue - originalHue)).toBeLessThanOrEqual(2);
+  });
+
+  it('leaves a brand-preserved text entry unmapped (true preservation) when it already passes contrast (finding 5)', () => {
+    const canvas = catppuccinFrappe.tokens.canvas;
+    const passingBrandTextHex = '#4dba30'; // own chroma ~0.1995, already passes vs canvas
+    expect(contrastRatio(passingBrandTextHex, canvas)).toBeGreaterThanOrEqual(4.5);
+    const palette: SitePaletteEntry[] = [entry(passingBrandTextHex, 'text', 1)];
+
+    const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
+    expect(mapping.has(passingBrandTextHex)).toBe(false);
+
+    const { mapping: guarded, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
+
+    expect(adjustments).toBe(0);
+    expect(guarded.has(passingBrandTextHex)).toBe(false);
   });
 
   it('does not mutate the input mapping', () => {

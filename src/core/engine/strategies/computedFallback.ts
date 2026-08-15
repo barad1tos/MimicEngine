@@ -2,7 +2,7 @@ import {
   collectComputedColors,
   type ComputedColorSample,
 } from '../../analyzer/collectComputedColors';
-import { parseCssColor, toHex } from '../../color/parseColor';
+import { isOpaque, parseCssColor, toHex } from '../../color/parseColor';
 import { withStylesheetDisabled } from '../../injector/styleElement';
 import { buildColorMapping, extractSitePalette, type ColorMapping } from '../colorMap';
 import { guardContrast } from '../contrastGuard';
@@ -81,6 +81,10 @@ function collectAuthoredHexes(facts: PageFacts): Set<string> {
 // Parses each sample, drops unparseable values, then drops every sample
 // whose hex is already covered by the authored-CSS analysis — what's left is
 // "novel": present in computed style but invisible to collectPageFacts.
+// Translucent samples (e.g. a computed `color: rgba(0,0,0,0.5)`) are dropped
+// too: toHex discards alpha, so keeping them would let a translucent sample
+// dedupe against — and later be remapped through — an unrelated opaque
+// occurrence of the same RGB.
 function toNovelDeclarations(
   samples: readonly ComputedColorSample[],
   authoredHexes: ReadonlySet<string>,
@@ -90,6 +94,7 @@ function toNovelDeclarations(
   for (const sample of samples) {
     const color = parseCssColor(sample.value);
     if (!color) continue;
+    if (!isOpaque(color)) continue;
     if (authoredHexes.has(toHex(color))) continue;
 
     declarations.push({
