@@ -144,6 +144,24 @@ describe('collectPageFacts', () => {
     expect(facts.authoredRules.map((rule) => rule.selector)).toEqual(['.rule-0', '.rule-1']);
   });
 
+  it('shares maxAuthoredDeclarations between authoredRules and inlineStyleColors, sheet walk first', () => {
+    const doc = buildDocument(
+      '.a { color: #111111; } .b { color: #222222; }',
+      '<p id="one" style="color: #333333;"></p><p id="two" style="color: #444444;"></p>',
+    );
+    const facts = collectPageFacts(doc, { maxAuthoredDeclarations: 3 });
+    expect(facts.authoredRules).toHaveLength(2);
+    expect(facts.inlineStyleColors).toHaveLength(1);
+  });
+
+  it('splits a multi-selector rule into one AuthoredColorDeclaration per selector', () => {
+    const doc = buildDocument('.a, .b { color: #123456; }');
+    const facts = collectPageFacts(doc);
+    expect(facts.authoredRules).toHaveLength(2);
+    expect(facts.authoredRules.map((rule) => rule.selector)).toEqual(['.a', '.b']);
+    expect(facts.authoredRules.some((rule) => rule.selector.includes(','))).toBe(false);
+  });
+
   it('counts an unreadable stylesheet without throwing, via the collectFromSheets seam', () => {
     const throwingSheet = {
       get cssRules(): CSSRuleList {

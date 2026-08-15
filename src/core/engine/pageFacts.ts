@@ -1,5 +1,6 @@
 import { parseCssColor, type RgbaColor } from '../color/parseColor';
 import { STYLE_ELEMENT_ID } from '../injector/styleElement';
+import { buildSelectorHint } from './selectorHint';
 
 export type CustomPropertyFact = {
   name: string;
@@ -65,10 +66,17 @@ export function collectPageFacts(
   collectInlineRootDeclarations(doc, declarations);
 
   const customProperties = buildCustomProperties(declarations, usage, resolved.maxCustomProperties);
+  // maxAuthoredDeclarations is one shared budget across authoredRules and
+  // inlineStyleColors: the sheet walk (document order) consumes it first,
+  // the DOM inline-style walk gets whatever remains.
+  const remainingAuthoredBudget = Math.max(
+    0,
+    resolved.maxAuthoredDeclarations - authoredRules.length,
+  );
   const { domElementCount, shadowRootCount, inlineStyleColors } = walkDom(
     doc,
     resolved.maxElements,
-    resolved.maxAuthoredDeclarations,
+    remainingAuthoredBudget,
   );
 
   return {
@@ -165,23 +173,31 @@ function collectDeclarations(rule: CSSStyleRule, declarations: Map<string, strin
   }
 }
 
+function splitSelectorList(selectorText: string): string[] {
+  return selectorText.split(',').map((part) => part.trim());
+}
+
 const ROOT_SELECTORS = new Set([':root', 'html']);
 
 function isRootSelector(selectorText: string): boolean {
-  return selectorText
-    .split(',')
-    .map((part) => part.trim())
-    .some((part) => ROOT_SELECTORS.has(part));
+  return splitSelectorList(selectorText).some((part) => ROOT_SELECTORS.has(part));
 }
 
+// A comma-separated selector list (e.g. `.a, .b { color: red }`) is emitted
+// as one AuthoredColorDeclaration per individual selector, never the raw
+// list — downstream consumers interpolate `selector` directly after a scope
+// prefix, and a literal comma would let later selectors escape that scope.
 function collectRuleColors(rule: CSSStyleRule, state: RuleWalkState): void {
-  const selector = rule.selectorText;
+  const selectors = splitSelectorList(rule.selectorText);
   for (const property of Array.from(rule.style)) {
-    if (state.authoredRules.length >= state.budgets.maxAuthoredDeclarations) return;
     const value = rule.style.getPropertyValue(property).trim();
     const color = parseCssColor(value);
     if (!color) continue;
-    state.authoredRules.push({ selector, property, value, color, bucket: usageBucket(property) });
+    const bucket = usageBucket(property);
+    for (const selector of selectors) {
+      if (state.authoredRules.length >= state.budgets.maxAuthoredDeclarations) return;
+      state.authoredRules.push({ selector, property, value, color, bucket });
+    }
   }
 }
 
@@ -272,13 +288,4 @@ function collectInlineStyleColors(
     if (!color) continue;
     target.push({ selector, property, value, color, bucket: usageBucket(property) });
   }
-}
-
-function buildSelectorHint(element: Element): string {
-  if (element.id) return `#${CSS.escape(element.id)}`;
-  const className = [...element.classList]
-    .slice(0, 2)
-    .map((item) => `.${CSS.escape(item)}`)
-    .join('');
-  return `${element.tagName.toLowerCase()}${className}`;
 }
