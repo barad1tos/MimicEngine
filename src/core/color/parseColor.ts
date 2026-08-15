@@ -82,12 +82,12 @@ export function parseHslColor(value: string): RgbaColor | null {
     .filter(Boolean);
   if (parts.length < 3) return null;
 
-  const h = Number.parseFloat(parts[0] ?? '');
+  const h = parseHue(parts[0] ?? '');
   const s = parsePercent(parts[1]);
   const l = parsePercent(parts[2]);
-  const a = parts[3] === undefined ? 1 : Number.parseFloat(parts[3]);
+  const a = parseAlpha(parts[3]);
 
-  if (s === null || l === null) return null;
+  if (h === null || s === null || l === null) return null;
   if ([h, s, l, a].some((part) => Number.isNaN(part))) return null;
 
   const { r, g, b } = hslToRgb(h, s, l);
@@ -98,6 +98,32 @@ function parsePercent(raw: string | undefined): number | null {
   if (!raw?.endsWith('%')) return null;
   const parsed = Number.parseFloat(raw);
   return Number.isNaN(parsed) ? null : parsed / 100;
+}
+
+function parseAlpha(raw: string | undefined): number {
+  if (raw === undefined) return 1;
+  const parsed = Number.parseFloat(raw);
+  return raw.endsWith('%') ? parsed / 100 : parsed;
+}
+
+const HUE_UNIT_MULTIPLIERS: Readonly<Record<string, number>> = {
+  deg: 1,
+  grad: 0.9,
+  rad: 180 / Math.PI,
+  turn: 360,
+};
+
+function parseHue(raw: string): number | null {
+  const match = /^(-?(?:\d+\.\d+|\.\d+|\d+))(deg|grad|rad|turn)?$/i.exec(raw);
+  if (!match) return null;
+
+  const [, numberPart, unit] = match;
+  const value = Number.parseFloat(numberPart ?? '');
+  if (Number.isNaN(value)) return null;
+  if (!unit) return value;
+
+  const multiplier = HUE_UNIT_MULTIPLIERS[unit.toLowerCase()];
+  return multiplier === undefined ? null : value * multiplier;
 }
 
 function hslToRgb(
