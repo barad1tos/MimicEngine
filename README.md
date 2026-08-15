@@ -6,7 +6,7 @@ The product is not only a dark-mode extension. It is a **web theme remapper**: i
 
 ## Current status
 
-This repository is a **Codex-ready starter pack**, not a finished extension. It contains:
+This repository is an **early-stage scaffold**, not a finished extension. It contains:
 
 - product and technical context;
 - MVP/GSD framing;
@@ -53,22 +53,10 @@ Run tests:
 pnpm test
 ```
 
-## First useful Codex prompt
-
-```text
-Read AGENTS.md, docs/PRODUCT_CONTEXT.md, docs/ARCHITECTURE.md, and docs/MVP_SCOPE.md.
-Then implement the MVP milestone "M1: stable basic theming".
-Keep the scope narrow: built-in themes, popup selection, per-domain memory, CSS injection, and readable defaults.
-Do not implement DOM inspector, GitHub theme import, community recipes, or AI classification yet.
-Run typecheck and tests before summarizing changes.
-```
-
 ## Repository map
 
 ```text
-AGENTS.md                       Durable coding-agent instructions
 README.md                       Human-facing project entry point
-docs/                           Product, architecture, scope, roadmap
 entrypoints/                    WXT extension entrypoints
 src/core/                       Product engine modules
 src/core/themes/                Built-in palettes and normalized theme types
