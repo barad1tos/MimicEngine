@@ -128,6 +128,15 @@ describe('collectPageFacts', () => {
     expect(facts.inlineStyleColors.map((rule) => rule.property)).toEqual(['color']);
   });
 
+  it('collects a bare html selector alone (no :root present) as a root selector', () => {
+    // Falsifiable against a ROOT_SELECTORS regression: if 'html' were ever
+    // dropped from the set (or only ':root' were checked), this alone-html
+    // stylesheet would collect nothing.
+    const doc = buildDocument('html { --brand-bg: #1f2430; }');
+    const facts = collectPageFacts(doc);
+    expect(facts.customProperties.map((p) => p.name)).toEqual(['--brand-bg']);
+  });
+
   it('matches custom properties from an arbitrary comma-separated selector list containing :root/html', () => {
     const doc = buildDocument(`
       .theme-a,
@@ -157,6 +166,27 @@ describe('collectPageFacts', () => {
     const doc = buildDocument('', '<span class="a b c" style="color: #123456;">hi</span>');
     const facts = collectPageFacts(doc);
     expect(facts.inlineStyleColors[0]?.selector).toBe('span.a.b');
+  });
+
+  it('truncates rule visitation deterministically at maxRules', () => {
+    const css = Array.from(
+      { length: 5 },
+      (_, index) => `.rule-${index.toString()} { color: #000000; }`,
+    ).join('\n');
+    const doc = buildDocument(css);
+    const facts = collectPageFacts(doc, { maxRules: 3 });
+    expect(facts.authoredRules).toHaveLength(3);
+    expect(facts.authoredRules.map((rule) => rule.selector)).toEqual([
+      '.rule-0',
+      '.rule-1',
+      '.rule-2',
+    ]);
+  });
+
+  it('truncates DOM element counting deterministically at maxElements', () => {
+    const doc = buildDocument('', '<div></div><div></div><div></div><div></div><div></div>');
+    const facts = collectPageFacts(doc, { maxElements: 3 });
+    expect(facts.domElementCount).toBe(3);
   });
 
   it('truncates authoredRules deterministically at maxAuthoredDeclarations', () => {
@@ -214,8 +244,30 @@ describe('collectPageFacts', () => {
       maxAuthoredDeclarations: 1000,
     });
 
-    expect(result.unreadableStyleSheetCount).toBe(1);
-    expect(result.styleSheetCount).toBe(1);
+    expect(result.unreadableStylesheetCount).toBe(1);
+    expect(result.stylesheetCount).toBe(1);
     expect(result.authoredRules).toEqual([]);
+  });
+
+  it('continues to a subsequent readable sheet after an unreadable one (continue, not return)', () => {
+    const throwingSheet = {
+      get cssRules(): CSSRuleList {
+        throw new Error('inaccessible cross-origin sheet');
+      },
+    } as unknown as CSSStyleSheet;
+
+    document.head.innerHTML = '<style>.readable { color: #123456; }</style>';
+    const readableSheet = document.styleSheets[0];
+    if (!readableSheet) throw new Error('expected a readable stylesheet to exist');
+
+    const result = collectFromSheets([throwingSheet, readableSheet], {
+      maxRules: 5000,
+      maxAuthoredDeclarations: 1000,
+    });
+
+    expect(result.unreadableStylesheetCount).toBe(1);
+    expect(result.stylesheetCount).toBe(2);
+    expect(result.authoredRules).toHaveLength(1);
+    expect(result.authoredRules[0]?.selector).toBe('.readable');
   });
 });

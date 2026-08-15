@@ -15,8 +15,8 @@ const facts: PageFacts = {
   inlineStyleColors: [],
   domElementCount: 100,
   shadowRootCount: 0,
-  styleSheetCount: 0,
-  unreadableStyleSheetCount: 0,
+  stylesheetCount: 0,
+  unreadableStylesheetCount: 0,
 };
 
 const emptyPlan: StrategyPlan = {

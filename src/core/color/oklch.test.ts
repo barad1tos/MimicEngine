@@ -57,6 +57,13 @@ describe('oklchToRgba', () => {
     const result = oklchToRgba({ l: 0.5, c: 0.37, h: 150 });
     expect(result).toEqual({ r: 0, g: 143, b: 0, a: 1 });
   });
+
+  it('treats an out-of-range hue as equivalent to its normalized form (h:540 ≡ h:180)', () => {
+    const wrapped = oklchToRgba({ l: 0.6, c: 0.15, h: 540 });
+    const normalized = oklchToRgba({ l: 0.6, c: 0.15, h: 180 });
+
+    expect(wrapped).toEqual(normalized);
+  });
 });
 
 describe('hueDistance', () => {

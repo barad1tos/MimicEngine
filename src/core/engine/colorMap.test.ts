@@ -46,8 +46,8 @@ function makeFacts(
     inlineStyleColors,
     domElementCount: 0,
     shadowRootCount: 0,
-    styleSheetCount: 0,
-    unreadableStyleSheetCount: 0,
+    stylesheetCount: 0,
+    unreadableStylesheetCount: 0,
   };
 }
 

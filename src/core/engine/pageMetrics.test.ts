@@ -8,8 +8,8 @@ const base: PageFacts = {
   inlineStyleColors: [],
   domElementCount: 100,
   shadowRootCount: 2,
-  styleSheetCount: 4,
-  unreadableStyleSheetCount: 1,
+  stylesheetCount: 4,
+  unreadableStylesheetCount: 1,
 };
 
 const whiteColor = { r: 255, g: 255, b: 255, a: 1 };
@@ -45,7 +45,7 @@ describe('deriveMetrics', () => {
     expect(metrics.shadowRootCount).toBe(2);
     expect(
       deriveMetrics(
-        { ...base, styleSheetCount: 0, unreadableStyleSheetCount: 0 },
+        { ...base, stylesheetCount: 0, unreadableStylesheetCount: 0 },
         {
           mutationRate: 0,
         },

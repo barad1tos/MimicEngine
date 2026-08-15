@@ -27,8 +27,8 @@ export type PageFacts = {
   inlineStyleColors: AuthoredColorDeclaration[]; // from [style] attributes, capped element walk
   domElementCount: number;
   shadowRootCount: number;
-  styleSheetCount: number;
-  unreadableStyleSheetCount: number;
+  stylesheetCount: number;
+  unreadableStylesheetCount: number;
 };
 
 export type CollectPageFactsOptions = {
@@ -62,7 +62,7 @@ export function collectPageFacts(
   const resolved = { ...DEFAULT_OPTIONS, ...options };
   const ownStyleSheet = getOwnStyleSheet(doc);
   const sheets = Array.from(doc.styleSheets).filter((sheet) => sheet !== ownStyleSheet);
-  const { declarations, usage, authoredRules, styleSheetCount, unreadableStyleSheetCount } =
+  const { declarations, usage, authoredRules, stylesheetCount, unreadableStylesheetCount } =
     collectFromSheets(sheets, {
       maxRules: resolved.maxRules,
       maxAuthoredDeclarations: resolved.maxAuthoredDeclarations,
@@ -89,8 +89,8 @@ export function collectPageFacts(
     inlineStyleColors,
     domElementCount,
     shadowRootCount,
-    styleSheetCount,
-    unreadableStyleSheetCount,
+    stylesheetCount,
+    unreadableStylesheetCount,
   };
 }
 
@@ -112,8 +112,8 @@ export function collectFromSheets(
   declarations: Map<string, string>;
   usage: Map<string, CustomPropertyFact['usage']>;
   authoredRules: AuthoredColorDeclaration[];
-  styleSheetCount: number;
-  unreadableStyleSheetCount: number;
+  stylesheetCount: number;
+  unreadableStylesheetCount: number;
 } {
   const state: RuleWalkState = {
     declarations: new Map(),
@@ -122,16 +122,16 @@ export function collectFromSheets(
     rulesVisited: 0,
     budgets,
   };
-  let styleSheetCount = 0;
-  let unreadableStyleSheetCount = 0;
+  let stylesheetCount = 0;
+  let unreadableStylesheetCount = 0;
 
   for (const sheet of sheets) {
-    styleSheetCount += 1;
+    stylesheetCount += 1;
     let rules: CSSRuleList;
     try {
       rules = sheet.cssRules;
     } catch {
-      unreadableStyleSheetCount += 1;
+      unreadableStylesheetCount += 1;
       continue;
     }
     visitRuleList(rules, state, []);
@@ -141,8 +141,8 @@ export function collectFromSheets(
     declarations: state.declarations,
     usage: state.usage,
     authoredRules: state.authoredRules,
-    styleSheetCount,
-    unreadableStyleSheetCount,
+    stylesheetCount,
+    unreadableStylesheetCount,
   };
 }
 
