@@ -1,11 +1,11 @@
-import { composeStylesheet } from '../engine/composeStylesheet';
 import { buildColorMapping, extractSitePalette } from '../engine/colorMap';
+import { collectPageFacts } from '../engine/pageFacts';
+import { composeStylesheet } from '../engine/composeStylesheet';
 import { computeCoverage } from '../engine/coverage';
 import { decideStrategies, type StrategyPlan } from '../engine/decisionTable';
-import { writePlanDiagnostics } from '../engine/diagnostics';
-import { collectPageFacts } from '../engine/pageFacts';
 import { deriveMetrics } from '../engine/pageMetrics';
 import { guardContrast } from '../engine/contrastGuard';
+import { writePlanDiagnostics } from '../engine/diagnostics';
 import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
 import { observeDomChanges, type DomChangeObserver } from '../live/observeDomChanges';
 import {
@@ -108,8 +108,12 @@ export function createPageThemeController(): PageThemeController {
       stopDomObserver();
     }
 
+    // Coverage measures the authored palette, which only applies to authoredRemap.
+    // computedFallback uses its own sampled palette; a coverage metric for it would
+    // require a strategy-interface seam (deferred). Omit coverage for plans without
+    // authoredRemap.
     let coverage;
-    if (plan.strategies.includes('authoredRemap') || plan.strategies.includes('computedFallback')) {
+    if (plan.strategies.includes('authoredRemap')) {
       const palette = extractSitePalette(facts);
       const mapping = guardContrast(
         buildColorMapping(palette, theme, {
