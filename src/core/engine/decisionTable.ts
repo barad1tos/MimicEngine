@@ -31,8 +31,7 @@ export type StrategyPlan = {
 
 function conditionHolds(value: number, condition: MetricCondition): boolean {
   if (condition.gte !== undefined && value < condition.gte) return false;
-  if (condition.lte !== undefined && value > condition.lte) return false;
-  return true;
+  return condition.lte === undefined || value <= condition.lte;
 }
 
 function matchReasons(row: DecisionRow, metrics: PageMetrics): PlanReason[] | null {
