@@ -1,5 +1,4 @@
-import type { ColorMapping } from './colorMap';
-import type { SitePaletteEntry } from './colorMap';
+import type { ColorMapping, SitePaletteEntry } from './colorMap';
 
 export type CoverageReport = {
   discovered: number;
