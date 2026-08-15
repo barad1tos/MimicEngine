@@ -1,36 +1,9 @@
 import type { PaletteTheme } from '../themes';
 import type { SiteOverride } from '../storage/settingsStore';
+import { tokenToCssVariableSuffix } from '../engine/tokenVariables';
 
-export type BuildBaseStylesheetOptions = {
-  overrides: SiteOverride[];
-};
-
-export function buildBaseStylesheet(
-  theme: PaletteTheme,
-  options: BuildBaseStylesheetOptions,
-): string {
-  const { tokens } = theme;
-  const overrideCss = options.overrides.map(buildOverrideRule).join('\n');
-
+export function buildBaseStylesheet(_theme: PaletteTheme): string {
   return `
-:root {
-  --pm-canvas: ${tokens.canvas};
-  --pm-surface1: ${tokens.surface1};
-  --pm-surface2: ${tokens.surface2};
-  --pm-surface3: ${tokens.surface3};
-  --pm-text: ${tokens.text};
-  --pm-text-muted: ${tokens.textMuted};
-  --pm-border: ${tokens.border};
-  --pm-accent: ${tokens.accent};
-  --pm-link: ${tokens.link};
-  --pm-success: ${tokens.success};
-  --pm-warning: ${tokens.warning};
-  --pm-danger: ${tokens.danger};
-  --pm-selection: ${tokens.selection};
-  --pm-focus: ${tokens.focus};
-  color-scheme: ${theme.mode};
-}
-
 html[data-pm-active="true"],
 html[data-pm-active="true"] body {
   background-color: var(--pm-canvas) !important;
@@ -97,15 +70,9 @@ html[data-pm-active="true"] ::selection {
   background-color: var(--pm-selection) !important;
   color: var(--pm-text) !important;
 }
-
-${overrideCss}
 `.trim();
 }
 
-function buildOverrideRule(override: SiteOverride): string {
+export function buildOverrideRule(override: SiteOverride): string {
   return `html[data-pm-active="true"] ${override.selector} { ${override.property}: var(--pm-${tokenToCssVariableSuffix(override.token)}) !important; }`;
-}
-
-function tokenToCssVariableSuffix(token: SiteOverride['token']): string {
-  return token.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
