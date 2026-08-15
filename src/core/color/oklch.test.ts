@@ -49,6 +49,14 @@ describe('oklchToRgba', () => {
     const result = oklchToRgba({ l: 1, c: 0, h: 0 });
     expect(result).toEqual({ r: 255, g: 255, b: 255, a: 1 });
   });
+
+  it('clamps a genuinely out-of-gamut color to 0..255 (negative pre-clamp channels)', () => {
+    // l=0.5, c=0.37, h=150 is far beyond the sRGB gamut boundary for this
+    // hue: the pre-clamp linear-RGB conversion lands red and blue well below
+    // 0, not merely rounds to 0 by coincidence.
+    const result = oklchToRgba({ l: 0.5, c: 0.37, h: 150 });
+    expect(result).toEqual({ r: 0, g: 143, b: 0, a: 1 });
+  });
 });
 
 describe('hueDistance', () => {

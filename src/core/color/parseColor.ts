@@ -166,6 +166,15 @@ export function toHex({ r, g, b }: RgbaColor): string {
   return `#${[r, g, b].map((channel) => clampChannel(channel).toString(16).padStart(2, '0')).join('')}`;
 }
 
+// Shared opacity predicate: `toHex` drops alpha, so anywhere a color is
+// reduced to its hex before entering the palette or matching a mapping entry
+// must gate on this first — a translucent declaration (e.g. a modal scrim at
+// rgba(0,0,0,0.5)) must never be treated as if it were the fully-opaque
+// occurrence of the same RGB.
+export function isOpaque(color: RgbaColor): boolean {
+  return color.a === 1;
+}
+
 function clampChannel(value: number): number {
   return Math.max(0, Math.min(255, Math.round(value)));
 }

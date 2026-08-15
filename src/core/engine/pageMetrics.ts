@@ -21,17 +21,15 @@ export function deriveMetrics(facts: PageFacts, runtime: { mutationRate: number 
     (decl) => decl.color !== null,
   ).length;
 
-  // Unique authored colors (by toHex) across authoredRules + inlineStyleColors
+  // Unique authored colors (by toHex) across authoredRules + inlineStyleColors.
+  // Custom-property declarations (property starting with `--`) are excluded —
+  // same predicate colorMap.ts uses to keep them out of the literal palette —
+  // since they belong to the variableRemap path, not the authored-color count.
   const authoredColorSet = new Set<string>();
-  for (const decl of facts.authoredRules) {
-    if (decl.color !== null) {
-      authoredColorSet.add(toHex(decl.color));
-    }
-  }
-  for (const decl of facts.inlineStyleColors) {
-    if (decl.color !== null) {
-      authoredColorSet.add(toHex(decl.color));
-    }
+  for (const decl of [...facts.authoredRules, ...facts.inlineStyleColors]) {
+    if (decl.color === null) continue;
+    if (decl.property.startsWith('--')) continue;
+    authoredColorSet.add(toHex(decl.color));
   }
   const authoredColorCount = authoredColorSet.size;
 

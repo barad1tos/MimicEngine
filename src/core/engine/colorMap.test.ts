@@ -126,6 +126,24 @@ describe('extractSitePalette', () => {
 
     expect(extractSitePalette(facts)).toEqual([]);
   });
+
+  it('excludes translucent declarations from the palette; opaque siblings unaffected', () => {
+    const facts = makeFacts([
+      decl('#112233', 'background'),
+      {
+        selector: '.scrim',
+        property: 'background-color',
+        value: 'rgba(17, 34, 51, 0.5)',
+        color: parseCssColor('rgba(17, 34, 51, 0.5)'),
+        bucket: 'background',
+      },
+    ]);
+
+    const palette = extractSitePalette(facts);
+
+    expect(palette).toHaveLength(1);
+    expect(palette[0]).toMatchObject({ hex: '#112233', weight: 1 });
+  });
 });
 
 describe('buildColorMapping — background ladder', () => {
@@ -260,6 +278,31 @@ describe('buildColorMapping — accents', () => {
 
     expect(preserved.has(highChromaHex)).toBe(false);
     expect(notPreserved.has(highChromaHex)).toBe(true);
+  });
+});
+
+describe('buildColorMapping — high-chroma text-bucket entries (finding 7)', () => {
+  it('accent-partitions a high-chroma text-bucket entry instead of routing it through the text-bucket ladder', () => {
+    const successHex = catppuccinFrappe.tokens.success;
+    expect(oklchOf(successHex).c).toBeGreaterThan(0.09);
+
+    const mapping = buildColorMapping([entry(successHex, 'text', 12)], catppuccinFrappe, {
+      preserveBrandColors: false,
+    });
+
+    expect(mapping.get(successHex)).toBe(catppuccinFrappe.tokens.success);
+    expect(mapping.get(successHex)).not.toBe(catppuccinFrappe.tokens.text);
+    expect(mapping.get(successHex)).not.toBe(catppuccinFrappe.tokens.textMuted);
+  });
+
+  it('excludes a high-chroma (>0.14) text-bucket entry from the map when preserveBrandColors is set — guardContrast, not colorMap, owns its legibility repair (finding 5)', () => {
+    const brandTextHex = '#007b00'; // own chroma ~0.172, past the brand-preserve threshold
+
+    const mapping = buildColorMapping([entry(brandTextHex, 'text', 1)], catppuccinFrappe, {
+      preserveBrandColors: true,
+    });
+
+    expect(mapping.has(brandTextHex)).toBe(false);
   });
 });
 

@@ -185,6 +185,24 @@ describe('authoredRemap strategy', () => {
     expect(css).toBe('');
   });
 
+  it('does not emit a translucent declaration even when its RGB matches a mapped opaque declaration', () => {
+    const pageFacts = facts([
+      decl('.solid', 'background-color', '#101014', 'background'),
+      {
+        selector: '.scrim',
+        property: 'background-color',
+        value: 'rgba(16, 16, 20, 0.5)',
+        color: parseCssColor('rgba(16, 16, 20, 0.5)'),
+        bucket: 'background',
+      },
+    ]);
+
+    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts);
+
+    expect(css).toContain('.solid');
+    expect(css).not.toContain('.scrim');
+  });
+
   it('remaps the same brand-chroma accent color when preserveBrandColors is false', () => {
     const brandHex = toHex(oklchToRgba({ l: 0.55, c: 0.24, h: 260 }));
     const pageFacts = facts([decl('.brand', 'background-color', brandHex, 'other')]);

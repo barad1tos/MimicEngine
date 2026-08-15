@@ -1,5 +1,5 @@
 import { hueDistance, rgbaToOklch, type Oklch } from '../color/oklch';
-import { parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
+import { isOpaque, parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
 import type { PaletteTheme, ThemeTokenName } from '../themes';
 import type { AuthoredColorDeclaration, PageFacts } from './pageFacts';
 import { compareStrings } from './sort';
@@ -54,6 +54,11 @@ function accumulatePaletteEntries(
   for (const declaration of declarations) {
     if (isCustomPropertyDeclaration(declaration)) continue;
     if (!declaration.color) continue;
+    // A translucent declaration (e.g. rgba(0,0,0,0.5)) never enters the
+    // palette: toHex drops alpha, so admitting it here would let it dedupe
+    // against — and later stand in for — an unrelated opaque occurrence of
+    // the same RGB, turning a 50% scrim into an opaque theme slab.
+    if (!isOpaque(declaration.color)) continue;
 
     const hex = toHex(declaration.color);
     const accumulator = accumulators.get(hex) ?? {
@@ -111,7 +116,13 @@ function isAccentEntry(entry: SitePaletteEntry): boolean {
 // High-chroma entries map to the hue-nearest of accent/link/success/warning/
 // danger (theme tokens' own hues), ties broken by that fixed order. When
 // preserveBrandColors is set, entries past the brand-preserve threshold are
-// left off the map entirely (null) so the original brand color survives.
+// left off the accent map (null). For non-text buckets that is the end of
+// it — the original brand color survives untouched. For the text bucket it
+// is only the first half of the story: guardContrast (contrastGuard.ts)
+// receives the full site palette independently of this map, notices the
+// text-bucket entry is absent here, and decides whether it needs a
+// lightness-only legibility repair before the caller ever sees a "preserved"
+// color that fails contrast against the page background.
 export function mapAccent(
   entry: SitePaletteEntry,
   theme: PaletteTheme,

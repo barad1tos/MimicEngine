@@ -99,5 +99,42 @@ export function guardContrast(
     repaired.set(hex, repairedHex);
   }
 
+  adjustments += repairBrandText(palette, mapping, backgroundHex, theme, repaired);
+
   return { mapping: repaired, adjustments };
+}
+
+// colorMap.ts's mapAccent exempts a text-bucket entry from the accent map
+// (leaves it out of `mapping` entirely) whenever preserveBrandColors is set
+// and its chroma exceeds the brand-preserve threshold — "preserve the brand
+// color" for every other bucket, but for text that can't be the whole story:
+// an unreadable brand color is a legibility bug, not a feature. This is the
+// other half of that contract: every text-bucket palette entry absent from
+// `mapping` (there is no other way a text entry ends up unmapped — see
+// mapAccent's doc comment) is checked here against the resolved background.
+// Already-passing entries are true preservation (left unmapped, original
+// color used as-is). Failing entries get a genuine mapping entry via the
+// same lightness-only repair path as any other text color, so hue and
+// chroma — the brand identity — survive untouched.
+function repairBrandText(
+  palette: readonly SitePaletteEntry[],
+  mapping: ColorMapping,
+  backgroundHex: string,
+  theme: PaletteTheme,
+  repaired: ColorMapping,
+): number {
+  let adjustments = 0;
+
+  for (const entry of palette) {
+    if (entry.bucket !== 'text') continue;
+    if (mapping.has(entry.hex)) continue;
+
+    const repairedHex = repairTextTarget(entry.hex, backgroundHex, theme.tokens.text);
+    if (repairedHex === entry.hex) continue;
+
+    repaired.set(entry.hex, repairedHex);
+    adjustments += 1;
+  }
+
+  return adjustments;
 }

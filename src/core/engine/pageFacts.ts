@@ -174,8 +174,49 @@ function collectDeclarations(rule: CSSStyleRule, declarations: Map<string, strin
   }
 }
 
+// Splits only on top-level commas: a comma nested inside `()`/`[]` (e.g.
+// `:is(.a, .b)`, `[title="a,b"]`) or inside a quoted string belongs to that
+// sub-expression, not the selector list. Depth tracks both bracket kinds
+// together since CSS selectors never mismatch them; quote state suspends
+// depth tracking entirely so a bracket character inside a quoted attribute
+// value can't be mistaken for real nesting.
 function splitSelectorList(selectorText: string): string[] {
-  return selectorText.split(',').map((part) => part.trim());
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: '"' | "'" | null = null;
+  let current = '';
+
+  for (const char of selectorText) {
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === '(' || char === '[') {
+      depth += 1;
+      current += char;
+      continue;
+    }
+    if (char === ')' || char === ']') {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+    if (char === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current.trim());
+
+  return parts;
 }
 
 const ROOT_SELECTORS = new Set([':root', 'html']);

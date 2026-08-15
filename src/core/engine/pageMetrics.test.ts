@@ -164,6 +164,31 @@ describe('deriveMetrics', () => {
     expect(deriveMetrics(facts, { mutationRate: 0 }).authoredColorCount).toBe(1);
   });
 
+  it('excludes custom-property declarations from authoredColorCount', () => {
+    const facts: PageFacts = {
+      ...base,
+      authoredRules: [
+        {
+          selector: ':root',
+          property: '--x',
+          value: '#123456',
+          color: { r: 0x12, g: 0x34, b: 0x56, a: 1 },
+          bucket: 'other',
+        },
+      ],
+      inlineStyleColors: [
+        {
+          selector: '.a',
+          property: '--y',
+          value: '#654321',
+          color: { r: 0x65, g: 0x43, b: 0x21, a: 1 },
+          bucket: 'other',
+        },
+      ],
+    };
+    expect(deriveMetrics(facts, { mutationRate: 0 }).authoredColorCount).toBe(0);
+  });
+
   it('computes customPropertyColorRatio with positive values', () => {
     const facts: PageFacts = {
       ...base,
