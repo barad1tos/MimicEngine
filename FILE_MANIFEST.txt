@@ -3,7 +3,6 @@
 AGENTS.md
 README.md
 docs/ARCHITECTURE.md
-docs/CODEX_PROMPTS.md
 docs/GSD_MVP.md
 docs/MVP_SCOPE.md
 docs/PRODUCT_CONTEXT.md
