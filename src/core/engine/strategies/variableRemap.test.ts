@@ -148,9 +148,9 @@ describe('assignTokens', () => {
   it('gives a canvas-family name priority for the canvas slot over a lighter surface-family entry', () => {
     // Light mode alone would hand `canvas` to whichever entry has the
     // highest luminance — here that's --card-panel (surface-family
-    // pattern). The name-priority rule overrides that: --page-bg matched
-    // the canvas-family pattern, so it wins canvas regardless, and
-    // --card-panel is demoted to surface1.
+    // pattern). The name-priority rule overrides that: --page-bg is both
+    // canvas-family and (via "page") strong-canvas-named, so it wins
+    // canvas regardless, and --card-panel is demoted to surface1.
     const properties = [
       colorProperty('--card-panel', GRAY(200)),
       colorProperty('--page-bg', GRAY(120)),
@@ -160,6 +160,27 @@ describe('assignTokens', () => {
 
     expect(assignments.get('--page-bg')).toBe('canvas');
     expect(assignments.get('--card-panel')).toBe('surface1');
+  });
+
+  it('gives strong-named entries (page/body/canvas) priority over other *-bg siblings', () => {
+    // Real pages: --page-bg, --panel-bg, --card-bg all end in "-bg", so all
+    // three match the broad canvas-family pattern and, before this rule,
+    // pure luminance decided among them — the darkest (--panel-bg) would
+    // win canvas even though --page-bg is the one actually named as the
+    // page. --page-bg's name contains "page" as a whole word (strong
+    // canvas pattern), so it wins canvas here despite NOT being the
+    // darkest entry in dark mode, where darkest normally wins.
+    const properties = [
+      colorProperty('--page-bg', GRAY(200)), // lightest
+      colorProperty('--card-bg', GRAY(120)), // mid
+      colorProperty('--panel-bg', GRAY(40)), // darkest — old rule's winner
+    ];
+
+    const assignments = assignTokens(properties, 'dark');
+
+    expect(assignments.get('--page-bg')).toBe('canvas');
+    expect(assignments.get('--panel-bg')).toBe('surface1');
+    expect(assignments.get('--card-bg')).toBe('surface2');
   });
 });
 

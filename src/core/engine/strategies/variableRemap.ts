@@ -11,11 +11,26 @@ type Classification = DirectToken | 'surface-group';
 type ColoredProperty = CustomPropertyFact & { color: RgbaColor };
 type UsageKey = keyof CustomPropertyFact['usage'];
 type NameTableEntry = { pattern: RegExp; token: Classification };
-type SurfaceCandidate = { property: ColoredProperty; isCanvasPriority: boolean };
+type SurfaceCandidate = {
+  property: ColoredProperty;
+  isCanvasFamily: boolean;
+  isStrongCanvas: boolean;
+};
 
-// Surface-group entries whose name matched this pattern outrank every other
-// surface-group entry for the ladder's `canvas` slot (see assignSurfaceLadder).
+// Surface-group entries whose name matched this pattern outrank other
+// surface-group entries for the ladder's `canvas` slot (see
+// assignSurfaceLadder) when no STRONG_CANVAS_PATTERN match exists.
 const CANVAS_FAMILY_PATTERN = /background|canvas|page|body|bg/i;
+
+// A stricter subset of CANVAS_FAMILY_PATTERN: `page`, `body`, or `canvas` as
+// a whole hyphen-delimited word, not merely a `bg` suffix. Every `*-bg`
+// variable (`--page-bg`, `--panel-bg`, `--card-bg`, ...) matches
+// CANVAS_FAMILY_PATTERN, which would make the canvas-family tie-break a
+// no-op on real pages — pure luminance would still decide among a page,
+// panel, and card that all happen to be named `*-bg`. This pattern isolates
+// the entries that are unambiguously the page/body/canvas itself, and those
+// win the canvas slot ahead of any other canvas-family entry.
+const STRONG_CANVAS_PATTERN = /(^|-)(page|body|canvas)(-|$)/i;
 
 // First match wins; order is part of the classification contract.
 const NAME_TABLE: readonly NameTableEntry[] = [
@@ -61,8 +76,9 @@ export function assignTokens(
     const nameMatch = matchNameTableEntry(property.name);
     const classification = nameMatch?.token ?? classifyUsage(property.usage);
     if (classification === 'surface-group') {
-      const isCanvasPriority = nameMatch?.pattern === CANVAS_FAMILY_PATTERN;
-      surfaceGroup.push({ property, isCanvasPriority });
+      const isCanvasFamily = nameMatch?.pattern === CANVAS_FAMILY_PATTERN;
+      const isStrongCanvas = isCanvasFamily && isStrongCanvasName(property.name);
+      surfaceGroup.push({ property, isCanvasFamily, isStrongCanvas });
     } else if (classification !== null) {
       assignments.set(property.name, classification);
     }
@@ -79,6 +95,13 @@ function hasColor(property: CustomPropertyFact): property is ColoredProperty {
 
 function matchNameTableEntry(name: string): NameTableEntry | null {
   return NAME_TABLE.find(({ pattern }) => pattern.test(name)) ?? null;
+}
+
+// STRONG_CANVAS_PATTERN is checked against the name without its leading
+// `--`, so `(^|-)` also anchors on the property's very first segment.
+function isStrongCanvasName(name: string): boolean {
+  const bareName = name.startsWith('--') ? name.slice(2) : name;
+  return STRONG_CANVAS_PATTERN.test(bareName);
 }
 
 function classifyUsage(usage: CustomPropertyFact['usage']): Classification | null {
@@ -101,22 +124,19 @@ function classifyUsage(usage: CustomPropertyFact['usage']): Classification | nul
   return key === 'other' ? null : USAGE_TOKEN_MAP[key];
 }
 
-// The single `canvas` slot goes to the top (by luminance) candidate among
-// entries whose NAME matched the canvas-family pattern, if any exist —
-// site authors that name a variable `--page-bg` mean it as the page
-// canvas, regardless of how its lightness compares to a `--card-panel`
-// that only matched the broader surface-family pattern. Every other
-// candidate (canvas-family runners-up plus the rest) then fills
-// surface1..3 by the existing luminance order.
+// The single `canvas` slot goes to the top (by luminance) candidate from
+// the highest-priority non-empty tier: STRONG_CANVAS_PATTERN names first
+// (--page-bg over a --panel-bg/--card-bg sibling, even though all three
+// are canvas-family by the broader pattern), then any other canvas-family
+// name, then no name-based winner at all. Every other candidate (runners-up
+// from the winning tier, plus everyone else) fills surface1..3 by the
+// existing luminance order.
 function assignSurfaceLadder(
   surfaceGroup: readonly SurfaceCandidate[],
   mode: 'dark' | 'light',
   assignments: Map<string, ThemeTokenName>,
 ): void {
-  const canvasCandidates = surfaceGroup
-    .filter((entry) => entry.isCanvasPriority)
-    .sort((a, b) => luminanceOrder(a.property, b.property, mode));
-  const canvasWinner = canvasCandidates[0];
+  const canvasWinner = pickCanvasWinner(surfaceGroup, mode);
 
   const remaining = surfaceGroup
     .filter((entry) => entry !== canvasWinner)
@@ -126,6 +146,21 @@ function assignSurfaceLadder(
   ordered.forEach(({ property }, index) => {
     assignments.set(property.name, surfaceTokenAt(index));
   });
+}
+
+function pickCanvasWinner(
+  surfaceGroup: readonly SurfaceCandidate[],
+  mode: 'dark' | 'light',
+): SurfaceCandidate | undefined {
+  const strong = surfaceGroup
+    .filter((entry) => entry.isStrongCanvas)
+    .sort((a, b) => luminanceOrder(a.property, b.property, mode));
+  if (strong.length > 0) return strong[0];
+
+  const canvasFamily = surfaceGroup
+    .filter((entry) => entry.isCanvasFamily)
+    .sort((a, b) => luminanceOrder(a.property, b.property, mode));
+  return canvasFamily[0];
 }
 
 function luminanceOrder(a: ColoredProperty, b: ColoredProperty, mode: 'dark' | 'light'): number {
