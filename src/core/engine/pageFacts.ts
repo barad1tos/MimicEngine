@@ -134,9 +134,10 @@ function countDomFacts(
   let shadowRootCount = 0;
   const walker = doc.createTreeWalker(doc.documentElement, NodeFilter.SHOW_ELEMENT);
   while (walker.nextNode() && domElementCount < maxElements) {
-    domElementCount += 1;
     const element = walker.currentNode;
-    if (element instanceof Element && element.shadowRoot) shadowRootCount += 1;
+    if (!(element instanceof Element) || element.id === STYLE_ELEMENT_ID) continue;
+    domElementCount += 1;
+    if (element.shadowRoot) shadowRootCount += 1;
   }
   return { domElementCount, shadowRootCount };
 }
