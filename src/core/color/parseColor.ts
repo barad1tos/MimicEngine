@@ -109,23 +109,31 @@ function hslToRgb(
   const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
   const x = chroma * (1 - Math.abs(((h / 60) % 2) - 1));
   const m = lightness - chroma / 2;
-  const [r1, g1, b1] =
-    h < 60
-      ? [chroma, x, 0]
-      : h < 120
-        ? [x, chroma, 0]
-        : h < 180
-          ? [0, chroma, x]
-          : h < 240
-            ? [0, x, chroma]
-            : h < 300
-              ? [x, 0, chroma]
-              : [chroma, 0, x];
+  const [r1, g1, b1] = getHslRgbComponents(h, chroma, x);
   return {
     r: clampChannel((r1 + m) * 255),
     g: clampChannel((g1 + m) * 255),
     b: clampChannel((b1 + m) * 255),
   };
+}
+
+function getHslRgbComponents(h: number, chroma: number, x: number): [number, number, number] {
+  if (h < 60) {
+    return [chroma, x, 0];
+  }
+  if (h < 120) {
+    return [x, chroma, 0];
+  }
+  if (h < 180) {
+    return [0, chroma, x];
+  }
+  if (h < 240) {
+    return [0, x, chroma];
+  }
+  if (h < 300) {
+    return [x, 0, chroma];
+  }
+  return [chroma, 0, x];
 }
 
 export function toHex({ r, g, b }: RgbaColor): string {
