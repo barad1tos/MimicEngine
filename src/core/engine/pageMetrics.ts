@@ -13,7 +13,11 @@ export type PageMetrics = {
   mutationRate: number;
 };
 
-export function deriveMetrics(facts: PageFacts, runtime: { mutationRate: number }): PageMetrics {
+// Metrics deriveMetrics can't compute from a PageFacts snapshot alone —
+// mutationRate lives in the controller's rolling observer window, not the DOM.
+export type RuntimeMetricsInput = { mutationRate: number };
+
+export function deriveMetrics(facts: PageFacts, runtime: RuntimeMetricsInput): PageMetrics {
   const colorCustomPropertyCount = facts.customProperties.filter(
     (prop) => prop.color !== null,
   ).length;
@@ -41,7 +45,7 @@ export function deriveMetrics(facts: PageFacts, runtime: { mutationRate: number 
     domElementCount: facts.domElementCount,
     shadowRootCount: facts.shadowRootCount,
     unreadableStylesheetRatio:
-      facts.styleSheetCount === 0 ? 0 : facts.unreadableStyleSheetCount / facts.styleSheetCount,
+      facts.stylesheetCount === 0 ? 0 : facts.unreadableStylesheetCount / facts.stylesheetCount,
     authoredColorCount,
     inlineStyleColorCount,
     customPropertyColorRatio,

@@ -46,7 +46,7 @@ const ACCENT_TOKEN_ORDER: readonly ThemeTokenName[] = [
   'danger',
 ];
 const ACCENT_CHROMA_THRESHOLD = 0.09;
-const BRAND_PRESERVE_CHROMA_THRESHOLD = 0.14;
+const BRAND_CHROMA_THRESHOLD = 0.14;
 
 function comparePaletteEntries(a: SitePaletteEntry, b: SitePaletteEntry): number {
   if (b.weight !== a.weight) return b.weight - a.weight;
@@ -147,7 +147,7 @@ export function mapAccent(
   preserveBrandColors: boolean,
 ): HexColor | null {
   const entryOklch = rgbaToOklch(entry.color);
-  if (preserveBrandColors && entryOklch.c > BRAND_PRESERVE_CHROMA_THRESHOLD) {
+  if (preserveBrandColors && entryOklch.c > BRAND_CHROMA_THRESHOLD) {
     return null;
   }
 

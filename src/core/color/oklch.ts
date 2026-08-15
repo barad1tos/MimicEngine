@@ -1,5 +1,15 @@
 import type { RgbaColor } from './parseColor';
 
+/**
+ * A color in the OKLCH cylindrical color space.
+ *
+ * - `l` (lightness): 0 (black) to 1 (white).
+ * - `c` (chroma): 0 (achromatic) upward, unbounded in principle but in
+ *   practice bounded by what's representable in sRGB.
+ * - `h` (hue): degrees, normalized to [0, 360). Meaningless at zero chroma —
+ *   by convention `h` is 0 whenever `c` is (approximately) 0, rather than an
+ *   arbitrary leftover angle.
+ */
 export type Oklch = { l: number; c: number; h: number };
 
 type Vector3 = readonly [number, number, number];
@@ -86,6 +96,12 @@ function labToOklch(lab: Vector3): Oklch {
   return { l, c, h };
 }
 
+/**
+ * Converts an sRGB color to OKLCH. Alpha is not part of OKLCH and is
+ * dropped — callers that need to preserve it track it separately.
+ *
+ * @example rgbaToOklch({ r: 255, g: 0, b: 0, a: 1 }) // ~{ l: 0.628, c: 0.258, h: 29.2 }
+ */
 export function rgbaToOklch(color: RgbaColor): Oklch {
   const linearRgb: Vector3 = [
     srgbChannelToLinear(color.r / 255),
@@ -99,8 +115,18 @@ export function rgbaToOklch(color: RgbaColor): Oklch {
   return labToOklch(lab);
 }
 
+/**
+ * Converts an OKLCH color to sRGB, clamped to the valid channel range.
+ * Always returns fully opaque (`a: 1`) — OKLCH itself carries no alpha.
+ * `color.h` is normalized to [0, 360) before use, so an out-of-range or
+ * wrapped hue (e.g. 540, equivalent to 180) produces the same result as its
+ * normalized form.
+ *
+ * @example oklchToRgba({ l: 0.628, c: 0.258, h: 29.2 }) // ~{ r: 255, g: 0, b: 0, a: 1 }
+ */
 export function oklchToRgba(color: Oklch): RgbaColor {
-  const hueRadians = (color.h * 2 * Math.PI) / DEGREES_PER_TURN;
+  const hue = normalizeHueDegrees(color.h);
+  const hueRadians = (hue * 2 * Math.PI) / DEGREES_PER_TURN;
   const oklab: Vector3 = [color.l, color.c * Math.cos(hueRadians), color.c * Math.sin(hueRadians)];
 
   const lms = cube3(applyMatrix3(OKLAB_TO_LMS, oklab));
@@ -115,6 +141,14 @@ export function oklchToRgba(color: Oklch): RgbaColor {
   };
 }
 
+/**
+ * The shortest angular distance between two hues, on the circular [0, 360)
+ * hue wheel — never more than 180 (e.g. `hueDistance(10, 350)` is 20, not
+ * 340, since going the other way around the wheel is shorter). Both inputs
+ * are normalized first, so out-of-range or negative hues wrap correctly.
+ *
+ * @example hueDistance(350, 10) // 20
+ */
 export function hueDistance(a: number, b: number): number {
   const diff = Math.abs(normalizeHueDegrees(a) - normalizeHueDegrees(b));
   return diff > 180 ? DEGREES_PER_TURN - diff : diff;

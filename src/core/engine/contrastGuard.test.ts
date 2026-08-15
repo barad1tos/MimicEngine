@@ -92,6 +92,26 @@ describe('guardContrast', () => {
     expect(contrastRatio(repairedTarget ?? '', backgroundHex)).toBeGreaterThanOrEqual(4.5);
   });
 
+  it('performs a genuine stepped repair in the +1 (increase) direction against a dark background', () => {
+    // Near-black background (l=0.03) vs a dark-gray text target (l=0.35,
+    // ratio 1.85, failing) that is already lighter than the background, so
+    // target.l >= backgroundL selects the "increase" branch. Hand-traced:
+    // steps 1-4 (l=0.40..0.55) stay below 4.5; step 5 (l=0.60) reaches
+    // ~5.32 and is the first pass -- landing well before the step budget
+    // runs out, so this is a genuine stepped repair, not the fallback.
+    const backgroundHex = toHex(oklchToRgba({ l: 0.03, c: 0, h: 0 }));
+    const failingTarget = toHex(oklchToRgba({ l: 0.35, c: 0, h: 0 }));
+    expectFailingPair(failingTarget, backgroundHex);
+
+    const { mapping: repaired, adjustments } = guardSingleTextFixture(backgroundHex, failingTarget);
+
+    const repairedTarget = repaired.get(hex('#222222'));
+    expect(adjustments).toBe(1);
+    expect(repairedTarget).toBe('#808080');
+    expect(repairedTarget).not.toBe(catppuccinFrappe.tokens.text);
+    expect(contrastRatio(repairedTarget ?? '', backgroundHex)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it('steps lightness away from a light background (target already darker gets darker still)', () => {
     // A light (high-l) background with a text target that starts slightly
     // darker but still too close: target.l < background.l selects the
@@ -151,7 +171,7 @@ describe('guardContrast', () => {
   });
 
   it('repairs a brand-preserved text entry that fails contrast, stepping lightness only (hue preserved, finding 5)', () => {
-    // Own chroma ~0.172 (past BRAND_PRESERVE_CHROMA_THRESHOLD), own hue
+    // Own chroma ~0.172 (past BRAND_CHROMA_THRESHOLD), own hue
     // ~142.5 — colorMap.ts's mapAccent excludes it from the accent map
     // entirely when preserveBrandColors is set, so `mapping` never contains
     // it; guardContrast must pick it up straight from `palette`.

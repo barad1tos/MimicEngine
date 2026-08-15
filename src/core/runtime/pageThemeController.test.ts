@@ -2,9 +2,11 @@
 // src/core/runtime/pageThemeController.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
+import { planStorageKey, type PlanDiagnostics } from '../engine/diagnostics';
 import * as styleElementModule from '../injector/styleElement';
 import { observeDomChanges } from '../live/observeDomChanges';
-import { STORAGE_KEY } from '../storage/settingsStore';
+import { createDefaultSiteSettings, STORAGE_KEY, type AppSettings } from '../storage/settingsStore';
+import { normalizeHostname } from '../storage/siteKey';
 import type { createStorageArea } from '../testing/storageArea';
 import { createPageThemeController } from './pageThemeController';
 
@@ -187,6 +189,52 @@ describe('createPageThemeController — apply() generation guard', () => {
 
     expect(injectSpy).toHaveBeenCalledTimes(2);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
+
+    controller.stop();
+  });
+});
+
+describe('createPageThemeController — coverage gating', () => {
+  // Matches exactly what the controller itself computes internally, so this
+  // stays correct regardless of what happy-dom's default test hostname is.
+  const siteKey = normalizeHostname(window.location.hostname);
+
+  function seedSiteSettings(strategy: AppSettings['sites'][string]['strategy']): void {
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), strategy } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
+  }
+
+  function lastWrittenDiagnostics(): PlanDiagnostics {
+    const key = planStorageKey(siteKey);
+    const diagnostics = fakeBrowser.storage.session.data.get(key) as PlanDiagnostics | undefined;
+    if (!diagnostics) throw new Error('expected diagnostics to have been written');
+    return diagnostics;
+  }
+
+  it('writes a coverage report when the plan includes authoredRemap', async () => {
+    seedSiteSettings('authoredRemap');
+    const controller = createPageThemeController();
+
+    await controller.start();
+
+    expect(lastWrittenDiagnostics().coverage).toBeDefined();
+
+    controller.stop();
+  });
+
+  it('omits the coverage field entirely when the plan does not include authoredRemap', async () => {
+    seedSiteSettings('baseline');
+    const controller = createPageThemeController();
+
+    await controller.start();
+
+    const diagnostics = lastWrittenDiagnostics();
+    expect(diagnostics.coverage).toBeUndefined();
+    expect(Object.hasOwn(diagnostics, 'coverage')).toBe(false);
 
     controller.stop();
   });
