@@ -47,4 +47,18 @@ describe('collectPageFacts', () => {
     expect(facts.customProperties).toHaveLength(2);
     expect(facts.domElementCount).toBeGreaterThan(0);
   });
+
+  it('excludes its own injected style element from domElementCount and shadowRootCount', () => {
+    const css = ':root { --brand-bg: #1f2430; }';
+    const bodyHtml = '<div><span></span><p>hi</p></div>';
+
+    const withoutOwnStyle = collectPageFacts(buildDocument(css, bodyHtml));
+
+    document.head.innerHTML = `<style>${css}</style><style id="${STYLE_ELEMENT_ID}">:root { --pm-canvas: #000000; }</style>`;
+    document.body.innerHTML = bodyHtml;
+    const withOwnStyle = collectPageFacts(document);
+
+    expect(withOwnStyle.domElementCount).toBe(withoutOwnStyle.domElementCount);
+    expect(withOwnStyle.shadowRootCount).toBe(withoutOwnStyle.shadowRootCount);
+  });
 });
