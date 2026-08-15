@@ -40,7 +40,7 @@ export function createPageThemeController(): PageThemeController {
     }
 
     const theme = getThemeById(siteSettings.themeId);
-    const stylesheet = buildBaseStylesheet(theme, siteSettings);
+    const stylesheet = buildBaseStylesheet(theme);
     injectStylesheet(stylesheet);
 
     if (siteSettings.mode === 'semantic' || siteSettings.mode === 'aggressive') {
