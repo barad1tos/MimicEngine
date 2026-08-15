@@ -21,6 +21,8 @@ describe('parseCssColor hsl', () => {
     expect(parseCssColor('hsl(0 100% 50% / 50%)')).toEqual({ r: 255, g: 0, b: 0, a: 0.5 });
     expect(parseCssColor('hsla(0, 100%, 50%, 25%)')).toEqual({ r: 255, g: 0, b: 0, a: 0.25 });
     expect(parseCssColor('hsla(0, 100%, 50%, 0.5)')).toEqual({ r: 255, g: 0, b: 0, a: 0.5 });
+    expect(parseCssColor('hsl(0 100% 50% / 0%)')).toEqual({ r: 255, g: 0, b: 0, a: 0 });
+    expect(parseCssColor('hsl(0 100% 50% / 100%)')).toEqual({ r: 255, g: 0, b: 0, a: 1 });
   });
 
   it('honors CSS hue units on the first component', () => {
@@ -28,6 +30,9 @@ describe('parseCssColor hsl', () => {
     expect(parseCssColor('hsl(0.5turn 100% 50%)')).toEqual(cyan);
     expect(parseCssColor('hsl(200grad 100% 50%)')).toEqual(cyan);
     expect(parseCssColor('hsl(100deg 100% 50%)')).toEqual(parseCssColor('hsl(100, 100%, 50%)'));
+    expect(parseCssColor(`hsl(${Math.PI.toString()}rad 100% 50%)`)).toEqual(
+      parseCssColor('hsl(180deg 100% 50%)'),
+    );
   });
 
   it('returns null for an unknown hue unit instead of guessing', () => {
