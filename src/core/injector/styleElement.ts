@@ -1,4 +1,4 @@
-const STYLE_ELEMENT_ID = 'palette-mimicry-generated-style';
+export const STYLE_ELEMENT_ID = 'palette-mimicry-generated-style';
 
 export function injectStylesheet(css: string): void {
   const styleElement = getOrCreateStyleElement();
