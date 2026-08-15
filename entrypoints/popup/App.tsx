@@ -6,6 +6,7 @@ import {
   type StrategyPlan,
 } from '@/src/core/engine/decisionTable';
 import {
+  isPlanDiagnostics,
   planStorageKey,
   readPlanDiagnostics,
   type PlanDiagnostics,
@@ -143,7 +144,7 @@ export function App() {
       if (areaName !== 'session') return;
       const change = changes[key];
       if (change === undefined) return;
-      setDiagnostics((change.newValue as PlanDiagnostics | undefined) ?? null);
+      setDiagnostics(isPlanDiagnostics(change.newValue) ? change.newValue : null);
     };
 
     browser.storage.onChanged.addListener(listener);
@@ -158,12 +159,17 @@ export function App() {
   }, [settings, siteKey]);
 
   const persist = async (nextSettings: AppSettings): Promise<void> => {
+    const previousSettings = settings;
     setSettings(nextSettings);
     try {
       await saveSettings(nextSettings);
       setStatus('Saved');
     } catch (error) {
       console.error('[Palette Mimicry] failed to save settings', error);
+      // The optimistic update above never actually persisted — roll the UI
+      // back to what's genuinely in storage rather than leaving it showing
+      // a setting that silently failed to save.
+      setSettings(previousSettings);
       setStatus('Save failed');
     }
   };

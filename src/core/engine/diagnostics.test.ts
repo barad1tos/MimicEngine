@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { PLAN_STORAGE_PREFIX, planStorageKey, type PlanDiagnostics } from './diagnostics';
+import {
+  isPlanDiagnostics,
+  PLAN_STORAGE_PREFIX,
+  planStorageKey,
+  type PlanDiagnostics,
+} from './diagnostics';
 
 describe('planStorageKey', () => {
   it('namespaces the site key under the plan storage prefix', () => {
@@ -71,5 +76,70 @@ describe('PlanDiagnostics', () => {
     const roundTripped = JSON.parse(JSON.stringify(diagnostics)) as PlanDiagnostics;
 
     expect(roundTripped).toEqual(diagnostics);
+  });
+});
+
+describe('isPlanDiagnostics', () => {
+  const validAuto: PlanDiagnostics = {
+    siteKey: 'example.com',
+    plan: {
+      provenance: {
+        kind: 'auto',
+        rule: 'variables-capable',
+        strategies: ['baseline'],
+        reasons: [],
+        tableVersion: 1,
+      },
+    },
+    metrics: {
+      colorCustomPropertyCount: 0,
+      domElementCount: 0,
+      shadowRootCount: 0,
+      unreadableStylesheetRatio: 0,
+      authoredColorCount: 0,
+      inlineStyleColorCount: 0,
+      customPropertyColorRatio: 0,
+      mutationRate: 0,
+    },
+    updatedAt: '2026-08-15T00:00:00.000Z',
+  };
+
+  it('accepts a valid auto-provenance PlanDiagnostics', () => {
+    expect(isPlanDiagnostics(validAuto)).toBe(true);
+  });
+
+  it('accepts a valid manual-provenance PlanDiagnostics (no strategies array required)', () => {
+    const validManual: PlanDiagnostics = {
+      ...validAuto,
+      plan: { provenance: { kind: 'manual', strategy: 'baseline' } },
+    };
+
+    expect(isPlanDiagnostics(validManual)).toBe(true);
+  });
+
+  it('rejects non-object values', () => {
+    expect(isPlanDiagnostics(null)).toBe(false);
+    expect(isPlanDiagnostics(undefined)).toBe(false);
+    expect(isPlanDiagnostics('a string')).toBe(false);
+    expect(isPlanDiagnostics(42)).toBe(false);
+  });
+
+  it('rejects a missing or malformed plan.provenance.kind', () => {
+    expect(isPlanDiagnostics({ ...validAuto, plan: {} })).toBe(false);
+    expect(isPlanDiagnostics({ ...validAuto, plan: { provenance: {} } })).toBe(false);
+    expect(isPlanDiagnostics({ ...validAuto, plan: { provenance: { kind: 'bogus' } } })).toBe(
+      false,
+    );
+  });
+
+  it("rejects an 'auto' provenance whose strategies is not an array", () => {
+    const malformed = {
+      ...validAuto,
+      plan: {
+        provenance: { ...validAuto.plan.provenance, strategies: 'not-an-array' },
+      },
+    };
+
+    expect(isPlanDiagnostics(malformed)).toBe(false);
   });
 });

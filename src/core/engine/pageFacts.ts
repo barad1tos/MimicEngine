@@ -16,6 +16,9 @@ export type AuthoredColorDeclaration = {
   value: string; // authored literal
   color: RgbaColor | null;
   bucket: keyof CustomPropertyFact['usage'];
+  // The @media/@supports chain this declaration is nested inside, outermost
+  // first (e.g. ['@media (min-width: 600px)']); empty for a top-level rule.
+  conditions: string[];
 };
 
 export type PageFacts = {
@@ -131,7 +134,7 @@ export function collectFromSheets(
       unreadableStyleSheetCount += 1;
       continue;
     }
-    visitRuleList(rules, state);
+    visitRuleList(rules, state, []);
   }
 
   return {
@@ -143,26 +146,39 @@ export function collectFromSheets(
   };
 }
 
-function visitRuleList(rules: CSSRuleList, state: RuleWalkState): void {
+function visitRuleList(
+  rules: CSSRuleList,
+  state: RuleWalkState,
+  conditions: readonly string[],
+): void {
   for (const rule of Array.from(rules)) {
     if (state.rulesVisited >= state.budgets.maxRules) return;
     state.rulesVisited += 1;
-    visitRule(rule, state);
+    visitRule(rule, state, conditions);
   }
 }
 
-function visitRule(rule: CSSRule, state: RuleWalkState): void {
+function visitRule(rule: CSSRule, state: RuleWalkState, conditions: readonly string[]): void {
   if (rule instanceof CSSStyleRule) {
     collectDeclarations(rule, state.declarations);
     collectUsage(rule, state.usage);
-    collectRuleColors(rule, state);
+    collectRuleColors(rule, state, conditions);
     return;
   }
   // Authored analysis is source-based: it does not evaluate whether a media
   // condition currently matches. Every nested rule inside a grouping rule
-  // (@media, @supports, ...) is visited unconditionally.
+  // (@media, @supports, ...) is visited unconditionally — only the condition
+  // chain attached to its declarations records that it was conditional.
+  if (rule instanceof CSSMediaRule) {
+    visitRuleList(rule.cssRules, state, [...conditions, `@media ${rule.media.mediaText}`]);
+    return;
+  }
+  if (rule instanceof CSSSupportsRule) {
+    visitRuleList(rule.cssRules, state, [...conditions, `@supports ${rule.conditionText}`]);
+    return;
+  }
   if (rule instanceof CSSGroupingRule) {
-    visitRuleList(rule.cssRules, state);
+    visitRuleList(rule.cssRules, state, conditions);
   }
 }
 
@@ -229,16 +245,31 @@ function isRootSelector(selectorText: string): boolean {
 // as one AuthoredColorDeclaration per individual selector, never the raw
 // list — downstream consumers interpolate `selector` directly after a scope
 // prefix, and a literal comma would let later selectors escape that scope.
-function collectRuleColors(rule: CSSStyleRule, state: RuleWalkState): void {
+function collectRuleColors(
+  rule: CSSStyleRule,
+  state: RuleWalkState,
+  conditions: readonly string[],
+): void {
   const selectors = splitSelectorList(rule.selectorText);
   for (const property of Array.from(rule.style)) {
+    // Custom-property declarations belong to the variableRemap path (see
+    // collectDeclarations above); they consumed authoredRules budget with
+    // zero consumers on that path, so they never enter authoredRules at all.
+    if (property.startsWith('--')) continue;
     const value = rule.style.getPropertyValue(property).trim();
     const color = parseCssColor(value);
     if (!color) continue;
     const bucket = usageBucket(property);
     for (const selector of selectors) {
       if (state.authoredRules.length >= state.budgets.maxAuthoredDeclarations) return;
-      state.authoredRules.push({ selector, property, value, color, bucket });
+      state.authoredRules.push({
+        selector,
+        property,
+        value,
+        color,
+        bucket,
+        conditions: [...conditions],
+      });
     }
   }
 }
@@ -328,10 +359,21 @@ function collectInlineStyleColors(
   if (!(element instanceof HTMLElement) || element.style.length === 0) return;
   const selector = buildSelectorHint(element);
   for (const property of Array.from(element.style)) {
+    // Same guard as collectRuleColors: an inline custom-property declaration
+    // has no consumer either (variableRemap only reads customProperties from
+    // stylesheets and the root element's own inline style).
+    if (property.startsWith('--')) continue;
     if (target.length >= maxAuthoredDeclarations) return;
     const value = element.style.getPropertyValue(property).trim();
     const color = parseCssColor(value);
     if (!color) continue;
-    target.push({ selector, property, value, color, bucket: usageBucket(property) });
+    target.push({
+      selector,
+      property,
+      value,
+      color,
+      bucket: usageBucket(property),
+      conditions: [],
+    });
   }
 }

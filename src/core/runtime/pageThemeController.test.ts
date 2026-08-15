@@ -2,6 +2,7 @@
 // src/core/runtime/pageThemeController.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
+import * as styleElementModule from '../injector/styleElement';
 import { observeDomChanges } from '../live/observeDomChanges';
 import { STORAGE_KEY } from '../storage/settingsStore';
 import type { createStorageArea } from '../testing/storageArea';
@@ -142,5 +143,78 @@ describe('createPageThemeController — mutation cap gating', () => {
     await flushMicrotasks();
 
     expect(vi.mocked(observeDomChanges)).toHaveBeenCalledTimes(2);
+
+    // The mocked browser.storage.onChanged listener set is module-level and
+    // outlives this test; an un-stopped controller's listener would keep
+    // firing (and consuming other tests' mockImplementationOnce queues) for
+    // every later test's emitChange call.
+    controller.stop();
+  });
+});
+
+describe('createPageThemeController — apply() generation guard', () => {
+  it('a stalled older apply resolving after a newer one must not overwrite the newer stylesheet or diagnostics', async () => {
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
+
+    // Stall the settings read the next settings-changed apply() will make —
+    // this becomes generation 2, and it never gets past this await.
+    const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
+    fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
+
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+    // Generation 2 is stuck awaiting settings — nothing new injected or written yet.
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
+
+    // Generation 3: a second settings change, resolving normally, becomes
+    // "the newest" — it injects and writes diagnostics while generation 2 is
+    // still stalled.
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
+
+    // Generation 2's stalled settings read finally resolves — it must abort
+    // instead of re-injecting/re-writing over generation 3's results.
+    stalledSettings.resolve({});
+    await flushMicrotasks();
+
+    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
+
+    controller.stop();
+  });
+});
+
+describe('createPageThemeController — initial apply failure', () => {
+  it('start() with a throwing first apply still registers the settings-changed listener', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    fakeBrowser.storage.local.get.mockImplementationOnce(() =>
+      Promise.reject(new Error('storage read failed')),
+    );
+    const controller = createPageThemeController();
+
+    await expect(controller.start()).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[Palette Mimicry] initial apply failed',
+      expect.any(Error),
+    );
+    // The settings-changed listener registers via browser.storage.onChanged
+    // — the same listener capturedObserverCallbacks/emitChange rely on
+    // elsewhere in this file, so a settings change now must still trigger
+    // a fresh apply() rather than the controller being left unwired.
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
+
+    controller.stop();
   });
 });

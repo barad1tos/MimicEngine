@@ -9,7 +9,7 @@ import { guardContrast } from '../contrastGuard';
 import { planStrategies } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
-import { emitGroupedRules } from './emitGroupedRules';
+import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
 
 const MAX_SAMPLED_ELEMENTS = 600;
 
@@ -117,6 +117,10 @@ function toNovelDeclarations(
       value: sample.value,
       color,
       bucket: SAMPLE_PROPERTY_TO_BUCKET[sample.property],
+      // Samples never carry @media/@supports context — getComputedStyle
+      // already resolves the current cascade, so there is no condition
+      // chain left to preserve.
+      conditions: [],
     });
   }
 
@@ -140,23 +144,23 @@ function buildSyntheticFacts(authoredRules: NovelDeclaration[]): PageFacts {
 }
 
 // Groups by selector in first-appearance order (document order, inherited
-// from the TreeWalker collectComputedColors used to sample); a repeated
-// selector+property keeps the last value seen, same cascade semantics as
-// authoredRemap's grouping.
+// from the TreeWalker collectComputedColors used to sample). Every
+// declaration here carries a fabricated selectorHint rather than a real CSS
+// selector, so all of them are ambiguity-tracked — see groupSelectors' doc
+// comment: two different elements sharing one hint but sampling different
+// colors for the same property must not silently pick a winner.
 function buildSelectorGroups(
   declarations: readonly NovelDeclaration[],
   mapping: ColorMapping,
-): Map<string, Map<string, string>> {
-  const groups = new Map<string, Map<string, string>>();
+): SelectorGroup[] {
+  const resolved: { declaration: NovelDeclaration; mappedValue: string; isSelectorHint: true }[] =
+    [];
 
   for (const declaration of declarations) {
     const mappedValue = mapping.get(toHex(declaration.color));
-    if (mappedValue === undefined) continue;
-
-    const group = groups.get(declaration.selector) ?? new Map<string, string>();
-    group.set(declaration.property, mappedValue);
-    groups.set(declaration.selector, group);
+    if (mappedValue !== undefined)
+      resolved.push({ declaration, mappedValue, isSelectorHint: true });
   }
 
-  return groups;
+  return groupSelectors(resolved);
 }

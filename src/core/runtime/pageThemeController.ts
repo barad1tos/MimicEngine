@@ -39,6 +39,12 @@ export function createPageThemeController(): PageThemeController {
   let mutationRate = 0;
   let mutationWindowStart = 0;
   let mutationCountInWindow = 0;
+  // Monotonically increasing, captured at the start of each apply() call.
+  // Guards against an older apply() — stalled on the settings read — resuming
+  // after a newer apply() has already injected its stylesheet and written its
+  // diagnostics; without this, the stale call would silently overwrite both
+  // with outdated results (see the generation-guard controller test).
+  let applyGeneration = 0;
 
   const stopDomObserver = (): void => {
     domObserver?.stop();
@@ -88,7 +94,12 @@ export function createPageThemeController(): PageThemeController {
   };
 
   const apply = async (): Promise<void> => {
+    const generation = ++applyGeneration;
     const siteSettings = await getEffectiveSiteSettings(siteKey);
+    // A newer apply() started while this one awaited settings — its
+    // stylesheet and diagnostics are already current; proceeding here would
+    // overwrite them with this call's now-stale results.
+    if (generation !== applyGeneration) return;
 
     if (!siteSettings.enabled) {
       removeStylesheet();
@@ -125,6 +136,12 @@ export function createPageThemeController(): PageThemeController {
       coverage = computeCoverage(palette, mapping);
     }
 
+    // Defensive re-check before the diagnostics write itself: everything
+    // above this line is synchronous (no further yield point can let a
+    // newer generation start), so this is currently unreachable in practice,
+    // but it keeps the guard's contract — abort before every listed side
+    // effect, including diagnostics — true even if that changes later.
+    if (generation !== applyGeneration) return;
     await writePlanDiagnostics({
       siteKey,
       plan,
@@ -136,7 +153,15 @@ export function createPageThemeController(): PageThemeController {
 
   return {
     async start() {
-      await apply();
+      // A throwing initial apply() must not stop start() itself from
+      // completing: the settings-changed listener below still needs to be
+      // registered, and (in the real content-script entry point) so does the
+      // pagehide listener registered right after `await controller.start()`
+      // returns — neither should be skipped just because the very first
+      // apply failed (e.g. a transient storage read error).
+      await apply().catch((error: unknown) => {
+        console.error('[Palette Mimicry] initial apply failed', error);
+      });
       stopSettingsListener = onSettingsChanged(() => {
         capTripped = false;
         mutationWindowStart = 0;

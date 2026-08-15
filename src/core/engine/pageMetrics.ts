@@ -22,13 +22,12 @@ export function deriveMetrics(facts: PageFacts, runtime: { mutationRate: number 
   ).length;
 
   // Unique authored colors (by toHex) across authoredRules + inlineStyleColors.
-  // Custom-property declarations (property starting with `--`) are excluded —
-  // same predicate colorMap.ts uses to keep them out of the literal palette —
-  // since they belong to the variableRemap path, not the authored-color count.
+  // pageFacts never appends custom-property declarations to authoredRules
+  // (they belong to the variableRemap path, not this count) — see
+  // collectRuleColors' `--` guard — so no property-name filter is needed here.
   const authoredColorSet = new Set<string>();
   for (const decl of [...facts.authoredRules, ...facts.inlineStyleColors]) {
     if (decl.color === null) continue;
-    if (decl.property.startsWith('--')) continue;
     authoredColorSet.add(toHex(decl.color));
   }
   const authoredColorCount = authoredColorSet.size;

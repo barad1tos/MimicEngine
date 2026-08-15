@@ -160,4 +160,57 @@ describe('decideStrategies', () => {
   it('the table is total: the last row matches unconditionally', () => {
     expect(DECISION_TABLE.at(-1)?.when).toEqual({});
   });
+
+  it('selects mixed-visibility when authored-rich and opaque-styles conditions both hold — row priority over a non-adjacent conflicting row', () => {
+    // authoredColorCount >= 12 alone would satisfy authored-rich (a lower-
+    // priority row further down the table); unreadableStylesheetRatio >= 0.5
+    // alone would satisfy opaque-styles. mixed-visibility sits above both and
+    // requires all three conditions together, so it must win here — a page
+    // that is both authored-color-rich and largely opaque-stylesheet must not
+    // silently lose the opaque-stylesheet signal to authored-rich's earlier
+    // (pre-mixed-visibility) table position.
+    const metrics: PageMetrics = {
+      ...baseMetrics,
+      authoredColorCount: 12,
+      unreadableStylesheetRatio: 0.5,
+      mutationRate: 5,
+    };
+
+    const plan = decideStrategies(metrics, 'auto');
+
+    expect(planStrategies(plan)).toEqual(['baseline', 'authoredRemap', 'computedFallback']);
+    expect(plan.provenance).toEqual({
+      kind: 'auto',
+      rule: 'mixed-visibility',
+      strategies: ['baseline', 'authoredRemap', 'computedFallback'],
+      reasons: [
+        { metric: 'authoredColorCount', value: 12, condition: { gte: 12 } },
+        { metric: 'unreadableStylesheetRatio', value: 0.5, condition: { gte: 0.5 } },
+        { metric: 'mutationRate', value: 5, condition: { lte: 5 } },
+      ],
+      tableVersion: TABLE_VERSION,
+    });
+  });
+
+  it('boundary: mixed-visibility requires ALL three conditions — dropping any one falls through to authored-rich or opaque-styles', () => {
+    const missingOpaque = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 12, mutationRate: 5 },
+      'auto',
+    );
+    const missingAuthoredCount = decideStrategies(
+      { ...baseMetrics, unreadableStylesheetRatio: 0.5, mutationRate: 5 },
+      'auto',
+    );
+    // mutationRate above the row's own threshold disqualifies mixed-visibility
+    // AND authored-rich (both require mutationRate <= 5); opaque-styles has
+    // no mutationRate condition, so it still matches on unreadableStylesheetRatio.
+    const missingCalmMutation = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 12, unreadableStylesheetRatio: 0.5, mutationRate: 6 },
+      'auto',
+    );
+
+    expect(planStrategies(missingOpaque)).toEqual(['baseline', 'authoredRemap']);
+    expect(planStrategies(missingAuthoredCount)).toEqual(['baseline', 'computedFallback']);
+    expect(planStrategies(missingCalmMutation)).toEqual(['baseline', 'computedFallback']);
+  });
 });

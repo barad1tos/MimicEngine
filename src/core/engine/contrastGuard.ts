@@ -62,7 +62,17 @@ function repairTextTarget(
 
   const targetColor = parseCssColor(targetHex);
   const backgroundColor = parseCssColor(backgroundHex);
-  if (!targetColor || !backgroundColor) return themeTextHex;
+  if (!targetColor || !backgroundColor) {
+    // HexColor is a type-level guarantee, not a runtime one — a value that
+    // reached here without actually going through toHex() (corrupted state,
+    // a future caller bypassing the constructor) fails to parse silently
+    // otherwise. Surface it before falling back to the theme's text token.
+    console.warn('[Palette Mimicry] unparseable color in contrast repair', {
+      targetHex,
+      backgroundHex,
+    });
+    return themeTextHex;
+  }
 
   const targetOklch = rgbaToOklch(targetColor);
   const backgroundL = rgbaToOklch(backgroundColor).l;
