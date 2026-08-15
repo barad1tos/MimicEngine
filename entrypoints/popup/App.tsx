@@ -45,7 +45,7 @@ export function App() {
     return settings.sites[siteKey] ?? createDefaultSiteSettings(settings.globalThemeId);
   }, [settings, siteKey]);
 
-  async function persist(nextSettings: AppSettings) {
+  const persist = async (nextSettings: AppSettings): Promise<void> => {
     setSettings(nextSettings);
     try {
       await saveSettings(nextSettings);
@@ -54,13 +54,13 @@ export function App() {
       console.error('[Palette Mimicry] failed to save settings', error);
       setStatus('Save failed');
     }
-  }
+  };
 
-  async function updateGlobalTheme(themeId: string) {
+  const updateGlobalTheme = async (themeId: string): Promise<void> => {
     await persist({ ...settings, globalThemeId: themeId });
-  }
+  };
 
-  async function updateSite(patch: Partial<SiteSettings>) {
+  const updateSite = async (patch: Partial<SiteSettings>): Promise<void> => {
     if (!siteKey) return;
     const current = settings.sites[siteKey] ?? createDefaultSiteSettings(settings.globalThemeId);
     await persist({
@@ -73,15 +73,15 @@ export function App() {
         },
       },
     });
-  }
+  };
 
-  async function resetSite() {
+  const resetSite = async (): Promise<void> => {
     if (!siteKey) return;
     const remainingSites = Object.fromEntries(
       Object.entries(settings.sites).filter(([key]) => key !== siteKey),
     );
     await persist({ ...settings, sites: remainingSites });
-  }
+  };
 
   return (
     <main className="popup-shell">
