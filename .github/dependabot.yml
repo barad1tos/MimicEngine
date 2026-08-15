@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels: [dependencies, github-actions]
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      codeql-action:
+        patterns: ['github/codeql-action*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+    open-pull-requests-limit: 5
+    labels: [dependencies, npm]
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      eslint:
+        patterns: ['eslint*', 'typescript-eslint', '@eslint/*']
+      react:
+        patterns: ['react', 'react-dom', '@types/react*']
+      wxt:
+        patterns: ['wxt', '@wxt-dev/*', '@vitejs/*']
+      vitest:
+        patterns: ['vitest', '@vitest/*']
