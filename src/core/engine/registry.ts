@@ -4,6 +4,7 @@ import type { PageFacts } from './pageFacts';
 import type { StrategyId } from './strategyId';
 import { authoredRemap } from './strategies/authoredRemap';
 import { baseline } from './strategies/baseline';
+import { computedFallback } from './strategies/computedFallback';
 import { variableRemap } from './strategies/variableRemap';
 
 export type PaletteEngine = {
@@ -12,4 +13,9 @@ export type PaletteEngine = {
   produceCss(theme: PaletteTheme, siteSettings: SiteSettings, facts: PageFacts): string;
 };
 
-export const strategyRegistry: readonly PaletteEngine[] = [baseline, variableRemap, authoredRemap];
+export const strategyRegistry: readonly PaletteEngine[] = [
+  baseline,
+  variableRemap,
+  authoredRemap,
+  computedFallback,
+];
