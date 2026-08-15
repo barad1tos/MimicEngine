@@ -28,7 +28,7 @@ export function parseHexColor(value: string): RgbaColor | null {
 
   if (![3, 4, 6, 8].includes(hex.length)) return null;
 
-  const expanded = hex.length <= 4 ? [...hex].map((char) => char + char).join('') : hex;
+  const expanded = hex.length <= 4 ? Array.from(hex, (char) => char + char).join('') : hex;
   const hasAlpha = expanded.length === 8;
   const intValue = Number.parseInt(expanded, 16);
 
@@ -43,7 +43,7 @@ export function parseHexColor(value: string): RgbaColor | null {
 }
 
 export function parseRgbColor(value: string): RgbaColor | null {
-  const match = value.match(/rgba?\(([^)]+)\)/);
+  const match = /rgba?\(([^)]+)\)/.exec(value);
   if (!match?.[1]) return null;
 
   const parts = match[1]
@@ -56,6 +56,7 @@ export function parseRgbColor(value: string): RgbaColor | null {
   const [r, g, b] = parts.slice(0, 3).map((part) => Number.parseFloat(part));
   const a = parts[3] === undefined ? 1 : Number.parseFloat(parts[3]);
 
+  if (r === undefined || g === undefined || b === undefined) return null;
   if ([r, g, b, a].some((part) => Number.isNaN(part))) return null;
 
   return {

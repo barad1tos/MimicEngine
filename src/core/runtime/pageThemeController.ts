@@ -41,7 +41,9 @@ export function createPageThemeController(): PageThemeController {
   function ensureDomObserver() {
     if (domObserver) return;
     domObserver = observeDomChanges(() => {
-      apply().catch((error: unknown) => console.error('[Palette Mimicry] reapply failed', error));
+      apply().catch((error: unknown) => {
+        console.error('[Palette Mimicry] reapply failed', error);
+      });
     });
   }
 
@@ -54,7 +56,9 @@ export function createPageThemeController(): PageThemeController {
     async start() {
       await apply();
       stopSettingsListener = onSettingsChanged(() => {
-        apply().catch((error: unknown) => console.error('[Palette Mimicry] apply failed', error));
+        apply().catch((error: unknown) => {
+          console.error('[Palette Mimicry] apply failed', error);
+        });
       });
     },
 

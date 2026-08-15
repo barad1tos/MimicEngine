@@ -3,7 +3,11 @@ import { catppuccinFrappe } from './built-in/catppuccin';
 import { everforestDark } from './built-in/everforest';
 import type { PaletteTheme } from './themeTypes';
 
-export const builtInThemes = [catppuccinFrappe, ayuMirage, everforestDark] as const satisfies readonly PaletteTheme[];
+export const builtInThemes = [
+  catppuccinFrappe,
+  ayuMirage,
+  everforestDark,
+] as const satisfies readonly PaletteTheme[];
 
 export type BuiltInThemeId = (typeof builtInThemes)[number]['id'];
 

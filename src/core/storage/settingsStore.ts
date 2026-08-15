@@ -1,6 +1,5 @@
 import { browser } from 'wxt/browser';
-import { DEFAULT_THEME_ID } from '../themes';
-import type { ThemeTokenName } from '../themes/themeTypes';
+import { DEFAULT_THEME_ID, type ThemeTokenName } from '../themes';
 
 export type ThemeMode = 'off' | 'basic' | 'semantic' | 'aggressive';
 
@@ -64,19 +63,25 @@ export function onSettingsChanged(callback: () => void): () => void {
   };
 
   browser.storage.onChanged.addListener(listener);
-  return () => browser.storage.onChanged.removeListener(listener);
+  return () => {
+    browser.storage.onChanged.removeListener(listener);
+  };
 }
 
 function normalizeSettings(value: unknown): AppSettings {
   if (!isObject(value)) return DEFAULT_SETTINGS;
 
-  const globalThemeId = typeof value.globalThemeId === 'string' ? value.globalThemeId : DEFAULT_THEME_ID;
+  const globalThemeId =
+    typeof value.globalThemeId === 'string' ? value.globalThemeId : DEFAULT_THEME_ID;
   const sites = isObject(value.sites) ? normalizeSites(value.sites, globalThemeId) : {};
 
   return { globalThemeId, sites };
 }
 
-function normalizeSites(value: Record<string, unknown>, fallbackThemeId: string): Record<string, SiteSettings> {
+function normalizeSites(
+  value: Record<string, unknown>,
+  fallbackThemeId: string,
+): Record<string, SiteSettings> {
   const sites: Record<string, SiteSettings> = {};
 
   for (const [siteKey, rawSiteSettings] of Object.entries(value)) {
@@ -85,7 +90,8 @@ function normalizeSites(value: Record<string, unknown>, fallbackThemeId: string)
     sites[siteKey] = {
       ...createDefaultSiteSettings(fallbackThemeId),
       enabled: typeof rawSiteSettings.enabled === 'boolean' ? rawSiteSettings.enabled : true,
-      themeId: typeof rawSiteSettings.themeId === 'string' ? rawSiteSettings.themeId : fallbackThemeId,
+      themeId:
+        typeof rawSiteSettings.themeId === 'string' ? rawSiteSettings.themeId : fallbackThemeId,
       mode: isThemeMode(rawSiteSettings.mode) ? rawSiteSettings.mode : 'basic',
       preserveImages:
         typeof rawSiteSettings.preserveImages === 'boolean' ? rawSiteSettings.preserveImages : true,

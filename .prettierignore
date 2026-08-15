@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+.output/
+.wxt/
+coverage/
+docs/
+FILE_MANIFEST.txt

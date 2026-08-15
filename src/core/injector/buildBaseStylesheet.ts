@@ -8,7 +8,10 @@ export type BuildBaseStylesheetOptions = {
   overrides: SiteOverride[];
 };
 
-export function buildBaseStylesheet(theme: PaletteTheme, options: BuildBaseStylesheetOptions): string {
+export function buildBaseStylesheet(
+  theme: PaletteTheme,
+  options: BuildBaseStylesheetOptions,
+): string {
   const { tokens } = theme;
   const preserveMedia = options.preserveImages
     ? `
