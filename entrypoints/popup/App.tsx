@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
 import type { PlanReason, StrategyPlan } from '@/src/core/engine/decisionTable';
-import { readPlanDiagnostics, type PlanDiagnostics } from '@/src/core/engine/diagnostics';
+import {
+  planStorageKey,
+  readPlanDiagnostics,
+  type PlanDiagnostics,
+} from '@/src/core/engine/diagnostics';
 import { strategyRegistry } from '@/src/core/engine/registry';
 import type { StrategyId } from '@/src/core/engine/strategyId';
 import { builtInThemes } from '@/src/core/themes';
@@ -120,6 +124,23 @@ export function App() {
       isMounted = false;
     };
   }, [siteKey, settings]);
+
+  useEffect(() => {
+    if (siteKey === null) return;
+
+    const key = planStorageKey(siteKey);
+    const listener = (changes: Record<string, { newValue?: unknown }>, areaName: string): void => {
+      if (areaName !== 'session') return;
+      const change = changes[key];
+      if (change === undefined) return;
+      setDiagnostics((change.newValue as PlanDiagnostics | undefined) ?? null);
+    };
+
+    browser.storage.onChanged.addListener(listener);
+    return () => {
+      browser.storage.onChanged.removeListener(listener);
+    };
+  }, [siteKey]);
 
   const siteSettings = useMemo(() => {
     if (!siteKey) return null;

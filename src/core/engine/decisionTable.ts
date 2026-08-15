@@ -9,13 +9,28 @@ export type DecisionRow = {
   strategies: StrategyId[];
 };
 
-export const TABLE_VERSION = 1;
+export const TABLE_VERSION = 2;
 
 export const DECISION_TABLE: readonly DecisionRow[] = [
+  {
+    name: 'calm-variables-rich',
+    when: { colorCustomPropertyCount: { gte: 8 }, mutationRate: { lte: 5 } },
+    strategies: ['baseline', 'variableRemap', 'authoredRemap'],
+  },
   {
     name: 'variables-capable',
     when: { colorCustomPropertyCount: { gte: 8 } },
     strategies: ['baseline', 'variableRemap'],
+  },
+  {
+    name: 'authored-rich',
+    when: { authoredColorCount: { gte: 12 }, mutationRate: { lte: 5 } },
+    strategies: ['baseline', 'authoredRemap'],
+  },
+  {
+    name: 'opaque-styles',
+    when: { unreadableStylesheetRatio: { gte: 0.5 } },
+    strategies: ['baseline', 'computedFallback'],
   },
   { name: 'default', when: {}, strategies: ['baseline'] },
 ];
