@@ -9,6 +9,7 @@ export type PageMetrics = {
   authoredColorCount: number;
   inlineStyleColorCount: number;
   customPropertyColorRatio: number;
+  /** Callbacks per minute over the controller's rolling 60s observer window. */
   mutationRate: number;
 };
 
