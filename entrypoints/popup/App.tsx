@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { browser } from 'wxt/browser';
+import type { PlanReason, StrategyPlan } from '@/src/core/engine/decisionTable';
+import { readPlanDiagnostics, type PlanDiagnostics } from '@/src/core/engine/diagnostics';
+import { strategyRegistry } from '@/src/core/engine/registry';
+import type { StrategyId } from '@/src/core/engine/strategyId';
 import { builtInThemes } from '@/src/core/themes';
 import {
   type AppSettings,
@@ -11,10 +15,70 @@ import {
 } from '@/src/core/storage/settingsStore';
 import { getSiteKeyFromUrl } from '@/src/core/storage/siteKey';
 
+const strategyOptions: { value: SiteSettings['strategy']; label: string }[] = [
+  { value: 'auto', label: 'Auto (recommended)' },
+  ...strategyRegistry.map((engine) => ({ value: engine.id, label: engine.label })),
+];
+
+const strategyLabelById = new Map(strategyRegistry.map((engine) => [engine.id, engine.label]));
+
+function getStrategyLabel(id: StrategyId): string {
+  return strategyLabelById.get(id) ?? id;
+}
+
+function formatReason(reason: PlanReason): string {
+  const comparisons: string[] = [];
+  if (reason.condition.gte !== undefined) comparisons.push(`≥ ${String(reason.condition.gte)}`);
+  if (reason.condition.lte !== undefined) comparisons.push(`≤ ${String(reason.condition.lte)}`);
+  return [reason.metric, reason.value, ...comparisons].join(' ');
+}
+
+function ProvenanceDetails({ provenance }: Readonly<{ provenance: StrategyPlan['provenance'] }>) {
+  if (provenance.kind === 'manual') {
+    return <p className="diagnostics-provenance">Manual override</p>;
+  }
+
+  return (
+    <div className="diagnostics-provenance">
+      <p className="diagnostics-rule">{provenance.rule}</p>
+      {provenance.reasons.map((reason) => (
+        <p key={reason.metric} className="diagnostics-reason">
+          {formatReason(reason)}
+        </p>
+      ))}
+      <p className="diagnostics-table-version">table v{provenance.tableVersion}</p>
+    </div>
+  );
+}
+
+function PlanDiagnosticsPanel({ diagnostics }: Readonly<{ diagnostics: PlanDiagnostics | null }>) {
+  if (!diagnostics) {
+    return (
+      <section className="panel diagnostics">
+        <p className="diagnostics-empty">No plan yet — open the site tab</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel diagnostics">
+      <div className="chip-row">
+        {diagnostics.plan.strategies.map((id) => (
+          <span key={id} className="chip">
+            {getStrategyLabel(id)}
+          </span>
+        ))}
+      </div>
+      <ProvenanceDetails provenance={diagnostics.plan.provenance} />
+    </section>
+  );
+}
+
 export function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [siteKey, setSiteKey] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('Loading settings...');
+  const [diagnostics, setDiagnostics] = useState<PlanDiagnostics | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -39,6 +103,23 @@ export function App() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDiagnostics(): Promise<void> {
+      const result = siteKey === null ? null : await readPlanDiagnostics(siteKey);
+      if (isMounted) setDiagnostics(result);
+    }
+
+    loadDiagnostics().catch((error: unknown) => {
+      console.error('[Palette Mimicry] failed to load plan diagnostics', error);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [siteKey, settings]);
 
   const siteSettings = useMemo(() => {
     if (!siteKey) return null;
@@ -146,9 +227,11 @@ export function App() {
               }
               disabled={!siteSettings.enabled}
             >
-              <option value="auto">Auto</option>
-              <option value="baseline">Baseline</option>
-              <option value="variableRemap">Variable remap</option>
+              {strategyOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -166,6 +249,8 @@ export function App() {
           </button>
         </section>
       ) : null}
+
+      <PlanDiagnosticsPanel diagnostics={diagnostics} />
 
       <footer>{status}</footer>
     </main>
