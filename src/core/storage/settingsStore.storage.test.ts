@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { browser } from 'wxt/browser';
 import { DEFAULT_THEME_ID } from '../themes';
+import type { createStorageArea } from '../testing/storageArea';
 import {
   createDefaultSiteSettings,
   getEffectiveSiteSettings,
@@ -12,22 +14,16 @@ import {
 
 type ChangeListener = (changes: Record<string, unknown>, areaName: string) => void;
 
-const { fakeBrowser } = vi.hoisted(() => {
-  function createStorageArea() {
-    const data = new Map<string, unknown>();
-    return {
-      data,
-      get: vi.fn((key: string) => (data.has(key) ? { [key]: data.get(key) } : {})),
-      set: vi.fn((items: Record<string, unknown>) => {
-        for (const [key, value] of Object.entries(items)) data.set(key, value);
-      }),
-    };
-  }
-
+// `createStorageArea` is imported dynamically inside the factory (rather
+// than referenced from a static top-level import) because vi.mock factories
+// are hoisted above the file's own import statements — a static reference
+// here would throw a TDZ error at module-eval time.
+vi.mock('wxt/browser', async () => {
+  const { createStorageArea } = await import('../testing/storageArea');
   const listeners = new Set<ChangeListener>();
 
   return {
-    fakeBrowser: {
+    browser: {
       storage: {
         local: createStorageArea(),
         session: createStorageArea(),
@@ -46,7 +42,14 @@ const { fakeBrowser } = vi.hoisted(() => {
   };
 });
 
-vi.mock('wxt/browser', () => ({ browser: fakeBrowser }));
+const fakeBrowser = browser as unknown as {
+  storage: {
+    local: ReturnType<typeof createStorageArea>;
+    session: ReturnType<typeof createStorageArea>;
+    emitChange: (changes: Record<string, unknown>, areaName: string) => void;
+    listenerCount: () => number;
+  };
+};
 
 afterEach(() => {
   fakeBrowser.storage.local.data.clear();
