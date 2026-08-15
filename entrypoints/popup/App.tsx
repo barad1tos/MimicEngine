@@ -74,6 +74,12 @@ function PlanDiagnosticsPanel({ diagnostics }: Readonly<{ diagnostics: PlanDiagn
         ))}
       </div>
       <ProvenanceDetails provenance={diagnostics.plan.provenance} />
+      {diagnostics.coverage && (
+        <p className="diagnostics-reason">
+          Coverage: {diagnostics.coverage.mapped}/{diagnostics.coverage.discovered} colors (
+          {Math.round(diagnostics.coverage.ratio * 100)}%)
+        </p>
+      )}
     </section>
   );
 }
