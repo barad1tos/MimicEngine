@@ -126,13 +126,13 @@ export function createPageThemeController(): PageThemeController {
     let coverage;
     if (planStrategies(plan).includes('authoredRemap')) {
       const palette = extractSitePalette(facts);
-      const mapping = guardContrast(
+      const { mapping } = guardContrast(
         buildColorMapping(palette, theme, {
           preserveBrandColors: siteSettings.preserveBrandColors,
         }),
         palette,
         theme,
-      ).mapping;
+      );
       coverage = computeCoverage(palette, mapping);
     }
 
