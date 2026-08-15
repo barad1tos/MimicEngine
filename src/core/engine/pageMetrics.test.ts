@@ -4,6 +4,8 @@ import type { PageFacts } from './pageFacts';
 
 const base: PageFacts = {
   customProperties: [],
+  authoredRules: [],
+  inlineStyleColors: [],
   domElementCount: 100,
   shadowRootCount: 2,
   styleSheetCount: 4,

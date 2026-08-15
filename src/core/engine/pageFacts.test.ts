@@ -2,7 +2,7 @@
 // src/core/engine/pageFacts.test.ts
 import { describe, expect, it } from 'vitest';
 import { STYLE_ELEMENT_ID } from '../injector/styleElement';
-import { collectPageFacts } from './pageFacts';
+import { collectFromSheets, collectPageFacts } from './pageFacts';
 
 function buildDocument(css: string, bodyHtml = '<p>hi</p>'): Document {
   document.head.innerHTML = `<style>${css}</style>`;
@@ -70,5 +70,94 @@ describe('collectPageFacts', () => {
 
     expect(withOwnStyle.domElementCount).toBe(withoutOwnStyle.domElementCount);
     expect(withOwnStyle.shadowRootCount).toBe(withoutOwnStyle.shadowRootCount);
+  });
+
+  it('excludes its own injected style element from authoredRules and inlineStyleColors', () => {
+    document.head.innerHTML = `
+      <style>.foo { color: #ff0000; }</style>
+      <style id="${STYLE_ELEMENT_ID}">.bar { color: #00ff00; }</style>
+    `;
+    document.body.innerHTML = '<div style="color: #0000ff;"></div>';
+    const facts = collectPageFacts(document);
+    expect(facts.authoredRules).toHaveLength(1);
+    expect(facts.authoredRules[0]?.selector).toBe('.foo');
+    expect(facts.inlineStyleColors).toHaveLength(1);
+  });
+
+  it('recurses into @media rules and collects authored color declarations', () => {
+    const doc = buildDocument(`
+      .plain { background-color: #101010; }
+      @media (min-width: 1px) {
+        .nested { color: #123456; }
+      }
+    `);
+    const facts = collectPageFacts(doc);
+    const nested = facts.authoredRules.find((rule) => rule.selector === '.nested');
+    expect(nested).toEqual({
+      selector: '.nested',
+      property: 'color',
+      value: '#123456',
+      color: { r: 0x12, g: 0x34, b: 0x56, a: 1 },
+      bucket: 'text',
+    });
+    expect(facts.authoredRules.some((rule) => rule.selector === '.plain')).toBe(true);
+  });
+
+  it('matches custom properties from an arbitrary comma-separated selector list containing :root/html', () => {
+    const doc = buildDocument(`
+      .theme-a,
+        :root ,
+      html { --brand-bg: #1f2430; }
+    `);
+    const facts = collectPageFacts(doc);
+    expect(facts.customProperties.map((p) => p.name)).toEqual(['--brand-bg']);
+  });
+
+  it('collects inline style colors with a selector hint', () => {
+    const doc = buildDocument('', '<p id="hero" style="color: #123456;">hi</p>');
+    const facts = collectPageFacts(doc);
+    expect(facts.inlineStyleColors).toEqual([
+      {
+        selector: '#hero',
+        property: 'color',
+        value: '#123456',
+        color: { r: 0x12, g: 0x34, b: 0x56, a: 1 },
+        bucket: 'text',
+      },
+    ]);
+  });
+
+  it('builds a class-based selector hint when the element has no id', () => {
+    const doc = buildDocument('', '<span class="a b c" style="color: #123456;">hi</span>');
+    const facts = collectPageFacts(doc);
+    expect(facts.inlineStyleColors[0]?.selector).toBe('span.a.b');
+  });
+
+  it('truncates authoredRules deterministically at maxAuthoredDeclarations', () => {
+    const css = Array.from(
+      { length: 5 },
+      (_, index) => `.rule-${index.toString()} { color: #000000; }`,
+    ).join('\n');
+    const doc = buildDocument(css);
+    const facts = collectPageFacts(doc, { maxAuthoredDeclarations: 2 });
+    expect(facts.authoredRules).toHaveLength(2);
+    expect(facts.authoredRules.map((rule) => rule.selector)).toEqual(['.rule-0', '.rule-1']);
+  });
+
+  it('counts an unreadable stylesheet without throwing, via the collectFromSheets seam', () => {
+    const throwingSheet = {
+      get cssRules(): CSSRuleList {
+        throw new Error('inaccessible cross-origin sheet');
+      },
+    } as unknown as CSSStyleSheet;
+
+    const result = collectFromSheets([throwingSheet], {
+      maxRules: 5000,
+      maxAuthoredDeclarations: 1000,
+    });
+
+    expect(result.unreadableStyleSheetCount).toBe(1);
+    expect(result.styleSheetCount).toBe(1);
+    expect(result.authoredRules).toEqual([]);
   });
 });
