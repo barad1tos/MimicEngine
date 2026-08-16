@@ -410,7 +410,7 @@ const SVG_PRESENTATION_ATTRIBUTES = ['fill', 'stroke'] as const;
 
 // `none`/`currentColor` are not colors to remap; `url(...)` references a
 // paint server (gradient/pattern), not an inline literal.
-function isSkippedSvgPresentationValue(value: string): boolean {
+function isSkippedPaintValue(value: string): boolean {
   const normalized = value.toLowerCase();
   return normalized === 'none' || normalized === 'currentcolor' || normalized.startsWith('url(');
 }
@@ -428,7 +428,7 @@ function collectSvgPresentationColors(
     const rawValue = element.getAttribute(attribute);
     if (rawValue === null) continue;
     const value = rawValue.trim();
-    if (value === '' || isSkippedSvgPresentationValue(value)) continue;
+    if (value === '' || isSkippedPaintValue(value)) continue;
     const key = `${attribute} ${value}`;
     if (seen.has(key)) continue;
     const color = parseCssColor(value);

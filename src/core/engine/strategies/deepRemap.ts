@@ -18,7 +18,7 @@ export const deepRemap: PaletteEngine = {
   id: 'deepRemap',
   label: 'Deep remap',
   produce(theme, siteSettings, facts) {
-    const palette = extractSitePalette(unionFactsWithSvgColors(facts));
+    const palette = extractSitePalette(svgAugmentedFacts(facts));
     const mapping = buildColorMapping(palette, theme, {
       preserveBrandColors: siteSettings.preserveBrandColors,
     });
@@ -55,7 +55,7 @@ function svgColorsAsDeclarations(
   }));
 }
 
-function unionFactsWithSvgColors(facts: PageFacts): PageFacts {
+function svgAugmentedFacts(facts: PageFacts): PageFacts {
   return {
     ...facts,
     authoredRules: [
@@ -78,6 +78,15 @@ function escapeAttributeValue(value: string): string {
 // collector records the fill/stroke attribute from the <svg> root itself too
 // (icon libraries put it there), and `svg *` alone would never match the
 // root — see the T1-review ruling in the M4 brief.
+//
+// Padded-attribute edge: pageFacts trims the collected value, but this
+// exact-match selector is built from that trimmed value against the live
+// (untrimmed) DOM attribute — a fill/stroke value with surrounding
+// whitespace (e.g. `fill=" #101014 "`) never matches, so the rule is
+// benignly dead rather than mis-scoped. There is no safe CSS fix: `~=`
+// splits on whitespace, which would also match a space-separated
+// paint-server fallback list (e.g. `fill="url(#gradient) #101014"`) and
+// overpaint a token that was never a literal color of its own.
 function svgAttributeSelector(entry: SvgPresentationColor): string {
   return `:is(svg, svg *)[${entry.attribute}="${escapeAttributeValue(entry.value)}"]`;
 }
