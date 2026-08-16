@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { STYLE_ELEMENT_ID } from '../injector/styleElement';
 import { collectFromSheets, collectPageFacts } from './pageFacts';
+import { deriveMetrics } from './pageMetrics';
 
 function buildDocument(css: string, bodyHtml = '<p>hi</p>'): Document {
   document.head.innerHTML = `<style>${css}</style>`;
@@ -166,6 +167,32 @@ describe('collectPageFacts', () => {
     const doc = buildDocument('', '<span class="a b c" style="color: #123456;">hi</span>');
     const facts = collectPageFacts(doc);
     expect(facts.inlineStyleColors[0]?.selector).toBe('span.a.b');
+  });
+
+  it('excludes an inline !important declaration — no CSS strategy can ever beat it in the cascade', () => {
+    const doc = buildDocument('', '<p style="color: #123456 !important;">hi</p>');
+    const facts = collectPageFacts(doc);
+    expect(facts.inlineStyleColors).toHaveLength(0);
+  });
+
+  it('still collects a non-important inline declaration alongside an excluded !important sibling', () => {
+    const doc = buildDocument(
+      '',
+      '<p style="color: #123456 !important; background-color: #654321;">hi</p>',
+    );
+    const facts = collectPageFacts(doc);
+    expect(facts.inlineStyleColors).toHaveLength(1);
+    expect(facts.inlineStyleColors[0]?.property).toBe('background-color');
+  });
+
+  it('reflects the !important exclusion in inlineStyleColorCount', () => {
+    const doc = buildDocument(
+      '',
+      '<p style="color: #123456 !important; background-color: #654321;"></p>',
+    );
+    const facts = collectPageFacts(doc);
+    const metrics = deriveMetrics(facts, { mutationRate: 0 });
+    expect(metrics.inlineStyleColorCount).toBe(1);
   });
 
   it('truncates rule visitation deterministically at maxRules', () => {
