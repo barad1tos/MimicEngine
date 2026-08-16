@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import {
   planStrategies,
@@ -94,6 +94,10 @@ export function App() {
   const [siteKey, setSiteKey] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('Loading settings...');
   const [diagnostics, setDiagnostics] = useState<PlanDiagnostics | null>(null);
+  // Guards against the load effect resolving after a fresher onChanged
+  // update already landed: both paths capture their own sequence number
+  // before doing async/event work and only commit if it's still current.
+  const diagnosticsSeq = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -121,10 +125,11 @@ export function App() {
 
   useEffect(() => {
     let isMounted = true;
+    const seq = ++diagnosticsSeq.current;
 
     async function loadDiagnostics(): Promise<void> {
       const result = siteKey === null ? null : await readPlanDiagnostics(siteKey);
-      if (isMounted) setDiagnostics(result);
+      if (isMounted && seq === diagnosticsSeq.current) setDiagnostics(result);
     }
 
     loadDiagnostics().catch((error: unknown) => {
@@ -144,7 +149,10 @@ export function App() {
       if (areaName !== 'session') return;
       const change = changes[key];
       if (change === undefined) return;
-      setDiagnostics(isPlanDiagnostics(change.newValue) ? change.newValue : null);
+      const seq = ++diagnosticsSeq.current;
+      if (seq === diagnosticsSeq.current) {
+        setDiagnostics(isPlanDiagnostics(change.newValue) ? change.newValue : null);
+      }
     };
 
     browser.storage.onChanged.addListener(listener);
