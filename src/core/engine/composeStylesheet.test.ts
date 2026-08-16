@@ -51,7 +51,7 @@ describe('composeStylesheet', () => {
     const first = composeStylesheet(theme, siteSettings, facts, fullPlan);
     const second = composeStylesheet(theme, siteSettings, facts, fullPlan);
 
-    expect(first).toBe(second);
+    expect(first.css).toBe(second.css);
   });
 
   it('produces the same bytes regardless of plan strategy order', () => {
@@ -78,13 +78,13 @@ describe('composeStylesheet', () => {
     const forward = composeStylesheet(theme, siteSettings, facts, forwardOrder);
     const reverse = composeStylesheet(theme, siteSettings, facts, reverseOrder);
 
-    expect(forward).toBe(reverse);
+    expect(forward.css).toBe(reverse.css);
   });
 
   it('emits override rules last, sorted by selector then property', () => {
     const siteSettings = siteSettingsWithOverrides();
 
-    const css = composeStylesheet(theme, siteSettings, facts, fullPlan);
+    const { css } = composeStylesheet(theme, siteSettings, facts, fullPlan);
 
     // Unique to buildBaseStylesheet's output — proves overrides trail strategy CSS,
     // not just the preamble.
@@ -102,7 +102,7 @@ describe('composeStylesheet', () => {
   it('always emits the token-variables preamble, even for an empty plan', () => {
     const siteSettings = createDefaultSiteSettings(theme.id);
 
-    const css = composeStylesheet(theme, siteSettings, facts, emptyPlan);
+    const { css } = composeStylesheet(theme, siteSettings, facts, emptyPlan);
 
     expect(css).toContain(':root {');
     expect(css).toContain(`--pm-canvas: ${theme.tokens.canvas}`);
@@ -143,7 +143,7 @@ describe('composeStylesheet', () => {
       overrides: [{ selector: '.card', property: 'color', token: 'success' }],
     };
 
-    const css = composeStylesheet(
+    const { css } = composeStylesheet(
       theme,
       siteSettings,
       factsWithHighSpecificityRule,
@@ -160,5 +160,30 @@ describe('composeStylesheet', () => {
     expect(css.indexOf(overrideRule)).toBeGreaterThan(
       css.indexOf(':where(#app .card.featured.special)'),
     );
+  });
+
+  it('collects coverage reports only from selected strategies that produce them', () => {
+    const siteSettings = createDefaultSiteSettings(theme.id);
+    const authoredRemapPlan: StrategyPlan = {
+      provenance: {
+        kind: 'auto',
+        rule: 'test',
+        strategies: ['baseline', 'authoredRemap'],
+        reasons: [],
+        tableVersion: 1,
+      },
+    };
+
+    const { coverages } = composeStylesheet(theme, siteSettings, facts, authoredRemapPlan);
+
+    expect(coverages).toEqual([{ discovered: 0, mapped: 0, ratio: 0 }]);
+  });
+
+  it('returns an empty coverages array when no selected strategy reports coverage', () => {
+    const siteSettings = createDefaultSiteSettings(theme.id);
+
+    const { coverages } = composeStylesheet(theme, siteSettings, facts, fullPlan);
+
+    expect(coverages).toEqual([]);
   });
 });

@@ -199,7 +199,7 @@ describe('assignTokens', () => {
 
 describe('variableRemap strategy', () => {
   it('returns an empty string when nothing can be classified', () => {
-    const css = variableRemap.produceCss(
+    const { css } = variableRemap.produce(
       builtInThemes[0],
       anySiteSettings(),
       emptyFacts(),
@@ -221,7 +221,7 @@ describe('variableRemap strategy', () => {
       ],
     };
 
-    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), facts, anyPlan());
+    const { css } = variableRemap.produce(builtInThemes[0], anySiteSettings(), facts, anyPlan());
 
     expect(css).toMatchInlineSnapshot(`
       "html[data-pm-active="true"] {
@@ -240,7 +240,7 @@ describe('variableRemap strategy', () => {
       ],
     };
 
-    const css = variableRemap.produceCss(builtInThemes[0], anySiteSettings(), facts, anyPlan());
+    const { css } = variableRemap.produce(builtInThemes[0], anySiteSettings(), facts, anyPlan());
     const declarationLines = css.split('\n').filter((line) => line.trim().startsWith('--'));
 
     expect(declarationLines.length).toBeGreaterThan(0);

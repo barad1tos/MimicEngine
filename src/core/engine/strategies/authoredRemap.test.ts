@@ -69,7 +69,7 @@ function anyPlan(): StrategyPlan {
 
 describe('authoredRemap strategy', () => {
   it('returns an empty string when there are no mappable declarations', () => {
-    const css = authoredRemap.produceCss(
+    const { css } = authoredRemap.produce(
       catppuccinFrappe,
       anySiteSettings(),
       emptyFacts(),
@@ -86,7 +86,12 @@ describe('authoredRemap strategy', () => {
       decl('.header', 'border-color', '#3a3a44', 'border'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toMatchInlineSnapshot(`
       "html[data-pm-active="true"] :where(.card) {
@@ -106,7 +111,12 @@ describe('authoredRemap strategy', () => {
       decl('.card', 'background-color', '#101014', 'background'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
     const declarationLines = css
       .split('\n')
       .filter((line) => line.trimEnd().endsWith(';') && line.includes(':'));
@@ -118,7 +128,12 @@ describe('authoredRemap strategy', () => {
   it('skips --custom-property declarations even when parsed color is present', () => {
     const pageFacts = facts([decl('.card', '--brand-bg', '#101014', 'background')]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toBe('');
   });
@@ -135,7 +150,12 @@ describe('authoredRemap strategy', () => {
       },
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toBe('');
   });
@@ -146,7 +166,12 @@ describe('authoredRemap strategy', () => {
       [decl('.first', 'color', '#f5f5f7', 'text')],
     );
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
     const selectorOrder = [...css.matchAll(/html\[data-pm-active="true"] :where\((\S+)\) \{/g)].map(
       (match) => match[1],
     );
@@ -160,7 +185,12 @@ describe('authoredRemap strategy', () => {
       [decl('.btn', 'border-color', '#3a3a44', 'border')],
     );
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
     const blockCount = [...css.matchAll(/html\[data-pm-active="true"] :where\(\.btn\) \{/g)].length;
 
     expect(blockCount).toBe(1);
@@ -178,7 +208,12 @@ describe('authoredRemap strategy', () => {
       decl('.a', 'color', '#c9c9d1', 'text'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
     const colorLines = css.split('\n').filter((line) => line.trim().startsWith('color:'));
 
     expect(colorLines).toHaveLength(1);
@@ -193,7 +228,12 @@ describe('authoredRemap strategy', () => {
       decl('.card', 'border-color', '#3a3a44', 'border'),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
     const propertyOrder = css
       .split('\n')
       .filter((line) => line.includes(':') && line.trim().endsWith(';'))
@@ -206,7 +246,7 @@ describe('authoredRemap strategy', () => {
     const brandHex = toHex(oklchToRgba({ l: 0.55, c: 0.24, h: 260 }));
     const pageFacts = facts([decl('.brand', 'background-color', brandHex, 'other')]);
 
-    const css = authoredRemap.produceCss(
+    const { css } = authoredRemap.produce(
       catppuccinFrappe,
       anySiteSettings(true),
       pageFacts,
@@ -229,7 +269,12 @@ describe('authoredRemap strategy', () => {
       },
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toContain('.solid');
     expect(css).not.toContain('.scrim');
@@ -239,7 +284,7 @@ describe('authoredRemap strategy', () => {
     const brandHex = toHex(oklchToRgba({ l: 0.55, c: 0.24, h: 260 }));
     const pageFacts = facts([decl('.brand', 'background-color', brandHex, 'other')]);
 
-    const css = authoredRemap.produceCss(
+    const { css } = authoredRemap.produce(
       catppuccinFrappe,
       anySiteSettings(false),
       pageFacts,
@@ -256,7 +301,12 @@ describe('authoredRemap strategy', () => {
       decl('.nested', 'border-color', '#3a3a44', 'border', ['@media print']),
     ]);
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toContain('@media print {');
     // The nested block is indented inside the @media wrapper.
@@ -280,7 +330,12 @@ describe('authoredRemap strategy', () => {
       [decl('div.card', 'color', '#c9c9d1', 'text'), decl('div.card', 'color', '#f5f5f7', 'text')],
     );
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
 
     expect(css).toBe('');
   });
@@ -291,7 +346,12 @@ describe('authoredRemap strategy', () => {
       [decl('div.card', 'color', '#c9c9d1', 'text'), decl('div.card', 'color', '#c9c9d1', 'text')],
     );
 
-    const css = authoredRemap.produceCss(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
     const colorLines = css.split('\n').filter((line) => line.trim().startsWith('color:'));
 
     expect(colorLines).toHaveLength(1);

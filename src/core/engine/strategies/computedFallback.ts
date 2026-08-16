@@ -6,6 +6,7 @@ import { isOpaque, parseCssColor, toHex, type HexColor } from '../../color/parse
 import { withStylesheetDisabled } from '../../injector/styleElement';
 import { buildColorMapping, extractSitePalette, type ColorMapping } from '../colorMap';
 import { guardContrast } from '../contrastGuard';
+import { computeCoverage } from '../coverage';
 import { planStrategies } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
@@ -46,7 +47,7 @@ const SAMPLE_PROPERTY_TO_BUCKET: Record<
 export const computedFallback: PaletteEngine = {
   id: 'computedFallback',
   label: 'Computed fallback',
-  produceCss(theme, siteSettings, facts, plan) {
+  produce(theme, siteSettings, facts, plan) {
     const samples = withStylesheetDisabled(() =>
       collectComputedColors(document, { maxElements: MAX_SAMPLED_ELEMENTS }),
     );
@@ -70,7 +71,10 @@ export const computedFallback: PaletteEngine = {
     const { mapping: guardedMapping } = guardContrast(mapping, palette, theme);
 
     const groups = buildSelectorGroups(novelDeclarations, guardedMapping);
-    return emitGroupedRules(groups);
+    const css = emitGroupedRules(groups);
+    const coverage = computeCoverage(palette, guardedMapping);
+
+    return { css, coverage };
   },
 };
 

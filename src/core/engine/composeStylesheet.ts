@@ -1,6 +1,7 @@
 import { buildOverrideRule } from '../injector/buildBaseStylesheet';
 import type { SiteSettings } from '../storage/settingsStore';
 import type { PaletteTheme } from '../themes';
+import type { CoverageReport } from './coverage';
 import { planStrategies, type StrategyPlan } from './decisionTable';
 import type { PageFacts } from './pageFacts';
 import { strategyRegistry } from './registry';
@@ -31,18 +32,22 @@ export function composeStylesheet(
   siteSettings: SiteSettings,
   facts: PageFacts,
   plan: StrategyPlan,
-): string {
+): { css: string; coverages: CoverageReport[] } {
   const selectedStrategies = planStrategies(plan);
-  const strategyBlocks = strategyRegistry
+  const outputs = strategyRegistry
     .filter((engine) => selectedStrategies.includes(engine.id))
-    .map((engine) => engine.produceCss(theme, siteSettings, facts, plan));
+    .map((engine) => engine.produce(theme, siteSettings, facts, plan));
 
   const overrideBlocks = [...siteSettings.overrides]
     .sort(compareOverrides)
     .map((override) => buildOverrideRule(override));
 
-  return [tokenVariablesCss(theme), ...strategyBlocks, ...overrideBlocks]
+  const css = [tokenVariablesCss(theme), ...outputs.map((output) => output.css), ...overrideBlocks]
     .filter((block) => block.length > 0)
     .join('\n\n')
     .trim();
+
+  const coverages = outputs.flatMap((output) => (output.coverage ? [output.coverage] : []));
+
+  return { css, coverages };
 }
