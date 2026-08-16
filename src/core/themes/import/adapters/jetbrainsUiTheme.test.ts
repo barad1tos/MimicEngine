@@ -24,6 +24,7 @@ describe('parseJetbrainsUiTheme', () => {
     expect(slots.name).toBe('Ayu Mirage');
     expect(slots.sourceFormat).toBe('jetbrains-ui');
     expect(slots.mode).toBe('dark');
+    expect(slots.author).toBe('cloud');
 
     // Hand-verified against the fixture's `colors` palette by walking each
     // chain in the mapping brief:
@@ -166,6 +167,24 @@ describe('parseJetbrainsUiTheme', () => {
 
     const slots = expectSlots(parseJetbrainsUiTheme(content));
     expect(slots.tokens.accent).toBe('#3399ff');
+  });
+
+  it('leaves author unset when the theme JSON has no "author" field', () => {
+    const content = JSON.stringify({ name: 'NoAuthor', ui: { '*': { background: '#101010' } } });
+
+    const slots = expectSlots(parseJetbrainsUiTheme(content));
+    expect(Object.hasOwn(slots, 'author')).toBe(false);
+  });
+
+  it('leaves author unset when "author" is present but empty', () => {
+    const content = JSON.stringify({
+      name: 'EmptyAuthor',
+      author: '',
+      ui: { '*': { background: '#101010' } },
+    });
+
+    const slots = expectSlots(parseJetbrainsUiTheme(content));
+    expect(Object.hasOwn(slots, 'author')).toBe(false);
   });
 
   it('leaves mode unset when "dark" is not a boolean', () => {

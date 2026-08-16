@@ -247,6 +247,18 @@ describe('saveImportedTheme', () => {
 
     expect(await readRecentSources()).toEqual(['card-a', 'card-b']);
   });
+
+  it('round-trips a theme with an author through save and read', async () => {
+    const saved = await saveImportedTheme(
+      { ...themeInput, name: 'Ayu Mirage With Author', author: 'cloud' },
+      'card-1',
+    );
+    expect(saved.author).toBe('cloud');
+
+    const themes = await readImportedThemes();
+    expect(themes).toHaveLength(1);
+    expect(themes[0]).toMatchObject({ id: saved.id, author: 'cloud' });
+  });
 });
 
 describe('deleteImportedTheme', () => {

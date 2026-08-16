@@ -47,6 +47,7 @@ export function validateImport(candidate: {
   name: string;
   mode: 'dark' | 'light';
   tokens: ThemeTokens;
+  author?: string;
 }): Omit<PaletteTheme, 'id'> | ImportError {
   const tokenError = validateTokenColors(candidate.tokens);
   if (tokenError) return tokenError;
@@ -67,5 +68,10 @@ export function validateImport(candidate: {
   );
   if (mutedError) return mutedError;
 
-  return { name: candidate.name, mode: candidate.mode, tokens: candidate.tokens };
+  return {
+    name: candidate.name,
+    mode: candidate.mode,
+    tokens: candidate.tokens,
+    ...(candidate.author !== undefined ? { author: candidate.author } : {}),
+  };
 }

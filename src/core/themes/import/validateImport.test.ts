@@ -62,4 +62,24 @@ describe('validateImport', () => {
       message: 'invalid color for token border: not-a-color',
     });
   });
+
+  it('passes author through to the result when the candidate carries one', () => {
+    const result = validateImport({
+      name: 'Ayu Mirage',
+      mode: 'dark',
+      tokens: VALID_TOKENS,
+      author: 'cloud',
+    });
+    expect(result).toEqual({
+      name: 'Ayu Mirage',
+      mode: 'dark',
+      tokens: VALID_TOKENS,
+      author: 'cloud',
+    });
+  });
+
+  it('omits author from the result when the candidate has none', () => {
+    const result = validateImport({ name: 'Ayu Mirage', mode: 'dark', tokens: VALID_TOKENS });
+    expect(Object.hasOwn(result as object, 'author')).toBe(false);
+  });
 });

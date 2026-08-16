@@ -11,6 +11,7 @@ export type ThemeSlots = {
   ansi?: readonly (string | undefined)[]; // up to 16, sparse
   background?: string;
   foreground?: string;
+  author?: string; // source-declared author metadata; only jetbrains-ui carries one
 };
 
 export type ImportError = {
