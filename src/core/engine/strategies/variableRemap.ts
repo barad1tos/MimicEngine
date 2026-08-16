@@ -1,5 +1,5 @@
 import { relativeLuminance } from '../../color/contrast';
-import type { RgbaColor } from '../../color/parseColor';
+import { isOpaque, type RgbaColor } from '../../color/parseColor';
 import type { ThemeTokenName } from '../../themes';
 import type { CustomPropertyFact } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
@@ -72,7 +72,7 @@ export function assignTokens(
   const assignments = new Map<string, ThemeTokenName>();
   const surfaceGroup: SurfaceCandidate[] = [];
 
-  for (const property of properties.filter(hasColor)) {
+  for (const property of properties.filter(hasOpaqueColor)) {
     const nameMatch = matchNameTableEntry(property.name);
     const classification = nameMatch?.token ?? classifyUsage(property.usage);
     if (classification === 'surface-group') {
@@ -89,8 +89,11 @@ export function assignTokens(
   return assignments;
 }
 
-function hasColor(property: CustomPropertyFact): property is ColoredProperty {
-  return property.color !== null;
+// Same opacity gate M2 gives authoredRemap/computedFallback: a translucent
+// declaration (e.g. a modal scrim) must never stand in for the page's actual
+// opaque surface color once reduced through toHex downstream.
+function hasOpaqueColor(property: CustomPropertyFact): property is ColoredProperty {
+  return property.color !== null && isOpaque(property.color);
 }
 
 function matchNameTableEntry(name: string): NameTableEntry | null {
