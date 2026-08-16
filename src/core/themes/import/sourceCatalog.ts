@@ -90,13 +90,17 @@ export const SOURCE_CATALOG: readonly SourceCard[] = [
 ];
 
 /**
- * Maps a raw `navigator.platform` string to the coarse platform buckets the
- * catalog keys its paths by. `Mac` substring wins over `Win`; anything else
- * (including every Linux/BSD variant) falls back to `linux`.
+ * Maps a raw platform-hint string to the coarse platform buckets the catalog
+ * keys its paths by. Case-insensitive so it matches both the legacy
+ * `navigator.platform` spelling (`MacIntel`, `Win32`) and the modern
+ * `navigator.userAgentData.platform` spelling (`macOS`, `Windows`); a `mac`
+ * substring wins over `win`, and anything else (every Linux/BSD variant,
+ * `Linux`, ChromeOS, …) falls back to `linux`.
  */
-export function detectPlatform(navigatorPlatform: string): SourcePlatform {
-  if (navigatorPlatform.includes('Mac')) return 'mac';
-  if (navigatorPlatform.includes('Win')) return 'windows';
+export function detectPlatform(platformHint: string): SourcePlatform {
+  const normalized = platformHint.toLowerCase();
+  if (normalized.includes('mac')) return 'mac';
+  if (normalized.includes('win')) return 'windows';
   return 'linux';
 }
 
