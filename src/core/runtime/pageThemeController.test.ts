@@ -3,7 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { planStorageKey, type PlanDiagnostics } from '../engine/diagnostics';
+import * as shadowStylesModule from '../injector/shadowStyles';
 import * as styleElementModule from '../injector/styleElement';
+import { STYLE_ELEMENT_ID } from '../injector/styleElement';
 import { observeDomChanges } from '../live/observeDomChanges';
 import { IMPORTED_THEMES_KEY, type ImportedTheme } from '../storage/importedThemesStore';
 import { createDefaultSiteSettings, STORAGE_KEY, type AppSettings } from '../storage/settingsStore';
@@ -359,6 +361,137 @@ describe('createPageThemeController — batched storage read', () => {
     const styleText = document.getElementById(styleElementModule.STYLE_ELEMENT_ID)?.textContent;
     expect(styleText).toContain('#303446'); // catppuccinFrappe canvas token
     expect(styleText).not.toContain('#123456');
+
+    controller.stop();
+  });
+});
+
+describe('createPageThemeController — shadow stylesheet lifecycle', () => {
+  const siteKey = normalizeHostname(window.location.hostname);
+
+  function seedSiteSettings(overrides: Partial<AppSettings['sites'][string]> = {}): void {
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), strategy: 'deepRemap', ...overrides } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
+  }
+
+  function attachOpenShadowHost(): ShadowRoot {
+    const host = document.createElement('div');
+    document.body.append(host);
+    return host.attachShadow({ mode: 'open' });
+  }
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('writes our style element into an open shadow root for a manual deepRemap plan', async () => {
+    const shadowRoot = attachOpenShadowHost();
+    seedSiteSettings();
+    const controller = createPageThemeController();
+
+    await controller.start();
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeInstanceOf(HTMLStyleElement);
+
+    controller.stop();
+  });
+
+  it('removes the shadow style element once a later apply switches strategy away from deepRemap', async () => {
+    const shadowRoot = attachOpenShadowHost();
+    seedSiteSettings();
+    const controller = createPageThemeController();
+    await controller.start();
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).not.toBeNull();
+
+    seedSiteSettings({ strategy: 'baseline' });
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+
+    controller.stop();
+  });
+
+  it('removes the shadow style element once the site is disabled', async () => {
+    const shadowRoot = attachOpenShadowHost();
+    seedSiteSettings();
+    const controller = createPageThemeController();
+    await controller.start();
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).not.toBeNull();
+
+    seedSiteSettings({ enabled: false });
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+
+    controller.stop();
+  });
+
+  it('removes the shadow style element on stop() while deepRemap is active', async () => {
+    const shadowRoot = attachOpenShadowHost();
+    seedSiteSettings();
+    const controller = createPageThemeController();
+    await controller.start();
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).not.toBeNull();
+
+    controller.stop();
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+  });
+
+  it('identity-skips the shadow stylesheet write when a later apply produces the same theme', async () => {
+    attachOpenShadowHost();
+    seedSiteSettings();
+    const controller = createPageThemeController();
+    await controller.start();
+
+    const textContentSetter = vi.spyOn(Node.prototype, 'textContent', 'set');
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(textContentSetter).not.toHaveBeenCalled();
+    textContentSetter.mockRestore();
+
+    controller.stop();
+  });
+
+  it('a stalled older apply resolving after a newer one must not sync shadow stylesheets on top of it', async () => {
+    attachOpenShadowHost();
+    seedSiteSettings();
+    const syncSpy = vi.spyOn(shadowStylesModule, 'syncShadowStylesheets');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    expect(syncSpy).toHaveBeenCalledTimes(1);
+
+    // Stall the settings read the next settings-changed apply() will make —
+    // this becomes generation 2, and it never gets past this await.
+    const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
+    fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
+
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+    // Generation 2 is stuck awaiting settings — no new shadow sync yet.
+    expect(syncSpy).toHaveBeenCalledTimes(1);
+
+    // Generation 3: a second settings change, resolving normally, becomes
+    // "the newest" — it syncs shadow stylesheets while generation 2 is still
+    // stalled.
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+    expect(syncSpy).toHaveBeenCalledTimes(2);
+
+    // Generation 2's stalled settings read finally resolves — it must abort
+    // instead of syncing shadow stylesheets over generation 3's results.
+    stalledSettings.resolve({});
+    await flushMicrotasks();
+
+    expect(syncSpy).toHaveBeenCalledTimes(2);
 
     controller.stop();
   });

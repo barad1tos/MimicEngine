@@ -5,6 +5,12 @@ import { aggregateCoverage } from '../engine/coverage';
 import { decideStrategies, planStrategies, type StrategyPlan } from '../engine/decisionTable';
 import { deriveMetrics } from '../engine/pageMetrics';
 import { writePlanDiagnostics } from '../engine/diagnostics';
+import {
+  buildShadowStylesheet,
+  collectOpenShadowRoots,
+  removeShadowStylesheets,
+  syncShadowStylesheets,
+} from '../injector/shadowStyles';
 import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
 import { observeDomChanges, type DomChangeObserver } from '../live/observeDomChanges';
 import {
@@ -51,10 +57,21 @@ export function createPageThemeController(): PageThemeController {
   // diagnostics; without this, the stale call would silently overwrite both
   // with outdated results (see the generation-guard controller test).
   let applyGeneration = 0;
+  // Tracks whether the previous apply() left our style element in every open
+  // shadow root, so a plan without deepRemap only walks the shadow tree to
+  // remove it when there's actually something to remove — an unconditional
+  // walk on every apply would tax every page, deepRemap or not.
+  let shadowStylesActive = false;
 
   const stopDomObserver = (): void => {
     domObserver?.stop();
     domObserver = null;
+  };
+
+  const deactivateShadowStyles = (): void => {
+    if (!shadowStylesActive) return;
+    removeShadowStylesheets(document);
+    shadowStylesActive = false;
   };
 
   // Rolling mutation-rate window: a simple counter+windowStart pair rather than
@@ -128,6 +145,7 @@ export function createPageThemeController(): PageThemeController {
 
     if (!siteSettings.enabled) {
       removeStylesheet();
+      deactivateShadowStyles();
       stopDomObserver();
       return;
     }
@@ -138,6 +156,13 @@ export function createPageThemeController(): PageThemeController {
     const plan = decideStrategies(metrics, siteSettings.strategy);
     const { css, coverages } = composeStylesheet(theme, siteSettings, facts, plan);
     injectStylesheet(css);
+
+    if (planStrategies(plan).includes('deepRemap')) {
+      syncShadowStylesheets(buildShadowStylesheet(theme), collectOpenShadowRoots(document));
+      shadowStylesActive = true;
+    } else {
+      deactivateShadowStyles();
+    }
 
     if (needsLiveObserver(siteSettings, plan)) {
       ensureDomObserver();
@@ -192,6 +217,7 @@ export function createPageThemeController(): PageThemeController {
       stopSettingsListener?.();
       stopSettingsListener = null;
       stopDomObserver();
+      deactivateShadowStyles();
     },
   };
 }
