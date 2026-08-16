@@ -55,7 +55,11 @@ export function createPageThemeController(): PageThemeController {
   // Guards against an older apply() — stalled on the settings read — resuming
   // after a newer apply() has already injected its stylesheet and written its
   // diagnostics; without this, the stale call would silently overwrite both
-  // with outdated results (see the generation-guard controller test).
+  // with outdated results (see the generation-guard controller test). stop()
+  // also bumps this counter (before its own teardown) so an apply() still
+  // stalled on the settings read at stop time fails its post-await
+  // generation check and aborts instead of reactivating styling after an
+  // explicit stop.
   let applyGeneration = 0;
   // Tracks whether the previous apply() left our style element in every open
   // shadow root, so a plan without deepRemap only walks the shadow tree to
@@ -214,6 +218,11 @@ export function createPageThemeController(): PageThemeController {
     },
 
     stop() {
+      // Invalidate any apply() still in flight (e.g. stalled on the settings
+      // read) before tearing anything else down — its post-await generation
+      // re-check then fails and it aborts before re-injecting the
+      // stylesheet, re-setting data-pm-active, or re-syncing shadow styles.
+      applyGeneration += 1;
       stopSettingsListener?.();
       stopSettingsListener = null;
       stopDomObserver();

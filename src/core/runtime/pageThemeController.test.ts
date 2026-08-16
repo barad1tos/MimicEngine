@@ -205,6 +205,56 @@ describe('createPageThemeController — apply() generation guard', () => {
   });
 });
 
+describe('createPageThemeController — stop() invalidates in-flight apply()', () => {
+  it('an apply() stalled on the settings read at stop() time must not reactivate styling once it resolves', async () => {
+    const siteKey = normalizeHostname(window.location.hostname);
+    // A settings shape that, if this apply() were allowed to proceed, would
+    // inject the document stylesheet, set data-pm-active, AND sync shadow
+    // stylesheets — so a passing test actually proves stop()'s guard is
+    // doing the work, not merely that there was nothing to do.
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), strategy: 'deepRemap' } },
+    };
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const syncSpy = vi.spyOn(shadowStylesModule, 'syncShadowStylesheets');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // Clean baseline: earlier tests in this file may have left the main
+    // style element and data-pm-active behind (stop() doesn't remove the
+    // document-level stylesheet), so start from a known-empty state.
+    document.getElementById(styleElementModule.STYLE_ELEMENT_ID)?.remove();
+    delete document.documentElement.dataset.pmActive;
+
+    const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
+    fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
+
+    const controller = createPageThemeController();
+    // start() calls apply(), which suspends synchronously at the settings
+    // read above — by the time this line returns, apply() is stalled.
+    const startPromise = controller.start();
+
+    controller.stop();
+
+    // The stalled apply() finally resolves, after stop() already ran.
+    stalledSettings.resolve({ [STORAGE_KEY]: settings });
+    await startPromise;
+    await flushMicrotasks();
+
+    expect(injectSpy).not.toHaveBeenCalled();
+    expect(syncSpy).not.toHaveBeenCalled();
+    expect(document.getElementById(styleElementModule.STYLE_ELEMENT_ID)).toBeNull();
+    expect(document.documentElement.dataset.pmActive).toBeUndefined();
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    // start() only registers its settings-changed listener after its initial
+    // apply() settles (even an aborted one) — since that registration ran
+    // after the stop() above, it must be torn down again here, or it would
+    // keep firing apply() for every later test's emitChange call.
+    controller.stop();
+  });
+});
+
 describe('createPageThemeController — coverage gating', () => {
   // Matches exactly what the controller itself computes internally, so this
   // stays correct regardless of what happy-dom's default test hostname is.
