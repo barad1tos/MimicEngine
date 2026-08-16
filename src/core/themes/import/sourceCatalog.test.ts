@@ -25,10 +25,30 @@ describe('SOURCE_CATALOG', () => {
     }
   });
 
-  it('gives every non-file card non-empty picker extensions', () => {
+  it('gives every non-file, non-extensionless card non-empty picker extensions', () => {
+    // 'ghostty' is the one deliberate exception: its config file has no
+    // extension, so an honest picker filter is "no filter" (empty array),
+    // not an invented, non-existent extension.
+    const cardsWithoutExtensions = new Set(['file', 'ghostty']);
     for (const card of SOURCE_CATALOG) {
-      if (card.id === 'file') continue;
+      if (cardsWithoutExtensions.has(card.id)) continue;
       expect(card.pickerExtensions.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('gives every non-empty picker extension a leading dot (File System Access API accept-map requirement)', () => {
+    for (const card of SOURCE_CATALOG) {
+      for (const extension of card.pickerExtensions) {
+        expect(extension).toMatch(/^\./);
+      }
+    }
+  });
+
+  it('never gives a windows path a "~" (Windows Explorer cannot expand it)', () => {
+    for (const card of SOURCE_CATALOG) {
+      for (const path of card.paths.windows ?? []) {
+        expect(path.startsWith('~')).toBe(false);
+      }
     }
   });
 

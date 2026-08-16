@@ -44,7 +44,7 @@ export const SOURCE_CATALOG: readonly SourceCard[] = [
     paths: {
       mac: ['~/.vscode/extensions/<theme>/themes/*.json'],
       linux: ['~/.vscode/extensions/<theme>/themes/*.json'],
-      windows: ['~/.vscode/extensions/<theme>/themes/*.json'],
+      windows: ['%USERPROFILE%\\.vscode\\extensions\\<theme>\\themes\\*.json'],
     },
     pickerExtensions: ['.json'],
   },
@@ -84,7 +84,7 @@ export const SOURCE_CATALOG: readonly SourceCard[] = [
       mac: ['~/Library/Application Support/com.mitchellh.ghostty/config'],
       linux: ['~/.config/ghostty/config'],
     },
-    pickerExtensions: ['config'],
+    pickerExtensions: [],
   },
   FILE_CARD,
 ];
