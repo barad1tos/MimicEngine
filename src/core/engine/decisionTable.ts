@@ -53,6 +53,13 @@ export const DECISION_TABLE: readonly DecisionRow[] = [
 
 export type PlanReason = { metric: keyof PageMetrics; value: number; condition: MetricCondition };
 
+// A manual override's optional composition record: present only for
+// deepRemap (see decideStrategies), it names the auto row that would have
+// matched these metrics on their own, so deepRemap layers onto that row's
+// strategies instead of replacing them — the spec's "Dynamic+" semantics
+// (docs spec §3): deepRemap is additive and meaningless standalone.
+export type ManualComposition = { rule: string; strategies: StrategyId[]; tableVersion: number };
+
 export type StrategyPlan = {
   provenance:
     | {
@@ -62,15 +69,16 @@ export type StrategyPlan = {
         reasons: PlanReason[];
         tableVersion: number;
       }
-    | { kind: 'manual'; strategy: StrategyId };
+    | { kind: 'manual'; strategy: StrategyId; composed?: ManualComposition };
 };
 
 // The strategies a plan selects, regardless of provenance: an auto plan's
-// table-chosen list, or a manual override's single strategy wrapped in one.
+// table-chosen list, a composed manual override's auto-row strategies plus
+// itself, or a plain manual override's single strategy wrapped in one.
 export function planStrategies(plan: StrategyPlan): StrategyId[] {
-  return plan.provenance.kind === 'manual'
-    ? [plan.provenance.strategy]
-    : plan.provenance.strategies;
+  if (plan.provenance.kind === 'auto') return plan.provenance.strategies;
+  const { composed, strategy } = plan.provenance;
+  return composed ? [...composed.strategies, strategy] : [strategy];
 }
 
 function conditionHolds(value: number, condition: MetricCondition): boolean {
@@ -91,25 +99,42 @@ function matchReasons(row: DecisionRow, metrics: PageMetrics): PlanReason[] | nu
   return reasons;
 }
 
-export function decideStrategies(metrics: PageMetrics, override: StrategySelection): StrategyPlan {
-  if (override !== 'auto') {
-    return { provenance: { kind: 'manual', strategy: override } };
-  }
-
+function matchRow(metrics: PageMetrics): { row: DecisionRow; reasons: PlanReason[] } {
   for (const row of DECISION_TABLE) {
     const reasons = matchReasons(row, metrics);
-    if (reasons === null) continue;
-
-    return {
-      provenance: {
-        kind: 'auto',
-        rule: row.name,
-        strategies: row.strategies,
-        reasons,
-        tableVersion: TABLE_VERSION,
-      },
-    };
+    if (reasons !== null) return { row, reasons };
   }
 
   throw new Error('decisionTable: no row matched — the default row must have when: {}');
+}
+
+export function decideStrategies(metrics: PageMetrics, override: StrategySelection): StrategyPlan {
+  if (override !== 'auto') {
+    // deepRemap alone is additive, never standalone (spec §3 "Dynamic+"):
+    // compose it on top of whichever row would have auto-matched these
+    // metrics. Every other manual override keeps today's single-strategy
+    // behavior — the user picked exactly that engine and nothing else.
+    if (override === 'deepRemap') {
+      const { row } = matchRow(metrics);
+      return {
+        provenance: {
+          kind: 'manual',
+          strategy: override,
+          composed: { rule: row.name, strategies: row.strategies, tableVersion: TABLE_VERSION },
+        },
+      };
+    }
+    return { provenance: { kind: 'manual', strategy: override } };
+  }
+
+  const { row, reasons } = matchRow(metrics);
+  return {
+    provenance: {
+      kind: 'auto',
+      rule: row.name,
+      strategies: row.strategies,
+      reasons,
+      tableVersion: TABLE_VERSION,
+    },
+  };
 }

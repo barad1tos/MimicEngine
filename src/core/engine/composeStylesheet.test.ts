@@ -187,4 +187,48 @@ describe('composeStylesheet', () => {
 
     expect(coverages).toEqual([]);
   });
+
+  it('a composed manual deepRemap plan emits baseline, then the composed auto strategies, then deepRemap last — registry order, not plan-array order', () => {
+    const siteSettings = createDefaultSiteSettings(theme.id);
+    const composedDeepRemapPlan: StrategyPlan = {
+      provenance: {
+        kind: 'manual',
+        strategy: 'deepRemap',
+        composed: {
+          rule: 'variables-capable',
+          strategies: ['baseline', 'variableRemap'],
+          tableVersion: 1,
+        },
+      },
+    };
+    const factsWithVariableAndSvg: PageFacts = {
+      ...facts,
+      customProperties: [
+        {
+          name: '--page-bg',
+          value: '#1f2430',
+          color: { r: 0x1f, g: 0x24, b: 0x30, a: 1 },
+          usage: { background: 1, text: 0, border: 0, other: 0 },
+        },
+      ],
+      svgPresentationColors: [
+        { attribute: 'fill', value: '#101014', color: { r: 0x10, g: 0x10, b: 0x14, a: 1 } },
+      ],
+    };
+
+    const { css } = composeStylesheet(
+      theme,
+      siteSettings,
+      factsWithVariableAndSvg,
+      composedDeepRemapPlan,
+    );
+
+    const baselineMarker = css.indexOf('::selection');
+    const variableRemapMarker = css.indexOf('--page-bg: var(--pm-canvas)');
+    const deepRemapMarker = css.indexOf(':is(svg, svg *)[fill=');
+
+    expect(baselineMarker).toBeGreaterThanOrEqual(0);
+    expect(variableRemapMarker).toBeGreaterThan(baselineMarker);
+    expect(deepRemapMarker).toBeGreaterThan(variableRemapMarker);
+  });
 });

@@ -149,12 +149,13 @@ describe('decideStrategies', () => {
     expect(planStrategies(belowBoundary)).toEqual(['baseline']);
   });
 
-  it('manual override bypasses the table entirely', () => {
+  it('manual override bypasses the table entirely — only deepRemap composes (see deepRemap autonomy below)', () => {
     const plan = decideStrategies(baseMetrics, 'variableRemap');
 
     expect(plan).toEqual({
       provenance: { kind: 'manual', strategy: 'variableRemap' },
     });
+    expect(planStrategies(plan)).toEqual(['variableRemap']);
   });
 
   it('the table is total: the last row matches unconditionally', () => {
@@ -244,11 +245,44 @@ describe('decideStrategies', () => {
       }
     });
 
-    it('manual override to deepRemap yields manual provenance with exactly deepRemap', () => {
+    // Dynamic+ semantics (docs spec §3): deepRemap is an additive layer,
+    // meaningless standalone — picking it composes it on top of whatever
+    // row would have auto-matched these metrics, rather than replacing the
+    // auto plan with deepRemap alone.
+    it('manual override to deepRemap composes on the auto-matched row for those metrics', () => {
       const plan = decideStrategies(baseMetrics, 'deepRemap');
 
-      expect(plan).toEqual({ provenance: { kind: 'manual', strategy: 'deepRemap' } });
-      expect(planStrategies(plan)).toEqual(['deepRemap']);
+      expect(plan).toEqual({
+        provenance: {
+          kind: 'manual',
+          strategy: 'deepRemap',
+          composed: { rule: 'default', strategies: ['baseline'], tableVersion: TABLE_VERSION },
+        },
+      });
+      expect(planStrategies(plan)).toEqual(['baseline', 'deepRemap']);
+    });
+
+    it('composes on different auto rows for different metric fixtures, deterministically', () => {
+      const defaultMetrics = baseMetrics;
+      const calmVariablesRichMetrics: PageMetrics = {
+        ...baseMetrics,
+        colorCustomPropertyCount: 8,
+        mutationRate: 5,
+      };
+
+      const defaultPlan = decideStrategies(defaultMetrics, 'deepRemap');
+      const richPlan = decideStrategies(calmVariablesRichMetrics, 'deepRemap');
+
+      expect(planStrategies(defaultPlan)).toEqual(['baseline', 'deepRemap']);
+      expect(planStrategies(richPlan)).toEqual([
+        'baseline',
+        'variableRemap',
+        'authoredRemap',
+        'deepRemap',
+      ]);
+
+      // Deterministic: same metrics -> byte-for-byte identical composed plan.
+      expect(decideStrategies(calmVariablesRichMetrics, 'deepRemap')).toEqual(richPlan);
     });
   });
 });

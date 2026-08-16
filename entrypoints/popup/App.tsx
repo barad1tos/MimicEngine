@@ -50,7 +50,13 @@ function formatReason(reason: PlanReason): string {
 
 function ProvenanceDetails({ provenance }: Readonly<{ provenance: StrategyPlan['provenance'] }>) {
   if (provenance.kind === 'manual') {
-    return <p className="diagnostics-provenance">Manual override</p>;
+    return (
+      <p className="diagnostics-provenance">
+        {provenance.composed
+          ? `Manual override · composed on ${provenance.composed.rule}`
+          : 'Manual override'}
+      </p>
+    );
   }
 
   return (
