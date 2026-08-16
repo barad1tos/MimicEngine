@@ -63,7 +63,7 @@ function planWith(strategies: StrategyId[]): StrategyPlan {
   };
 }
 
-// Matches produceCss's real call site (composeStylesheet only invokes a
+// Matches produce's real call site (composeStylesheet only invokes a
 // strategy when it's in the plan), so the default fixture always includes
 // computedFallback alongside authoredRemap — exercising the stoplist
 // suppression these tests are built around.
@@ -92,7 +92,7 @@ afterEach(() => {
 
 describe('computedFallback strategy', () => {
   it('returns an empty string when there is nothing to sample', () => {
-    const css = computedFallback.produceCss(
+    const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       emptyFacts(),
@@ -114,7 +114,7 @@ describe('computedFallback strategy', () => {
       return original(...args);
     });
 
-    computedFallback.produceCss(
+    computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       emptyFacts(),
@@ -138,7 +138,7 @@ describe('computedFallback strategy', () => {
       conditions: [],
     });
 
-    const css = computedFallback.produceCss(
+    const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       facts,
@@ -166,7 +166,7 @@ describe('computedFallback strategy', () => {
       conditions: [],
     });
 
-    const css = computedFallback.produceCss(
+    const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       facts,
@@ -195,7 +195,7 @@ describe('computedFallback strategy', () => {
       conditions: [],
     });
 
-    const css = computedFallback.produceCss(
+    const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       facts,
@@ -210,7 +210,7 @@ describe('computedFallback strategy', () => {
     document.head.innerHTML = '<style>.hero { color: rgb(20, 30, 40); }</style>';
     document.body.innerHTML = '<p class="hero">text</p>';
 
-    const css = computedFallback.produceCss(
+    const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       emptyFacts(),
@@ -226,7 +226,7 @@ describe('computedFallback strategy', () => {
     document.head.innerHTML = '<style>.scrim { color: rgba(20, 30, 40, 0.5); }</style>';
     document.body.innerHTML = '<p class="scrim">text</p>';
 
-    const css = computedFallback.produceCss(
+    const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       emptyFacts(),
@@ -245,7 +245,7 @@ describe('computedFallback strategy', () => {
     `;
     document.body.innerHTML = '<p class="hero">text</p><div class="panel">panel text</div>';
 
-    const css = computedFallback.produceCss(
+    const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       emptyFacts(),

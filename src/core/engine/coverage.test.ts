@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { toHex, type HexColor } from '../color/parseColor';
 import type { ColorMapping, SitePaletteEntry } from './colorMap';
-import { computeCoverage } from './coverage';
+import { aggregateCoverage, computeCoverage } from './coverage';
 
 function hex(r: number, g: number, b: number): HexColor {
   return toHex({ r, g, b, a: 1 });
@@ -46,5 +46,26 @@ describe('computeCoverage', () => {
     const result = computeCoverage(palette, mapping);
 
     expect(result).toEqual({ discovered: 2, mapped: 2, ratio: 1 });
+  });
+});
+
+describe('aggregateCoverage', () => {
+  it('returns undefined for an empty list of reports', () => {
+    expect(aggregateCoverage([])).toBeUndefined();
+  });
+
+  it('sums discovered/mapped across reports and recomputes ratio from the sums', () => {
+    const result = aggregateCoverage([
+      { discovered: 10, mapped: 8, ratio: 0.8 },
+      { discovered: 5, mapped: 1, ratio: 0.2 },
+    ]);
+
+    expect(result).toEqual({ discovered: 15, mapped: 9, ratio: 0.6 });
+  });
+
+  it('applies the discovered===0 -> 0 rule when every report discovered nothing', () => {
+    const result = aggregateCoverage([{ discovered: 0, mapped: 0, ratio: 0 }]);
+
+    expect(result).toEqual({ discovered: 0, mapped: 0, ratio: 0 });
   });
 });

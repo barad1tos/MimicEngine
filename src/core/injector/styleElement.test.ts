@@ -137,7 +137,7 @@ describe('apply(apply(page)) idempotency invariant', () => {
       const facts = collectPageFacts(document);
       const metrics = deriveMetrics(facts, { mutationRate: 0 });
       const plan = decideStrategies(metrics, siteSettings.strategy);
-      const css = composeStylesheet(theme, siteSettings, facts, plan);
+      const { css } = composeStylesheet(theme, siteSettings, facts, plan);
       injectStylesheet(css);
       return { css, metrics };
     }

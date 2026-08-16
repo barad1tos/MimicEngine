@@ -1,6 +1,7 @@
 import { isOpaque, toHex } from '../../color/parseColor';
 import { buildColorMapping, extractSitePalette, type ColorMapping } from '../colorMap';
 import { guardContrast } from '../contrastGuard';
+import { computeCoverage } from '../coverage';
 import type { AuthoredColorDeclaration } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
@@ -8,7 +9,7 @@ import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGrou
 export const authoredRemap: PaletteEngine = {
   id: 'authoredRemap',
   label: 'Site CSS rewrite',
-  produceCss(theme, siteSettings, facts) {
+  produce(theme, siteSettings, facts) {
     const palette = extractSitePalette(facts);
     const mapping = buildColorMapping(palette, theme, {
       preserveBrandColors: siteSettings.preserveBrandColors,
@@ -20,7 +21,10 @@ export const authoredRemap: PaletteEngine = {
       facts.inlineStyleColors,
       guardedMapping,
     );
-    return emitGroupedRules(groups);
+    const css = emitGroupedRules(groups);
+    const coverage = computeCoverage(palette, guardedMapping);
+
+    return { css, coverage };
   },
 };
 

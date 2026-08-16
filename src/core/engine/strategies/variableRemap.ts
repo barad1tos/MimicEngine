@@ -59,9 +59,9 @@ const SURFACE_LADDER: readonly ThemeTokenName[] = ['canvas', 'surface1', 'surfac
 export const variableRemap: PaletteEngine = {
   id: 'variableRemap',
   label: 'Site variables',
-  produceCss(theme, _siteSettings, facts) {
+  produce(theme, _siteSettings, facts) {
     const assignments = assignTokens(facts.customProperties, theme.mode);
-    return assignments.size === 0 ? '' : emitCss(assignments);
+    return { css: assignments.size === 0 ? '' : emitCss(assignments) };
   },
 };
 

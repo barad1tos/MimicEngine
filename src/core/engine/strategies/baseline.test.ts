@@ -44,7 +44,7 @@ describe('baseline strategy', () => {
   it('emits gated generic rules without the :root preamble', () => {
     const theme = builtInThemes[0];
 
-    const css = baseline.produceCss(theme, anySiteSettings(), emptyFacts(), anyPlan());
+    const { css } = baseline.produce(theme, anySiteSettings(), emptyFacts(), anyPlan());
 
     expect(css).toContain('html[data-pm-active="true"]');
     expect(css).not.toContain(':root {');

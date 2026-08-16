@@ -27,3 +27,25 @@ export function computeCoverage(
 
   return { discovered, mapped, ratio };
 }
+
+/**
+ * Merges per-strategy coverage reports into one aggregate: discovered and
+ * mapped are summed, then `ratio` is recomputed from those sums (not
+ * averaged) — the same discovered===0 -> 0 rule as computeCoverage. Returns
+ * undefined when no strategy in the plan reported coverage at all, so
+ * callers can omit the diagnostics field entirely instead of writing a
+ * zeroed-out report for a plan that had nothing to measure.
+ *
+ * @example aggregateCoverage([]) // undefined
+ * @example aggregateCoverage([{ discovered: 10, mapped: 8, ratio: 0.8 }, { discovered: 5, mapped: 1, ratio: 0.2 }])
+ * // { discovered: 15, mapped: 9, ratio: 0.6 }
+ */
+export function aggregateCoverage(reports: readonly CoverageReport[]): CoverageReport | undefined {
+  if (reports.length === 0) return undefined;
+
+  const discovered = reports.reduce((sum, report) => sum + report.discovered, 0);
+  const mapped = reports.reduce((sum, report) => sum + report.mapped, 0);
+  const ratio = discovered === 0 ? 0 : mapped / discovered;
+
+  return { discovered, mapped, ratio };
+}

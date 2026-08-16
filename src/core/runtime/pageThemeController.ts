@@ -1,10 +1,8 @@
-import { buildColorMapping, extractSitePalette } from '../engine/colorMap';
 import { collectPageFacts } from '../engine/pageFacts';
 import { composeStylesheet } from '../engine/composeStylesheet';
-import { computeCoverage } from '../engine/coverage';
+import { aggregateCoverage } from '../engine/coverage';
 import { decideStrategies, planStrategies, type StrategyPlan } from '../engine/decisionTable';
 import { deriveMetrics } from '../engine/pageMetrics';
-import { guardContrast } from '../engine/contrastGuard';
 import { writePlanDiagnostics } from '../engine/diagnostics';
 import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
 import { observeDomChanges, type DomChangeObserver } from '../live/observeDomChanges';
@@ -111,7 +109,8 @@ export function createPageThemeController(): PageThemeController {
     const facts = collectPageFacts(document);
     const metrics = deriveMetrics(facts, { mutationRate });
     const plan = decideStrategies(metrics, siteSettings.strategy);
-    injectStylesheet(composeStylesheet(theme, siteSettings, facts, plan));
+    const { css, coverages } = composeStylesheet(theme, siteSettings, facts, plan);
+    injectStylesheet(css);
 
     if (needsLiveObserver(siteSettings, plan)) {
       ensureDomObserver();
@@ -119,22 +118,11 @@ export function createPageThemeController(): PageThemeController {
       stopDomObserver();
     }
 
-    // Coverage measures the authored palette, which only applies to authoredRemap.
-    // computedFallback uses its own sampled palette; a coverage metric for it would
-    // require a strategy-interface seam (deferred). Omit coverage for plans without
-    // authoredRemap.
-    let coverage;
-    if (planStrategies(plan).includes('authoredRemap')) {
-      const palette = extractSitePalette(facts);
-      const { mapping } = guardContrast(
-        buildColorMapping(palette, theme, {
-          preserveBrandColors: siteSettings.preserveBrandColors,
-        }),
-        palette,
-        theme,
-      );
-      coverage = computeCoverage(palette, mapping);
-    }
+    // Each strategy now owns its own coverage measurement (see registry.ts'
+    // StrategyOutput); composeStylesheet collects whatever the selected
+    // strategies reported, and aggregateCoverage merges them into one report
+    // — or undefined when none of them measured anything.
+    const coverage = aggregateCoverage(coverages);
 
     // Defensive re-check before the diagnostics write itself: everything
     // above this line is synchronous (no further yield point can let a
