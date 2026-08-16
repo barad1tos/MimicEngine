@@ -221,6 +221,7 @@ function ImportPreview({
   onSetAsGlobalChange,
   saveLabel,
   saveDisabled,
+  isSaving,
   onSave,
   onSkip,
 }: Readonly<{
@@ -231,6 +232,7 @@ function ImportPreview({
   onSetAsGlobalChange: (value: boolean) => void;
   saveLabel: string;
   saveDisabled: boolean;
+  isSaving: boolean;
   onSave: () => Promise<void>;
   onSkip: () => void;
 }>) {
@@ -238,7 +240,7 @@ function ImportPreview({
     return (
       <div className="import-preview">
         <p className="import-error">{outcome.message}</p>
-        <button type="button" className="secondary" onClick={onSkip}>
+        <button type="button" className="secondary" onClick={onSkip} disabled={isSaving}>
           Skip
         </button>
       </div>
@@ -283,10 +285,10 @@ function ImportPreview({
       </label>
 
       <div className="import-preview-actions">
-        <button type="submit" disabled={saveDisabled}>
+        <button type="submit" disabled={saveDisabled || isSaving}>
           {saveLabel}
         </button>
-        <button type="button" className="secondary" onClick={onSkip}>
+        <button type="button" className="secondary" onClick={onSkip} disabled={isSaving}>
           Skip
         </button>
       </div>
@@ -323,6 +325,7 @@ export function App() {
   const [currentOutcome, setCurrentOutcome] = useState<ImportOutcome | null>(null);
   const [editedName, setEditedName] = useState<string>('');
   const [setAsGlobal, setSetAsGlobal] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const queueKeySeq = useRef(0);
   // Same last-write-wins discipline as the popup's T12 pattern: the mount-time
   // load races the local-area onChanged listener below, and a stale slow load
@@ -501,12 +504,21 @@ export function App() {
   };
 
   const handleSave = async (): Promise<void> => {
+    // Re-entrancy guard: a second click or Enter-repeat while the save below
+    // is still in flight must not re-enter this function -- both the button
+    // and Skip are also disabled while isSaving, but this is the guard that
+    // actually matters (disabled attributes only stop DOM events, not a
+    // second in-JS call). Without it, two overlapping calls each pass the
+    // unchanged currentOutcome/name checks and each call advanceQueue() at
+    // the end, silently skipping the next queued file.
+    if (isSaving) return;
     if (currentOutcome?.kind !== 'success') return;
     const trimmedSlug = slugifyThemeName(editedName);
     if (trimmedSlug.length === 0) return;
     const entry = batch.items[batch.index];
     if (!entry) return;
 
+    setIsSaving(true);
     try {
       const saved = await saveImportedTheme(
         {
@@ -531,6 +543,8 @@ export function App() {
     } catch (error) {
       console.error('[Palette Mimicry] failed to save imported theme', error);
       setStatusMessage('Save failed');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -578,6 +592,7 @@ export function App() {
               onSetAsGlobalChange={setSetAsGlobal}
               saveLabel={saveLabel}
               saveDisabled={editedSlug.length === 0}
+              isSaving={isSaving}
               onSave={handleSave}
               onSkip={advanceQueue}
             />
