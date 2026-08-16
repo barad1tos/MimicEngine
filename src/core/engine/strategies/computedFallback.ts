@@ -140,6 +140,7 @@ function buildSyntheticFacts(authoredRules: NovelDeclaration[]): PageFacts {
     customProperties: [],
     authoredRules,
     inlineStyleColors: [],
+    svgPresentationColors: [],
     domElementCount: 0,
     shadowRootCount: 0,
     stylesheetCount: 0,

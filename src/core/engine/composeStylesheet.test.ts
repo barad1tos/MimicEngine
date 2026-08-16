@@ -13,6 +13,7 @@ const facts: PageFacts = {
   customProperties: [],
   authoredRules: [],
   inlineStyleColors: [],
+  svgPresentationColors: [],
   domElementCount: 100,
   shadowRootCount: 0,
   stylesheetCount: 0,
