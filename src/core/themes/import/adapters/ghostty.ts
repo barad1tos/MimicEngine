@@ -7,12 +7,10 @@
 // This adapter only maps, it never derives.
 
 import type { ImportError, ThemeSlots } from '../importTypes';
-import { parseError } from '../resolveColor';
+import { normalizeHex, parseError } from '../resolveColor';
 
 const DEFAULT_NAME = 'Ghostty theme';
 const ANSI_COLOR_COUNT = 16;
-
-const HEX_VALUE_PATTERN = /^#?([0-9a-fA-F]{6})$/;
 
 type Collected = {
   background: string | undefined;
@@ -20,11 +18,6 @@ type Collected = {
   selection: string | undefined;
   ansi: (string | undefined)[];
 };
-
-function normalizeHex(rawValue: string): string | undefined {
-  const match = HEX_VALUE_PATTERN.exec(rawValue.trim());
-  return match?.[1] !== undefined ? `#${match[1].toLowerCase()}` : undefined;
-}
 
 function splitOnFirst(
   line: string,

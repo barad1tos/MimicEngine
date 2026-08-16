@@ -6,7 +6,10 @@
 // import-specific — adapters treat missing evidence as absence for later
 // derivation — so it lives here rather than in the general-purpose
 // src/core/color module. Also carries the minimal loose-JSON helpers every
-// JSON-based adapter needs (parse error shaping, object narrowing).
+// JSON-based adapter needs (parse error shaping, object narrowing), and the
+// bare/'#'-prefixed hex normalizer shared by the terminal-config adapters
+// that never carry alpha at all (kitty, Ghostty -- alacritty's quote- and
+// `0x`-stripping variant is genuinely different and stays local to it).
 
 import { parseCssColor, toHex, type RgbaColor } from '../../color/parseColor';
 import type { ImportError } from './importTypes';
@@ -14,8 +17,21 @@ import type { ImportError } from './importTypes';
 export type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
 export type JsonObject = { [key: string]: JsonValue };
 
+const HEX_VALUE_PATTERN = /^#?([0-9a-fA-F]{6})$/;
+
 export function parseError(message: string): ImportError {
   return { stage: 'parse', message };
+}
+
+/**
+ * Normalizes a bare or '#'-prefixed 6-digit hex literal (the shape kitty.conf
+ * and Ghostty config values use) to a '#'-prefixed lowercase hex string.
+ * Anything else -- malformed values, non-hex tokens -- is absent, not
+ * guessed.
+ */
+export function normalizeHex(rawValue: string): string | undefined {
+  const match = HEX_VALUE_PATTERN.exec(rawValue.trim());
+  return match?.[1] !== undefined ? `#${match[1].toLowerCase()}` : undefined;
 }
 
 export function isJsonObject(value: unknown): value is JsonObject {
