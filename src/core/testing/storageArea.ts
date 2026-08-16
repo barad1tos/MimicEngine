@@ -8,14 +8,22 @@ import { vi } from 'vitest';
 // `mockImplementationOnce` to exercise swallow-and-warn paths, or return a
 // controlled pending Promise to stall an in-flight read. `get` resolves via
 // `Promise.resolve` (rather than returning the value synchronously) to match
-// the real `browser.storage.*.get()` contract, which is always async.
+// the real `browser.storage.*.get()` contract, which is always async. `get`
+// accepts either a single key or an array of keys -- the controller's batched
+// readApplyInputs() read passes an array to fetch settings and imported
+// themes in one call; every other caller still passes a single string key.
 export function createStorageArea() {
   const data = new Map<string, unknown>();
   return {
     data,
-    get: vi.fn((key: string): Promise<Record<string, unknown>> =>
-      Promise.resolve(data.has(key) ? { [key]: data.get(key) } : {}),
-    ),
+    get: vi.fn((keys: string | string[]): Promise<Record<string, unknown>> => {
+      const requestedKeys = Array.isArray(keys) ? keys : [keys];
+      const result: Record<string, unknown> = {};
+      for (const key of requestedKeys) {
+        if (data.has(key)) result[key] = data.get(key);
+      }
+      return Promise.resolve(result);
+    }),
     set: vi.fn((items: Record<string, unknown>) => {
       for (const [key, value] of Object.entries(items)) data.set(key, value);
     }),

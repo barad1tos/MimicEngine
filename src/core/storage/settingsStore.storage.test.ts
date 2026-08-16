@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { DEFAULT_THEME_ID } from '../themes';
+import { IMPORTED_THEMES_KEY } from './importedThemesStore';
 import type { createStorageArea } from '../testing/storageArea';
 import {
   createDefaultSiteSettings,
+  deriveEffectiveSiteSettings,
   getEffectiveSiteSettings,
   getSettings,
   onSettingsChanged,
@@ -145,19 +147,57 @@ describe('getEffectiveSiteSettings', () => {
   });
 });
 
+describe('deriveEffectiveSiteSettings', () => {
+  it('returns the stored site entry when present', () => {
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'placeholder-theme',
+      sites: {
+        'example.com': {
+          enabled: true,
+          themeId: 'placeholder-theme',
+          strategy: 'variableRemap',
+          preserveImages: false,
+          preserveBrandColors: true,
+          overrides: [],
+        },
+      },
+    };
+
+    expect(deriveEffectiveSiteSettings(settings, 'example.com')).toEqual(
+      settings.sites['example.com'],
+    );
+  });
+
+  it('falls back to createDefaultSiteSettings(globalThemeId) when the site is absent', () => {
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'placeholder-theme',
+      sites: {},
+    };
+
+    expect(deriveEffectiveSiteSettings(settings, 'unknown.example')).toEqual(
+      createDefaultSiteSettings('placeholder-theme'),
+    );
+  });
+});
+
 describe('onSettingsChanged', () => {
-  it('fires the callback only for area "local" changes to STORAGE_KEY', () => {
+  it('fires the callback only for area "local" changes to STORAGE_KEY or IMPORTED_THEMES_KEY', () => {
     const callback = vi.fn();
     const unsubscribe = onSettingsChanged(callback);
 
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     expect(callback).toHaveBeenCalledTimes(1);
 
+    fakeBrowser.storage.emitChange({ [IMPORTED_THEMES_KEY]: { newValue: {} } }, 'local');
+    expect(callback).toHaveBeenCalledTimes(2);
+
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'sync');
-    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledTimes(2);
 
     fakeBrowser.storage.emitChange({ 'unrelated-key': { newValue: {} } }, 'local');
-    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledTimes(2);
 
     unsubscribe();
   });

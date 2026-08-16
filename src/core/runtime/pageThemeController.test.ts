@@ -5,10 +5,19 @@ import { browser } from 'wxt/browser';
 import { planStorageKey, type PlanDiagnostics } from '../engine/diagnostics';
 import * as styleElementModule from '../injector/styleElement';
 import { observeDomChanges } from '../live/observeDomChanges';
+import { IMPORTED_THEMES_KEY, type ImportedTheme } from '../storage/importedThemesStore';
 import { createDefaultSiteSettings, STORAGE_KEY, type AppSettings } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
 import type { createStorageArea } from '../testing/storageArea';
+import { THEME_TOKEN_NAMES, type ThemeTokens } from '../themes';
 import { createPageThemeController } from './pageThemeController';
+
+// All 14 theme tokens set to the same hex, for tests that only care whether
+// a particular color made it into the injected stylesheet, not the full
+// palette.
+function buildUniformTokens(hex: string): ThemeTokens {
+  return Object.fromEntries(THEME_TOKEN_NAMES.map((tokenName) => [tokenName, hex])) as ThemeTokens;
+}
 
 type ChangeListener = (changes: Record<string, unknown>, areaName: string) => void;
 
@@ -74,8 +83,8 @@ function fireLatestObserverCallback(): void {
 }
 
 // Bounded microtask drain for the controller's short, statically-known await
-// chains (getEffectiveSiteSettings -> getSettings -> storage.local.get, then
-// writePlanDiagnostics -> storage.session.set). Ten ticks is a generous
+// chains (readApplyInputs -> storage.local.get, then writePlanDiagnostics ->
+// storage.session.set). Ten ticks is a generous
 // multiple of the ~4 awaits actually involved, with no real timers or I/O in
 // play, so this stays deterministic rather than timing-dependent.
 async function flushMicrotasks(): Promise<void> {
@@ -262,6 +271,94 @@ describe('createPageThemeController — initial apply failure', () => {
     await flushMicrotasks();
 
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+  });
+});
+
+describe('createPageThemeController — batched storage read', () => {
+  it('reads settings and imported themes in exactly one storage.get call carrying both keys', async () => {
+    const controller = createPageThemeController();
+
+    await controller.start();
+
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(1);
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledWith([STORAGE_KEY, IMPORTED_THEMES_KEY]);
+
+    controller.stop();
+  });
+
+  it('keeps issuing exactly one storage.get call, with both keys, on every subsequent apply', async () => {
+    const controller = createPageThemeController();
+    await controller.start();
+    fakeBrowser.storage.local.get.mockClear();
+
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(1);
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledWith([STORAGE_KEY, IMPORTED_THEMES_KEY]);
+
+    controller.stop();
+  });
+
+  it('re-applies when the imported-themes store changes', async () => {
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+    await controller.start();
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+
+    fakeBrowser.storage.emitChange({ [IMPORTED_THEMES_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(injectSpy).toHaveBeenCalledTimes(2);
+
+    controller.stop();
+  });
+
+  it('falls back to the default theme, without crashing, when the referenced imported theme is deleted mid-session', async () => {
+    const siteKey = normalizeHostname(window.location.hostname);
+    const importedTheme: ImportedTheme = {
+      id: 'imported:vanished',
+      name: 'Vanished',
+      mode: 'dark',
+      sourceFormat: 'vscode',
+      tokens: buildUniformTokens('#123456'),
+    };
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), themeId: importedTheme.id } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
+    fakeBrowser.storage.local.data.set(IMPORTED_THEMES_KEY, {
+      schemaVersion: 1,
+      themes: [importedTheme],
+      recentSources: [],
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const controller = createPageThemeController();
+    await controller.start();
+
+    expect(document.getElementById(styleElementModule.STYLE_ELEMENT_ID)?.textContent).toContain(
+      '#123456',
+    );
+
+    // Delete the referenced imported theme mid-session and let the widened
+    // onSettingsChanged listener pick it up.
+    fakeBrowser.storage.local.data.set(IMPORTED_THEMES_KEY, {
+      schemaVersion: 1,
+      themes: [],
+      recentSources: [],
+    });
+    fakeBrowser.storage.emitChange({ [IMPORTED_THEMES_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    const styleText = document.getElementById(styleElementModule.STYLE_ELEMENT_ID)?.textContent;
+    expect(styleText).toContain('#303446'); // catppuccinFrappe canvas token
+    expect(styleText).not.toContain('#123456');
 
     controller.stop();
   });

@@ -18,7 +18,7 @@ import {
   type AppSettings,
   type SiteSettings,
   DEFAULT_SETTINGS,
-  createDefaultSiteSettings,
+  deriveEffectiveSiteSettings,
   getSettings,
   saveSettings,
 } from '@/src/core/storage/settingsStore';
@@ -163,7 +163,7 @@ export function App() {
 
   const siteSettings = useMemo(() => {
     if (!siteKey) return null;
-    return settings.sites[siteKey] ?? createDefaultSiteSettings(settings.globalThemeId);
+    return deriveEffectiveSiteSettings(settings, siteKey);
   }, [settings, siteKey]);
 
   const persist = async (nextSettings: AppSettings): Promise<void> => {
@@ -188,7 +188,7 @@ export function App() {
 
   const updateSite = async (patch: Partial<SiteSettings>): Promise<void> => {
     if (!siteKey) return;
-    const current = settings.sites[siteKey] ?? createDefaultSiteSettings(settings.globalThemeId);
+    const current = deriveEffectiveSiteSettings(settings, siteKey);
     await persist({
       ...settings,
       sites: {
