@@ -232,6 +232,44 @@ describe('collectPageFacts', () => {
     expect(facts.authoredRules[0]?.selector).toBe('[title="a,b"]');
   });
 
+  // happy-dom's CSS parser drops any rule whose selector text contains a
+  // backslash escape (cssRules stays empty), so an escaped selector can't
+  // reach splitSelectorList through <style> text the way the tests above do.
+  // Instead we take a real, parseable CSSStyleRule (so `style` and
+  // `instanceof CSSStyleRule` stay genuine) and override just its read-only
+  // `selectorText` getter, then drive it through the same collectFromSheets
+  // seam the unreadable-stylesheet tests below already use.
+  function ruleWithSelectorText(selectorText: string): CSSStyleRule {
+    document.head.innerHTML = '<style>.placeholder { color: #123456; }</style>';
+    const rule = document.styleSheets[0]?.cssRules[0];
+    if (!(rule instanceof CSSStyleRule)) throw new Error('expected a parsed CSSStyleRule');
+    Object.defineProperty(rule, 'selectorText', { value: selectorText, configurable: true });
+    return rule;
+  }
+
+  it('keeps an escaped comma as part of one selector (escape-aware split)', () => {
+    const rule = ruleWithSelectorText('.a\\, .b');
+    const result = collectFromSheets([{ cssRules: [rule] } as unknown as CSSStyleSheet], {
+      maxRules: 5000,
+      maxAuthoredDeclarations: 1000,
+    });
+    expect(result.authoredRules).toHaveLength(1);
+    expect(result.authoredRules[0]?.selector).toBe('.a\\, .b');
+  });
+
+  it('keeps an escaped quote inside a selector string from ending the quote early', () => {
+    const rule = ruleWithSelectorText('[title="a\\",b"], .next');
+    const result = collectFromSheets([{ cssRules: [rule] } as unknown as CSSStyleSheet], {
+      maxRules: 5000,
+      maxAuthoredDeclarations: 1000,
+    });
+    expect(result.authoredRules).toHaveLength(2);
+    expect(result.authoredRules.map((declaration) => declaration.selector)).toEqual([
+      '[title="a\\",b"]',
+      '.next',
+    ]);
+  });
+
   it('counts an unreadable stylesheet without throwing, via the collectFromSheets seam', () => {
     const throwingSheet = {
       get cssRules(): CSSRuleList {

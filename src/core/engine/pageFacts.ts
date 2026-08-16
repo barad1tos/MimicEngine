@@ -190,49 +190,76 @@ function collectDeclarations(rule: CSSStyleRule, declarations: Map<string, strin
   }
 }
 
+type SelectorSplitState = {
+  depth: number;
+  quote: '"' | "'" | null;
+  escaped: boolean;
+  current: string;
+};
+
 // Splits only on top-level commas: a comma nested inside `()`/`[]` (e.g.
 // `:is(.a, .b)`, `[title="a,b"]`) or inside a quoted string belongs to that
 // sub-expression, not the selector list. Depth tracks both bracket kinds
 // together since CSS selectors never mismatch them; quote state suspends
 // depth tracking entirely so a bracket character inside a quoted attribute
-// value can't be mistaken for real nesting.
+// value can't be mistaken for real nesting. A backslash escapes the very
+// next character verbatim in both quote and non-quote state, so an escaped
+// comma (`.a\, .b`) never splits and an escaped quote inside a string
+// (`[title="a\",b"]`) never closes the string early.
 function splitSelectorList(selectorText: string): string[] {
   const parts: string[] = [];
-  let depth = 0;
-  let quote: '"' | "'" | null = null;
-  let current = '';
+  const state: SelectorSplitState = { depth: 0, quote: null, escaped: false, current: '' };
 
   for (const char of selectorText) {
-    if (quote) {
-      current += char;
-      if (char === quote) quote = null;
-      continue;
+    if (advanceSelectorSplit(char, state)) {
+      parts.push(state.current.trim());
+      state.current = '';
     }
-    if (char === '"' || char === "'") {
-      quote = char;
-      current += char;
-      continue;
-    }
-    if (char === '(' || char === '[') {
-      depth += 1;
-      current += char;
-      continue;
-    }
-    if (char === ')' || char === ']') {
-      depth = Math.max(0, depth - 1);
-      current += char;
-      continue;
-    }
-    if (char === ',' && depth === 0) {
-      parts.push(current.trim());
-      current = '';
-      continue;
-    }
-    current += char;
   }
-  parts.push(current.trim());
+  parts.push(state.current.trim());
 
   return parts;
+}
+
+// Mutates `state` for one selector-text character and reports whether it was
+// a top-level comma (a selector-list separator the caller should split on),
+// as opposed to a character consumed into the current selector.
+function advanceSelectorSplit(char: string, state: SelectorSplitState): boolean {
+  if (state.escaped) {
+    state.current += char;
+    state.escaped = false;
+    return false;
+  }
+  if (char === '\\') {
+    state.escaped = true;
+    state.current += char;
+    return false;
+  }
+  if (state.quote) {
+    state.current += char;
+    if (char === state.quote) state.quote = null;
+    return false;
+  }
+  if (char === '"' || char === "'") {
+    state.quote = char;
+    state.current += char;
+    return false;
+  }
+  if (char === '(' || char === '[') {
+    state.depth += 1;
+    state.current += char;
+    return false;
+  }
+  if (char === ')' || char === ']') {
+    state.depth = Math.max(0, state.depth - 1);
+    state.current += char;
+    return false;
+  }
+  if (char === ',' && state.depth === 0) {
+    return true;
+  }
+  state.current += char;
+  return false;
 }
 
 const ROOT_SELECTORS = new Set([':root', 'html']);
