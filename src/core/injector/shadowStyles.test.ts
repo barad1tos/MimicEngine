@@ -93,6 +93,15 @@ describe('syncShadowStylesheets', () => {
     expect(element?.textContent).toBe(css);
   });
 
+  it("creates the style element from the root's own document, not the module-global document", () => {
+    const { shadowRoot } = attachOpenShadowHost();
+
+    syncShadowStylesheets(buildShadowStylesheet(theme), [shadowRoot]);
+
+    const element = shadowRoot.getElementById(STYLE_ELEMENT_ID);
+    expect(element?.ownerDocument).toBe(shadowRoot.ownerDocument);
+  });
+
   it('identity-skips the write when css is unchanged across two syncs', () => {
     const { shadowRoot } = attachOpenShadowHost();
     const css = buildShadowStylesheet(theme);
