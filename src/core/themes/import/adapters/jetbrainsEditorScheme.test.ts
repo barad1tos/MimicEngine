@@ -28,7 +28,7 @@ function expectError(result: ThemeSlots | ImportError): ImportError {
 }
 
 describe('parseJetbrainsEditorScheme', () => {
-  it('maps the real ayu-mirage-editor fixture: hand-verified hexes, no ANSI-named console attributes present', () => {
+  it('maps the real ayu-mirage-editor fixture: hand-verified hexes, ansi filled from TERMINAL_COLOR_N fallback', () => {
     const slots = expectSlots(parseJetbrainsEditorScheme(AYU_MIRAGE_FIXTURE));
 
     expect(slots.name).toBe('Ayu Islands Mirage');
@@ -54,9 +54,33 @@ describe('parseJetbrainsEditorScheme', () => {
     // Confirmed by grep: the fixture's only CONSOLE_* keys are
     // CONSOLE_BACKGROUND_KEY, CONSOLE_ERROR_OUTPUT, CONSOLE_NORMAL_OUTPUT,
     // CONSOLE_RANGE_TO_EXECUTE, CONSOLE_SYSTEM_OUTPUT, CONSOLE_USER_INPUT --
-    // none of the 16 indexed ANSI console-color attributes
-    // (CONSOLE_BLACK_OUTPUT..CONSOLE_WHITE_OUTPUT). ansi stays entirely unset.
-    expect(slots.ansi).toBeUndefined();
+    // none of the 16 indexed ANSI console-color attributes. The fixture DOES
+    // carry a full TERMINAL_COLOR_0..15 palette though (lines ~155-170), and
+    // that's the per-index fallback source, so ansi comes out fully
+    // populated. Every value below is the fixture's TERMINAL_COLOR_N, opaque
+    // 6-digit hex, lowercased -- no compositing involved:
+    // One golden-array assertion (rather than 16 separate expect() calls,
+    // which an IDE duplication check flags against iterm.test.ts's own
+    // 16-entry ansi assertion block -- both fixtures happen to encode the
+    // same canonical Ayu Mirage palette under different source keys).
+    expect(slots.ansi).toStrictEqual([
+      '#171b24', // TERMINAL_COLOR_0
+      '#ed8274', // TERMINAL_COLOR_1
+      '#87d96c', // TERMINAL_COLOR_2
+      '#facc6e', // TERMINAL_COLOR_3
+      '#6dcbfa', // TERMINAL_COLOR_4
+      '#dabafa', // TERMINAL_COLOR_5
+      '#90e1c6', // TERMINAL_COLOR_6
+      '#c7c7c7', // TERMINAL_COLOR_7
+      '#686868', // TERMINAL_COLOR_8
+      '#f28779', // TERMINAL_COLOR_9
+      '#d5ff80', // TERMINAL_COLOR_10
+      '#ffd173', // TERMINAL_COLOR_11
+      '#73d0ff', // TERMINAL_COLOR_12
+      '#dfbfff', // TERMINAL_COLOR_13
+      '#95e6cb', // TERMINAL_COLOR_14
+      '#ffffff', // TERMINAL_COLOR_15
+    ]);
   });
 
   it('extracts CONSOLE_*_OUTPUT attributes into the indexed ansi array, sparse gaps stay undefined', () => {
@@ -74,6 +98,41 @@ describe('parseJetbrainsEditorScheme', () => {
     expect(slots.ansi?.[1]).toBe('#ff0000');
     expect(slots.ansi?.[15]).toBe('#ffffff');
     expect(slots.ansi?.[2]).toBeUndefined();
+  });
+
+  it('prefers CONSOLE_*_OUTPUT over TERMINAL_COLOR_N when both exist for the same index', () => {
+    const content = `<scheme name="Synthetic">
+      <colors>
+        <option name="TERMINAL_COLOR_0" value="445566" />
+        <option name="TERMINAL_COLOR_1" value="778899" />
+      </colors>
+      <attributes>
+        <option name="CONSOLE_BLACK_OUTPUT"><value><option name="FOREGROUND" value="112233" /></value></option>
+      </attributes>
+    </scheme>`;
+
+    const slots = expectSlots(parseJetbrainsEditorScheme(content));
+    // Index 0: both sources present -- CONSOLE_BLACK_OUTPUT wins.
+    expect(slots.ansi?.[0]).toBe('#112233');
+    // Index 1: only TERMINAL_COLOR_1 present -- falls back to it.
+    expect(slots.ansi?.[1]).toBe('#778899');
+  });
+
+  it('fills a sparse ansi array from TERMINAL_COLOR_N alone, positions stay aligned to their index', () => {
+    const content = `<scheme name="Synthetic">
+      <colors>
+        <option name="TERMINAL_COLOR_2" value="223344" />
+        <option name="TERMINAL_COLOR_9" value="998877" />
+      </colors>
+    </scheme>`;
+
+    const slots = expectSlots(parseJetbrainsEditorScheme(content));
+    expect(slots.ansi).toHaveLength(16);
+    expect(slots.ansi?.[2]).toBe('#223344');
+    expect(slots.ansi?.[9]).toBe('#998877');
+    expect(slots.ansi?.[0]).toBeUndefined();
+    expect(slots.ansi?.[1]).toBeUndefined();
+    expect(slots.ansi?.[15]).toBeUndefined();
   });
 
   it('falls back from TEARLINE_COLOR to INDENT_GUIDE for border when TEARLINE_COLOR is absent', () => {

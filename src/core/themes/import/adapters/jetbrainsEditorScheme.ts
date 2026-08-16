@@ -9,6 +9,15 @@
 // translucent with no canvas yet to composite over) falls through to the
 // next candidate where the mapping defines one, otherwise the slot stays
 // unset for later derivation -- this adapter only maps, it never derives.
+//
+// The 16-slot ansi array has two real-world sources per index: the console
+// highlighter's CONSOLE_*_OUTPUT attributes (nested under <attributes>, one
+// per ANSI color) and the terminal emulator's TERMINAL_COLOR_N options (flat
+// under <colors>, already numbered 0-15). Most real schemes -- including the
+// ayu-mirage fixture -- populate only TERMINAL_COLOR_N and never touch the
+// console attributes, so CONSOLE_* alone would leave ansi silently empty for
+// the common case. Per-index fallback: CONSOLE_* wins when present, else
+// TERMINAL_COLOR_N.
 
 import { parseCssColor, type RgbaColor } from '../../../color/parseColor';
 import type { ThemeTokens } from '../../themeTypes';
@@ -80,10 +89,17 @@ function resolveFirstUsable(
 
 function resolveAnsi(
   attributes: Element | null,
+  colors: Element | null,
   canvasRgba: RgbaColor | undefined,
 ): (string | undefined)[] | undefined {
-  const ansi = ANSI_ATTRIBUTE_NAMES.map((attributeName) =>
-    resolveFirstUsable([attributeChannel(attributes, attributeName, 'FOREGROUND')], canvasRgba),
+  const ansi = ANSI_ATTRIBUTE_NAMES.map((attributeName, index) =>
+    resolveFirstUsable(
+      [
+        attributeChannel(attributes, attributeName, 'FOREGROUND'),
+        colorOption(colors, `TERMINAL_COLOR_${String(index)}`),
+      ],
+      canvasRgba,
+    ),
   );
   return ansi.some((hex) => hex !== undefined) ? ansi : undefined;
 }
@@ -134,7 +150,7 @@ export function parseJetbrainsEditorScheme(content: string): ThemeSlots | Import
   );
   if (borderHex !== undefined) tokens.border = borderHex;
 
-  const ansi = resolveAnsi(attributes, canvasRgba);
+  const ansi = resolveAnsi(attributes, colors, canvasRgba);
 
   return {
     name,
