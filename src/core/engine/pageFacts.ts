@@ -450,6 +450,12 @@ function collectInlineStyleColors(
     // has no consumer either (variableRemap only reads customProperties from
     // stylesheets and the root element's own inline style).
     if (property.startsWith('--')) continue;
+    // A style-attribute declaration marked !important outranks every
+    // author-stylesheet rule in the cascade, so no CSS strategy we emit can
+    // ever override it — it is out of reach for every CSS strategy by
+    // cascade design. Excluding it here (at collection) keeps coverage
+    // honest instead of counting a "mapped" rule nothing can beat.
+    if (element.style.getPropertyPriority(property) === 'important') continue;
     if (target.length >= maxAuthoredDeclarations) return;
     const value = element.style.getPropertyValue(property).trim();
     const color = parseCssColor(value);
