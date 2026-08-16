@@ -154,4 +154,46 @@ live_config_reload = true
     expect(error.stage).toBe('parse');
     expect(error.message).toBe('no color entries found');
   });
+
+  it('parses a quoted color that carries an inline TOML comment', () => {
+    const content = `
+[colors.primary]
+background = "#1f2430" # base
+foreground = "#cbccc6"
+`;
+    const slots = expectSlots(parseAlacrittyTheme(content));
+    expect(slots.background).toBe('#1f2430');
+    expect(slots.foreground).toBe('#cbccc6');
+  });
+
+  it('recognizes a section header carrying an inline TOML comment', () => {
+    const content = `
+[colors.primary] # primary colors
+background = "#101010"
+`;
+    const slots = expectSlots(parseAlacrittyTheme(content));
+    expect(slots.background).toBe('#101010');
+  });
+
+  it('leaves a `#` inside a quoted value untouched -- only an unquoted `#` starts a comment', () => {
+    // A naive "strip from first #" would truncate the quote itself
+    // (`background = "` + garbage), losing the color entirely; the
+    // quote-aware scanner must see the value's own `#` as non-comment.
+    const content = `
+[colors.primary]
+background = "#1f2430" # comment with a literal # inside it too
+`;
+    const slots = expectSlots(parseAlacrittyTheme(content));
+    expect(slots.background).toBe('#1f2430');
+  });
+
+  it('still skips a full-line comment inside a recognized section', () => {
+    const content = `
+[colors.primary]
+# background comment line, not a real entry
+background = "#101010"
+`;
+    const slots = expectSlots(parseAlacrittyTheme(content));
+    expect(slots.background).toBe('#101010');
+  });
 });
