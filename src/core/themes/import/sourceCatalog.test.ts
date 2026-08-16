@@ -160,12 +160,24 @@ describe('orderSourceCards', () => {
 });
 
 describe('detectPlatform', () => {
-  it('maps a Mac navigator.platform string to "mac"', () => {
+  it('maps a legacy navigator.platform Mac string to "mac"', () => {
     expect(detectPlatform('MacIntel')).toBe('mac');
   });
 
-  it('maps a Windows navigator.platform string to "windows"', () => {
+  it('maps a legacy navigator.platform Windows string to "windows"', () => {
     expect(detectPlatform('Win32')).toBe('windows');
+  });
+
+  it('maps the modern navigator.userAgentData.platform "macOS" spelling to "mac"', () => {
+    expect(detectPlatform('macOS')).toBe('mac');
+  });
+
+  it('maps the modern navigator.userAgentData.platform "Windows" spelling to "windows"', () => {
+    expect(detectPlatform('Windows')).toBe('windows');
+  });
+
+  it('maps the modern navigator.userAgentData.platform "Linux" spelling to "linux"', () => {
+    expect(detectPlatform('Linux')).toBe('linux');
   });
 
   it('falls back to "linux" for anything else, including unrecognized strings', () => {

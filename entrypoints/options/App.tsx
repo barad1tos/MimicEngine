@@ -27,9 +27,14 @@ import {
 import { getSettings, pruneThemeReferences, saveSettings } from '@/src/core/storage/settingsStore';
 
 // The File System Access API (window.showOpenFilePicker) isn't in TypeScript's
-// bundled lib.dom.d.ts yet, and this repo takes no new dependencies to pull
-// in @types/wicg-file-system-access for one method. Ambient-declare just the
-// slice this page calls; FileSystemFileHandle itself IS already in lib.dom.
+// bundled lib.dom.d.ts yet, and this repo takes no new dependencies to pull in
+// @types/wicg-file-system-access for one method. `declare global { interface
+// Window {...} }` would need `interface` to merge with the ambient Window
+// declaration, which this repo's lint config forbids outright (no per-line
+// suppressions either). A local structural-facade type sidesteps interface
+// merging entirely: `window` already satisfies it (the extra member is
+// optional), no cast needed. FileSystemFileHandle itself IS already in
+// lib.dom, so it needs no facade of its own.
 type FilePickerAcceptType = {
   description: string;
   accept: Record<string, readonly string[]>;
@@ -41,13 +46,33 @@ type FilePickerOptions = {
   types?: readonly FilePickerAcceptType[];
 };
 
-declare global {
-  // Augmenting an existing ambient interface only works via declaration
-  // merging, which requires `interface` -- `type` cannot merge with `Window`.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
-  interface Window {
-    showOpenFilePicker?: (options: FilePickerOptions) => Promise<FileSystemFileHandle[]>;
-  }
+type WindowWithFilePicker = Window & {
+  showOpenFilePicker?: (options: FilePickerOptions) => Promise<FileSystemFileHandle[]>;
+};
+
+function readFilePicker(
+  win: WindowWithFilePicker,
+): ((options: FilePickerOptions) => Promise<FileSystemFileHandle[]>) | undefined {
+  return win.showOpenFilePicker;
+}
+
+// navigator.userAgentData (Chromium; unsupported in Firefox) isn't in this
+// TS version's lib.dom.d.ts either -- same structural-facade treatment.
+type NavigatorWithUserAgentData = Navigator & {
+  readonly userAgentData?: { readonly platform: string };
+};
+
+// Firefox has no userAgentData, so navigator.platform (deprecated, but the
+// only signal Firefox offers) stays as the fallback. Isolated behind its own
+// facade type -- `{ readonly platform: string }`, not `Navigator` -- so this
+// file's one unavoidable read of it doesn't resolve against Navigator's own
+// (JSDoc @deprecated) declaration.
+function legacyNavigatorPlatform(nav: { readonly platform: string }): string {
+  return nav.platform;
+}
+
+function resolveNavigatorPlatform(nav: NavigatorWithUserAgentData): string {
+  return nav.userAgentData?.platform ?? legacyNavigatorPlatform(nav);
 }
 
 const supportsFilePicker = 'showOpenFilePicker' in window;
@@ -304,7 +329,7 @@ export function App() {
   // must not clobber a fresher onChanged refresh.
   const importedThemesSeq = useRef(0);
 
-  const platform = detectPlatform(navigator.platform);
+  const platform = detectPlatform(resolveNavigatorPlatform(navigator));
   const orderedCards = orderSourceCards(recentSources, platform);
 
   useEffect(() => {
@@ -424,7 +449,7 @@ export function App() {
   };
 
   const handlePickForCard = async (card: SourceCard): Promise<void> => {
-    const picker = window.showOpenFilePicker;
+    const picker = readFilePicker(window);
     if (!picker) return;
 
     try {
