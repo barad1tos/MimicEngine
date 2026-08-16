@@ -6,23 +6,19 @@
 // list leaves the slot unset for later derivation — this adapter only maps,
 // it never derives.
 
-import { parseCssColor, toHex, type RgbaColor } from '../../../color/parseColor';
+import { parseCssColor, type RgbaColor } from '../../../color/parseColor';
 import { THEME_TOKEN_NAMES, type ThemeTokenName, type ThemeTokens } from '../../themeTypes';
 import type { ImportError, ThemeSlots } from '../importTypes';
 import { stripJsonc } from '../jsonc';
-
-type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
-type JsonObject = { [key: string]: JsonValue };
+import {
+  isJsonObject,
+  parseError,
+  resolveOpaqueHex,
+  type JsonObject,
+  type JsonValue,
+} from '../resolveColor';
 
 const MAX_PALETTE_HOPS = 8;
-
-function parseError(message: string): ImportError {
-  return { stage: 'parse', message };
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Looks up a dotted path inside a JSON object whose segments may be nested
@@ -76,31 +72,6 @@ function resolvePaletteChain(colors: JsonObject, name: string): string | undefin
 /** A `ui` value is either a literal color already, or a name to resolve through `colors`. */
 function resolveNamedColor(value: string, colors: JsonObject): string | undefined {
   return value.startsWith('#') ? value : resolvePaletteChain(colors, value);
-}
-
-/** Standard "over" alpha compositing of a translucent foreground onto an opaque canvas. */
-function compositeOverCanvas(foreground: RgbaColor, canvas: RgbaColor): RgbaColor {
-  return {
-    r: foreground.r * foreground.a + canvas.r * (1 - foreground.a),
-    g: foreground.g * foreground.a + canvas.g * (1 - foreground.a),
-    b: foreground.b * foreground.a + canvas.b * (1 - foreground.a),
-    a: 1,
-  };
-}
-
-/**
- * Turns a resolved color literal into an opaque hex slot value. Fully
- * transparent yields nothing (absent, per the composite semantics this
- * adapter follows). A partial-alpha value composites over `canvasRgba` when
- * one is already known; without a canvas to composite against, it's also
- * absent rather than guessed.
- */
-function resolveOpaqueHex(rawColor: string, canvasRgba: RgbaColor | undefined): string | undefined {
-  const rgba = parseCssColor(rawColor);
-  if (!rgba || rgba.a === 0) return undefined;
-  if (rgba.a === 1) return toHex(rgba);
-  if (!canvasRgba) return undefined;
-  return toHex(compositeOverCanvas(rgba, canvasRgba));
 }
 
 function resolveSlotColor(
