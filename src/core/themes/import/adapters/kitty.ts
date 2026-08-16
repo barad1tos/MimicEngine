@@ -9,13 +9,12 @@
 
 import type { ThemeTokens } from '../../themeTypes';
 import type { ImportError, ThemeSlots } from '../importTypes';
-import { parseError } from '../resolveColor';
+import { normalizeHex, parseError } from '../resolveColor';
 
 const DEFAULT_NAME = 'kitty theme';
 const ANSI_COLOR_COUNT = 16;
 
 const LEADING_TOKEN_PATTERN = /^(\S+)/;
-const HEX_VALUE_PATTERN = /^#?([0-9a-fA-F]{6})$/;
 const COLOR_KEY_PATTERN = /^color(\d{1,2})$/;
 
 type Collected = {
@@ -25,11 +24,6 @@ type Collected = {
   link: string | undefined;
   ansi: (string | undefined)[];
 };
-
-function normalizeHex(rawValue: string): string | undefined {
-  const match = HEX_VALUE_PATTERN.exec(rawValue.trim());
-  return match?.[1] !== undefined ? `#${match[1].toLowerCase()}` : undefined;
-}
 
 /** A kitty.conf line is `key<whitespace>rest-of-line`; multi-value settings keep their extra tokens in `value` untouched (and simply fail to normalize as hex). */
 function splitKeyValue(line: string): { key: string; value: string } | undefined {
