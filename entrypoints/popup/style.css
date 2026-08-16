@@ -110,8 +110,20 @@ button.secondary {
 }
 
 footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: #707a8c;
   font-size: 11px;
+}
+
+.icon-button {
+  width: auto;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .diagnostics {

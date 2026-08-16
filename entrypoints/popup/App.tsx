@@ -15,6 +15,12 @@ import { strategyRegistry } from '@/src/core/engine/registry';
 import type { StrategyId } from '@/src/core/engine/strategyId';
 import { builtInThemes } from '@/src/core/themes';
 import {
+  type ImportedTheme,
+  IMPORTED_THEMES_KEY,
+  normalizeImportedThemes,
+  readImportedThemes,
+} from '@/src/core/storage/importedThemesStore';
+import {
   type AppSettings,
   type SiteSettings,
   DEFAULT_SETTINGS,
@@ -89,27 +95,61 @@ function PlanDiagnosticsPanel({ diagnostics }: Readonly<{ diagnostics: PlanDiagn
   );
 }
 
+function ThemeOptions({ importedThemes }: Readonly<{ importedThemes: ImportedTheme[] }>) {
+  return (
+    <>
+      <optgroup label="Built-in">
+        {builtInThemes.map((theme) => (
+          <option key={theme.id} value={theme.id}>
+            {theme.name}
+          </option>
+        ))}
+      </optgroup>
+      {importedThemes.length > 0 && (
+        <optgroup label="Imported">
+          {importedThemes.map((theme) => (
+            <option key={theme.id} value={theme.id}>
+              {theme.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </>
+  );
+}
+
 export function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [siteKey, setSiteKey] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('Loading settings...');
   const [diagnostics, setDiagnostics] = useState<PlanDiagnostics | null>(null);
+  const [importedThemes, setImportedThemes] = useState<ImportedTheme[]>([]);
   // Guards against the load effect resolving after a fresher onChanged
   // update already landed: both paths capture their own sequence number
   // before doing async/event work and only commit if it's still current.
   const diagnosticsSeq = useRef(0);
+  // Same last-write-wins discipline as diagnosticsSeq, scoped to the
+  // imported-themes list: the mount-time load races the local-area
+  // onChanged listener below, and a stale slow load must not clobber a
+  // fresher onChanged refresh.
+  const importedThemesSeq = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
+    const seq = ++importedThemesSeq.current;
 
     async function load() {
       const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
       const nextSiteKey = activeTab?.url ? getSiteKeyFromUrl(activeTab.url) : null;
-      const nextSettings = await getSettings();
+      const [nextSettings, nextImportedThemes] = await Promise.all([
+        getSettings(),
+        readImportedThemes(),
+      ]);
 
       if (!isMounted) return;
       setSiteKey(nextSiteKey);
       setSettings(nextSettings);
+      if (seq === importedThemesSeq.current) setImportedThemes(nextImportedThemes);
       setStatus(nextSiteKey ? 'Ready' : 'No page domain detected');
     }
 
@@ -120,6 +160,23 @@ export function App() {
 
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const listener = (changes: Record<string, { newValue?: unknown }>, areaName: string): void => {
+      if (areaName !== 'local') return;
+      const change = changes[IMPORTED_THEMES_KEY];
+      if (change === undefined) return;
+      const seq = ++importedThemesSeq.current;
+      if (seq === importedThemesSeq.current) {
+        setImportedThemes(normalizeImportedThemes(change.newValue).themes);
+      }
+    };
+
+    browser.storage.onChanged.addListener(listener);
+    return () => {
+      browser.storage.onChanged.removeListener(listener);
     };
   }, []);
 
@@ -209,6 +266,12 @@ export function App() {
     await persist({ ...settings, sites: remainingSites });
   };
 
+  const openOptionsPage = (): void => {
+    browser.runtime.openOptionsPage().catch((error: unknown) => {
+      console.error('[Palette Mimicry] failed to open options page', error);
+    });
+  };
+
   return (
     <main className="popup-shell">
       <header>
@@ -228,11 +291,7 @@ export function App() {
             value={settings.globalThemeId}
             onChange={(event) => updateGlobalTheme(event.target.value)}
           >
-            {builtInThemes.map((theme) => (
-              <option key={theme.id} value={theme.id}>
-                {theme.name}
-              </option>
-            ))}
+            <ThemeOptions importedThemes={importedThemes} />
           </select>
         </label>
       </section>
@@ -255,11 +314,7 @@ export function App() {
               onChange={(event) => updateSite({ themeId: event.target.value })}
               disabled={!siteSettings.enabled}
             >
-              {builtInThemes.map((theme) => (
-                <option key={theme.id} value={theme.id}>
-                  {theme.name}
-                </option>
-              ))}
+              <ThemeOptions importedThemes={importedThemes} />
             </select>
           </label>
 
@@ -306,7 +361,18 @@ export function App() {
 
       <PlanDiagnosticsPanel diagnostics={diagnostics} />
 
-      <footer>{status}</footer>
+      <footer>
+        <span>{status}</span>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={openOptionsPage}
+          aria-label="Open options"
+          title="Options"
+        >
+          ⚙
+        </button>
+      </footer>
     </main>
   );
 }
