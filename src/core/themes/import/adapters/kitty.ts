@@ -8,10 +8,13 @@
 // derives.
 
 import type { ThemeTokens } from '../../themeTypes';
-import type { ImportError, ThemeSlots } from '../importTypes';
+import {
+  KITTY_THEME_NAME as DEFAULT_NAME,
+  type ImportError,
+  type ThemeSlots,
+} from '../importTypes';
 import { normalizeHex, parseError } from '../resolveColor';
 
-const DEFAULT_NAME = 'kitty theme';
 const ANSI_COLOR_COUNT = 16;
 
 const LEADING_TOKEN_PATTERN = /^(\S+)/;

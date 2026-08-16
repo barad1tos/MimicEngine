@@ -7,7 +7,10 @@ import {
   type ThemeTokens,
 } from '@/src/core/themes';
 import { importTheme } from '@/src/core/themes/import/importTheme';
-import type { SourceFormatId } from '@/src/core/themes/import/importTypes';
+import {
+  FORMAT_DEFAULT_THEME_NAMES,
+  type SourceFormatId,
+} from '@/src/core/themes/import/importTypes';
 import {
   detectPlatform,
   orderSourceCards,
@@ -94,6 +97,17 @@ type ImportOutcome =
   | { kind: 'error'; message: string };
 
 const EMPTY_BATCH: ImportBatch = { items: [], index: 0 };
+
+/**
+ * Strips a file name's final extension only -- `ayu-mirage.json` becomes
+ * `ayu-mirage`, and a double extension like `ayu.theme.json` becomes
+ * `ayu.theme` (only the last segment is stripped). A name with no `.` (or
+ * a leading dot only, e.g. a hidden file) is returned unchanged.
+ */
+function basenameWithoutExtension(fileName: string): string {
+  const dotIndex = fileName.lastIndexOf('.');
+  return dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
+}
 
 function SwatchGrid({
   tokens,
@@ -398,7 +412,17 @@ export function App() {
           sourceFormat: result.sourceFormat,
           derivedTokens: result.derivedTokens,
         });
-        setEditedName(result.theme.name);
+        // A picked/dropped file whose adapter produced a format-default name
+        // (no name of its own) seeds a stronger name from the file's
+        // basename instead, so two nameless imports don't collide on the
+        // same slug and silently replace one another. Pasted content has no
+        // filename, so it keeps the format default (the Replace-labeled
+        // save button still makes a same-name collision explicit there).
+        const seedName =
+          currentEntry.source.kind === 'file' && FORMAT_DEFAULT_THEME_NAMES.has(result.theme.name)
+            ? basenameWithoutExtension(currentEntry.source.file.name)
+            : result.theme.name;
+        setEditedName(seedName);
         setSetAsGlobal(batch.items.length === 1);
       } else {
         setCurrentOutcome({

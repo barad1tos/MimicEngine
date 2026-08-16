@@ -14,10 +14,13 @@
 
 import { parseCssColor, type RgbaColor } from '../../../color/parseColor';
 import type { ThemeTokens } from '../../themeTypes';
-import type { ImportError, ThemeSlots } from '../importTypes';
+import {
+  ITERM_THEME_NAME as DEFAULT_NAME,
+  type ImportError,
+  type ThemeSlots,
+} from '../importTypes';
 import { parseError, resolveOpaqueHex } from '../resolveColor';
 
-const DEFAULT_NAME = 'iTerm theme';
 const ANSI_COLOR_COUNT = 16;
 
 /** Finds the element following a `<key>keyName</key>` sibling in a plist dict's direct children. */

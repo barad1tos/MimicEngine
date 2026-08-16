@@ -8,10 +8,13 @@
 // Alacritty itself doesn't map to any theme slot) are skipped silently.
 // This adapter only maps, it never derives.
 
-import type { ImportError, ThemeSlots } from '../importTypes';
+import {
+  ALACRITTY_THEME_NAME as DEFAULT_NAME,
+  type ImportError,
+  type ThemeSlots,
+} from '../importTypes';
 import { parseError } from '../resolveColor';
 
-const DEFAULT_NAME = 'Alacritty theme';
 const ANSI_COLOR_COUNT = 16;
 
 const SECTION_PATTERN = /^\[colors\.(primary|normal|bright|selection)]$/;

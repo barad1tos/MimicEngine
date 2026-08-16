@@ -7,7 +7,11 @@
 
 import { parseCssColor, type RgbaColor } from '../../../color/parseColor';
 import { THEME_TOKEN_NAMES, type ThemeTokenName, type ThemeTokens } from '../../themeTypes';
-import type { ImportError, ThemeSlots } from '../importTypes';
+import {
+  VSCODE_THEME_NAME as DEFAULT_NAME,
+  type ImportError,
+  type ThemeSlots,
+} from '../importTypes';
 import { stripJsonc } from '../jsonc';
 import {
   isJsonObject,
@@ -21,8 +25,9 @@ import {
 // users see comes from the extension's package.json `contributes.themes`
 // entry instead (confirmed against the ayu-mirage fixture, which has no
 // top-level "name" key at all). Default like the terminal-format adapters
-// do for sources that never carry a name of their own.
-const DEFAULT_NAME = 'VS Code theme';
+// do for sources that never carry a name of their own; the literal itself
+// lives in importTypes.ts as the single source of truth shared with the
+// options page's nameless-import collision guard.
 
 function resolveSlotColor(
   keys: readonly string[],
