@@ -143,6 +143,43 @@ describe('normalizeImportedThemes', () => {
 
     expect(result.recentSources).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
   });
+
+  it('dedupes entries sharing an id, keeping the last values at the first occurrence position', () => {
+    const first = makeRawImportedTheme({ tokens: { ...makeTokens(), canvas: '#111111' } });
+    const last = makeRawImportedTheme({ tokens: { ...makeTokens(), canvas: '#222222' } });
+
+    const result = normalizeImportedThemes({
+      schemaVersion: 1,
+      themes: [first, last],
+      recentSources: [],
+    });
+
+    expect(result.themes).toHaveLength(1);
+    expect(result.themes[0]).toMatchObject({
+      id: 'imported:test-theme',
+      tokens: { canvas: '#222222' },
+    });
+  });
+
+  it('preserves the order of non-duplicate ids interleaved around a deduped id', () => {
+    const dupFirst = makeRawImportedTheme({ tokens: { ...makeTokens(), canvas: '#111111' } });
+    const other1 = makeRawImportedTheme({ id: 'imported:other-one', name: 'Other One' });
+    const dupLast = makeRawImportedTheme({ tokens: { ...makeTokens(), canvas: '#222222' } });
+    const other2 = makeRawImportedTheme({ id: 'imported:other-two', name: 'Other Two' });
+
+    const result = normalizeImportedThemes({
+      schemaVersion: 1,
+      themes: [dupFirst, other1, dupLast, other2],
+      recentSources: [],
+    });
+
+    expect(result.themes.map((theme) => theme.id)).toEqual([
+      'imported:test-theme',
+      'imported:other-one',
+      'imported:other-two',
+    ]);
+    expect(result.themes[0]).toMatchObject({ tokens: { canvas: '#222222' } });
+  });
 });
 
 describe('readImportedThemes', () => {

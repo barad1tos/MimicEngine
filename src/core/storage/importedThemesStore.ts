@@ -112,14 +112,32 @@ export async function deleteImportedTheme(id: string): Promise<void> {
   });
 }
 
+// Invariant: themes are unique by id. This funnel enforces it on every read
+// and write, so a duplicate id -- e.g. from saveImportedTheme's non-atomic
+// read-modify-write racing under overlapping saves -- self-heals on the
+// next pass through here. On a duplicate, the later entry's values win
+// (keep-last, consistent with replace-on-re-import semantics), but the
+// surviving entry stays at the FIRST occurrence's list position, so list
+// order doesn't jump around just because a duplicate happened to exist.
 function normalizeThemes(value: unknown): ImportedTheme[] {
   if (!Array.isArray(value)) return [];
 
   const themes: ImportedTheme[] = [];
+  const indexById = new Map<string, number>();
+
   for (const entry of value) {
     const theme = normalizeImportedTheme(entry);
-    if (theme) themes.push(theme);
+    if (!theme) continue;
+
+    const existingIndex = indexById.get(theme.id);
+    if (existingIndex === undefined) {
+      indexById.set(theme.id, themes.length);
+      themes.push(theme);
+    } else {
+      themes[existingIndex] = theme;
+    }
   }
+
   return themes;
 }
 
