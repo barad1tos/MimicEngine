@@ -39,6 +39,35 @@ function normalizeHex(rawValue: string): string | undefined {
   return match?.[1] !== undefined ? `#${match[1].toLowerCase()}` : undefined;
 }
 
+/**
+ * Strips a TOML `#`-comment from a single line, quote-aware so a `#` inside
+ * a quoted value (the hex colors this adapter cares about are always quoted)
+ * survives untouched. A plain "remove from first #" regex would truncate
+ * `background = "#1f2430" # base` at the color's own `#`, so this walks the
+ * line char-by-char like jsonc.ts's stripComments instead of regex-hacking
+ * it. No backslash-escape handling: TOML string literals can carry escaped
+ * quotes, but the only values this adapter reads are bare hex colors, which
+ * never do.
+ */
+function stripTomlComment(line: string): string {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line.charAt(index);
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+    } else if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+    } else if (char === '#' && !inSingleQuote && !inDoubleQuote) {
+      return line.slice(0, index);
+    }
+  }
+
+  return line;
+}
+
 function splitKeyValue(line: string): { key: string; value: string } | undefined {
   const separatorIndex = line.indexOf('=');
   if (separatorIndex === -1) return undefined;
@@ -105,8 +134,8 @@ export function parseAlacrittyTheme(content: string): ThemeSlots | ImportError {
   let section: Section | undefined;
 
   for (const rawLine of content.split('\n')) {
-    const line = rawLine.trim();
-    if (line.length === 0 || line.startsWith('#')) continue;
+    const line = stripTomlComment(rawLine).trim();
+    if (line.length === 0) continue;
 
     if (line.startsWith('[')) {
       section = matchSection(line);
