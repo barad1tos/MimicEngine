@@ -221,6 +221,7 @@ function ImportPreview({
   onSetAsGlobalChange,
   saveLabel,
   saveDisabled,
+  saveDisabledHint,
   isSaving,
   onSave,
   onSkip,
@@ -232,6 +233,7 @@ function ImportPreview({
   onSetAsGlobalChange: (value: boolean) => void;
   saveLabel: string;
   saveDisabled: boolean;
+  saveDisabledHint: string;
   isSaving: boolean;
   onSave: () => Promise<void>;
   onSkip: () => void;
@@ -264,7 +266,7 @@ function ImportPreview({
           }}
           autoFocus
         />
-        {saveDisabled && <span className="field-hint">Enter a name to save</span>}
+        {saveDisabled && <span className="field-hint">{saveDisabledHint}</span>}
       </label>
 
       <p className="import-meta">
@@ -567,6 +569,13 @@ export function App() {
       ? importedThemes.find((theme) => theme.id === importedThemeId(editedName))
       : undefined;
   const saveLabel = existingTheme ? `Replace "${existingTheme.name}"` : 'Save';
+  // An edited name that is non-empty but slugs to '' (all-punctuation or
+  // non-Latin input) is a distinct failure mode from a genuinely empty
+  // field -- "enter a name" is misleading when a name is already there.
+  const saveDisabledHint =
+    editedName.trim().length > 0
+      ? 'Name needs at least one Latin letter or digit'
+      : 'Enter a name to save';
   const queueTotal = batch.items.length;
 
   return (
@@ -592,6 +601,7 @@ export function App() {
               onSetAsGlobalChange={setSetAsGlobal}
               saveLabel={saveLabel}
               saveDisabled={editedSlug.length === 0}
+              saveDisabledHint={saveDisabledHint}
               isSaving={isSaving}
               onSave={handleSave}
               onSkip={advanceQueue}
