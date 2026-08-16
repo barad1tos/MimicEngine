@@ -75,12 +75,26 @@ function deriveError(message: string): ImportError {
   return { stage: 'derive', message };
 }
 
-function resolvePrimaryColor(
-  hex: string | undefined,
-): { hex: string; rgba: RgbaColor } | undefined {
-  if (hex === undefined) return undefined;
+type PrimaryColorResolution =
+  { kind: 'ok'; hex: string; rgba: RgbaColor } | { kind: 'missing' } | { kind: 'invalid' };
+
+function resolvePrimaryColor(hex: string | undefined): PrimaryColorResolution {
+  if (hex === undefined) return { kind: 'missing' };
   const rgba = parseCssColor(hex);
-  return rgba ? { hex, rgba } : undefined;
+  return rgba ? { kind: 'ok', hex, rgba } : { kind: 'invalid' };
+}
+
+// Distinguishes a key that was never provided from one that was provided but
+// didn't parse, so callers can tell "add the field" from "fix the value"
+// apart. Both lists collapse into one message when both cases occur.
+function formatPrimariesError(missing: readonly string[], invalid: readonly string[]): string {
+  if (missing.length > 0 && invalid.length > 0) {
+    return `missing: ${missing.join(', ')}; invalid: ${invalid.join(', ')}`;
+  }
+  if (invalid.length > 0) {
+    return `invalid canvas/text primaries: ${invalid.join(', ')}`;
+  }
+  return `missing canvas/text primaries: ${missing.join(', ')}`;
 }
 
 // Rules 1-2: terminal primaries (canvas <- background, text <- foreground,
@@ -91,10 +105,14 @@ function resolvePrimaries(slots: ThemeSlots): PrimariesResolution | ImportError 
   const text = resolvePrimaryColor(slots.tokens.text ?? slots.foreground);
 
   const missing: string[] = [];
-  if (!canvas) missing.push('canvas');
-  if (!text) missing.push('text');
-  if (!canvas || !text) {
-    return deriveError(`missing canvas/text primaries: ${missing.join(', ')}`);
+  const invalid: string[] = [];
+  if (canvas.kind === 'missing') missing.push('canvas');
+  if (canvas.kind === 'invalid') invalid.push('canvas');
+  if (text.kind === 'missing') missing.push('text');
+  if (text.kind === 'invalid') invalid.push('text');
+
+  if (canvas.kind !== 'ok' || text.kind !== 'ok') {
+    return deriveError(formatPrimariesError(missing, invalid));
   }
 
   const canvasOklch = rgbaToOklch(canvas.rgba);

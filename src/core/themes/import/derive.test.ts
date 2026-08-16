@@ -234,6 +234,27 @@ describe('deriveGaps', () => {
     });
   });
 
+  it('returns a derive error naming present-but-unparseable primaries as invalid, not missing', () => {
+    const slots = baseSlots({ background: 'not-a-color', foreground: 'also-not-a-color' });
+    const result = deriveGaps(slots);
+    expect(result).toEqual({
+      stage: 'derive',
+      message: 'invalid canvas/text primaries: canvas, text',
+    });
+  });
+
+  it('combines missing and invalid primaries in one message when both cases occur', () => {
+    // canvas is absent entirely (no background, no tokens.canvas); text is
+    // present but fails to parse. The two failure kinds get their own list
+    // rather than both folding into "missing".
+    const slots = baseSlots({ foreground: 'not-a-color' });
+    const result = deriveGaps(slots);
+    expect(result).toEqual({
+      stage: 'derive',
+      message: 'missing: canvas; invalid: text',
+    });
+  });
+
   it('returns a derive error when no accent source is available', () => {
     const slots = baseSlots({ background: LADDER_CANVAS, foreground: LADDER_TEXT });
     const result = deriveGaps(slots);
