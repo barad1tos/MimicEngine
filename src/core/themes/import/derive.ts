@@ -230,23 +230,34 @@ function fillLinkFallback(
   derived.add('link');
 }
 
-// Rule 7: selection (accent hue/chroma at canvas L+0.20*S) and focus (= accent).
-function fillSelectionAndFocus(
+// Rule 7 (selection half): accent hue/chroma at canvas L+0.20*S. Selection is
+// exempt from the rule 8 floor (see applyContrastFloor), so its timing
+// relative to that pass doesn't matter — it stays here, alongside accent's
+// other rule-7 derivations.
+function fillSelection(
   tokens: MutableTokens,
   derived: Set<ThemeTokenName>,
   accent: ResolvedAccent,
   canvasOklch: Oklch,
   span: number,
 ): void {
-  if (tokens.selection === undefined) {
-    const l = clampLightness(canvasOklch.l + SELECTION_FRACTION * span);
-    tokens.selection = hexFromOklch({ l, c: accent.oklch.c, h: accent.oklch.h });
-    derived.add('selection');
-  }
-  if (tokens.focus === undefined) {
-    tokens.focus = accent.hex;
-    derived.add('focus');
-  }
+  if (tokens.selection !== undefined) return;
+  const l = clampLightness(canvasOklch.l + SELECTION_FRACTION * span);
+  tokens.selection = hexFromOklch({ l, c: accent.oklch.c, h: accent.oklch.h });
+  derived.add('selection');
+}
+
+// Rule 7 (focus half): focus = accent. Deliberately called AFTER
+// applyContrastFloor (rule 8) — focus must mirror the FINAL accent value,
+// so if accent needed floor repair, focus takes the repaired hex, never the
+// pre-repair one. Reads `tokens.accent` directly (not the `accent` parameter
+// captured before repair) for exactly this reason.
+function fillFocus(tokens: MutableTokens, derived: Set<ThemeTokenName>): void {
+  if (tokens.focus !== undefined) return;
+  const accentHex = tokens.accent;
+  if (accentHex === undefined) return; // unreachable: accent resolved earlier in the pipeline
+  tokens.focus = accentHex;
+  derived.add('focus');
 }
 
 // Mirrors contrastGuard's stepAwayFromBackground shape (direction away from
@@ -320,8 +331,9 @@ export function deriveGaps(slots: ThemeSlots): DeriveResult {
 
   fillStatusReferenceHue(tokens, derived, accent.oklch);
   fillLinkFallback(tokens, derived, accent.hex);
-  fillSelectionAndFocus(tokens, derived, accent, canvasOklch, span);
+  fillSelection(tokens, derived, accent, canvasOklch, span);
   applyContrastFloor(tokens, derived, canvasHex, canvasOklch.l);
+  fillFocus(tokens, derived);
 
   if (!isCompleteThemeTokens(tokens)) {
     return deriveError('internal: derivation left a token unset');

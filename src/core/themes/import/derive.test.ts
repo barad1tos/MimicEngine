@@ -130,6 +130,57 @@ describe('deriveGaps', () => {
     expect(result.derivedTokens).toContain('accent');
   });
 
+  it('sources link/success/warning/danger from their correct ANSI slot pairs, not a transposed neighbor', () => {
+    // Six color families, each dim/bright pair distinct in hue from every
+    // other family. magenta (5/13) is a decoy: no rule maps to it, so if an
+    // index got transposed (e.g. cyan 6/14 read as magenta 5/13) the
+    // affected token's hue would land ~130 degrees off instead of matching.
+    const redDim = '#b94642';
+    const redBright = '#ff8e86';
+    const greenDim = '#278733';
+    const greenBright = '#75d079';
+    const yellowDim = '#996700';
+    const yellowBright = '#e3ae28';
+    const blueDim = '#4671b7';
+    const blueBright = '#8ab8ff';
+    const magentaDim = '#a04c9a';
+    const magentaBright = '#ec92e5';
+    const cyanDim = '#00858d';
+    const cyanBright = '#3aced6';
+
+    const ansi = new Array<string | undefined>(16).fill(undefined);
+    ansi[1] = redDim;
+    ansi[9] = redBright;
+    ansi[2] = greenDim;
+    ansi[10] = greenBright;
+    ansi[3] = yellowDim;
+    ansi[11] = yellowBright;
+    ansi[4] = blueDim;
+    ansi[12] = blueBright;
+    ansi[5] = magentaDim;
+    ansi[13] = magentaBright;
+    ansi[6] = cyanDim;
+    ansi[14] = cyanBright;
+
+    const slots = baseSlots({ background: LADDER_CANVAS, foreground: LADDER_TEXT, ansi });
+    const result = deriveGaps(slots);
+    if ('stage' in result) throw new Error(`expected success, got error: ${result.message}`);
+
+    // Higher-contrast member of each pair (bright, against a dark canvas) wins.
+    expect(result.tokens.link).toBe(cyanBright);
+    expect(result.tokens.success).toBe(greenBright);
+    expect(result.tokens.warning).toBe(yellowBright);
+    expect(result.tokens.danger).toBe(redBright);
+
+    // Independent hue proof (falsifiable against an index transposition even
+    // if a future refactor stops passing the raw ANSI string straight through).
+    const hueOf = (hex: string) => rgbaToOklch(parseOrThrow(hex)).h;
+    expect(Math.abs(hueOf(result.tokens.link) - hueOf(cyanBright))).toBeLessThanOrEqual(1);
+    expect(Math.abs(hueOf(result.tokens.success) - hueOf(greenBright))).toBeLessThanOrEqual(1);
+    expect(Math.abs(hueOf(result.tokens.warning) - hueOf(yellowBright))).toBeLessThanOrEqual(1);
+    expect(Math.abs(hueOf(result.tokens.danger) - hueOf(redBright))).toBeLessThanOrEqual(1);
+  });
+
   it('derives status colors from a reference hue when no ANSI source exists', () => {
     const slots = baseSlots({
       tokens: { accent: STABLE_ACCENT },
@@ -167,6 +218,12 @@ describe('deriveGaps', () => {
     expect(repairedRatio ?? 0).toBeGreaterThanOrEqual(3);
     expect(Math.abs(repairedHue - originalHue)).toBeLessThanOrEqual(1);
     expect(result.tokens.accent).toBe('#667290');
+
+    // Controller ruling: focus must mirror the FINAL (post-repair) accent,
+    // never the pre-repair value — rule 7's focus gap-fill runs after rule
+    // 8's floor pass specifically so this holds.
+    expect(result.tokens.focus).toBe(result.tokens.accent);
+    expect(result.tokens.focus).toBe('#667290');
   });
 
   it('returns a derive error naming missing canvas and text primaries', () => {
