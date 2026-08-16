@@ -155,4 +155,33 @@ describe('removeShadowStylesheets', () => {
       expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
     }
   });
+
+  it('reaches a shadow root whose host was detached before removal, and it stays torn down after re-attach', () => {
+    const { host, shadowRoot } = attachOpenShadowHost();
+    syncShadowStylesheets(buildShadowStylesheet(theme), [shadowRoot]);
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeInstanceOf(HTMLStyleElement);
+
+    // Detach: a document walk from here on can no longer see this host, so
+    // only the tracked-roots sweep (not collectOpenShadowRoots) can reach it.
+    host.remove();
+
+    removeShadowStylesheets(document);
+
+    document.body.append(host);
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+  });
+
+  it('does not grow tracking unboundedly across repeated syncs of the same root', () => {
+    const { shadowRoot } = attachOpenShadowHost();
+    const css = buildShadowStylesheet(theme);
+
+    for (let index = 0; index < 10; index += 1) {
+      syncShadowStylesheets(css, [shadowRoot]);
+    }
+
+    removeShadowStylesheets(document);
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+  });
 });
