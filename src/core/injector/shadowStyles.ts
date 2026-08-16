@@ -55,8 +55,12 @@ export function buildShadowStylesheet(theme: PaletteTheme): string {
   return [hostBlock, buildUngatedBaseRules()].join('\n\n');
 }
 
-function createShadowStyleElement(css: string): HTMLStyleElement {
-  const styleElement = document.createElement('style');
+// Created from the root's own document, not the global `document` — a
+// shadow root can belong to a document other than the one this module was
+// evaluated in (e.g. an <iframe>'s content document), and a node's owner
+// document must match the tree it gets appended into.
+function createShadowStyleElement(ownerDocument: Document, css: string): HTMLStyleElement {
+  const styleElement = ownerDocument.createElement('style');
   styleElement.id = STYLE_ELEMENT_ID;
   styleElement.dataset.owner = 'palette-mimicry';
   styleElement.textContent = css;
@@ -76,7 +80,7 @@ export function syncShadowStylesheets(css: string, roots: readonly ShadowRoot[])
       continue;
     }
 
-    shadowRoot.append(createShadowStyleElement(css));
+    shadowRoot.append(createShadowStyleElement(shadowRoot.ownerDocument, css));
   }
 }
 
