@@ -213,4 +213,42 @@ describe('decideStrategies', () => {
     expect(planStrategies(missingAuthoredCount)).toEqual(['baseline', 'computedFallback']);
     expect(planStrategies(missingCalmMutation)).toEqual(['baseline', 'computedFallback']);
   });
+
+  describe('deepRemap autonomy', () => {
+    // deepRemap is manual-only: no table row may ever select it for a site
+    // the user hasn't explicitly opted in — a structural check on the table
+    // data itself, independent of decideStrategies' matching logic, so it
+    // fails the moment anyone adds 'deepRemap' to a row's strategies list.
+    it('no DECISION_TABLE row includes deepRemap', () => {
+      expect(DECISION_TABLE.every((row) => !row.strategies.includes('deepRemap'))).toBe(true);
+    });
+
+    it('auto mode never yields deepRemap across every table-row fixture', () => {
+      const tableRowFixtures: PageMetrics[] = [
+        { ...baseMetrics, colorCustomPropertyCount: 8, mutationRate: 5 }, // calm-variables-rich
+        { ...baseMetrics, colorCustomPropertyCount: 8, mutationRate: 6 }, // variables-capable
+        {
+          ...baseMetrics,
+          authoredColorCount: 12,
+          unreadableStylesheetRatio: 0.5,
+          mutationRate: 5,
+        }, // mixed-visibility
+        { ...baseMetrics, authoredColorCount: 12, mutationRate: 5 }, // authored-rich
+        { ...baseMetrics, unreadableStylesheetRatio: 0.5 }, // opaque-styles
+        baseMetrics, // default
+      ];
+
+      for (const metrics of tableRowFixtures) {
+        const plan = decideStrategies(metrics, 'auto');
+        expect(planStrategies(plan)).not.toContain('deepRemap');
+      }
+    });
+
+    it('manual override to deepRemap yields manual provenance with exactly deepRemap', () => {
+      const plan = decideStrategies(baseMetrics, 'deepRemap');
+
+      expect(plan).toEqual({ provenance: { kind: 'manual', strategy: 'deepRemap' } });
+      expect(planStrategies(plan)).toEqual(['deepRemap']);
+    });
+  });
 });

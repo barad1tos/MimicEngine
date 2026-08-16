@@ -6,6 +6,7 @@ import type { PageFacts } from './pageFacts';
 import { authoredRemap } from './strategies/authoredRemap';
 import { baseline } from './strategies/baseline';
 import { computedFallback } from './strategies/computedFallback';
+import { deepRemap } from './strategies/deepRemap';
 import { variableRemap } from './strategies/variableRemap';
 import type { StrategyId } from './strategyId';
 
@@ -30,4 +31,5 @@ export const strategyRegistry: readonly PaletteEngine[] = [
   variableRemap,
   authoredRemap,
   computedFallback,
+  deepRemap,
 ];

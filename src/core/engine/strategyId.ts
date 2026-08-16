@@ -3,6 +3,7 @@ export const STRATEGY_IDS = [
   'variableRemap',
   'authoredRemap',
   'computedFallback',
+  'deepRemap',
 ] as const;
 
 export type StrategyId = (typeof STRATEGY_IDS)[number];
