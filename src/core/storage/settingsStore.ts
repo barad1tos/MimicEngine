@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import { isStrategyId, type StrategySelection } from '../engine/strategyId';
 import { DEFAULT_THEME_ID, THEME_TOKEN_NAMES, type ThemeTokenName } from '../themes';
+import { IMPORTED_THEMES_KEY } from './importedThemesStore';
 
 export type SiteOverride = {
   selector: string;
@@ -51,14 +52,28 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   await browser.storage.local.set({ [STORAGE_KEY]: normalizeSettings(settings) });
 }
 
-export async function getEffectiveSiteSettings(siteKey: string): Promise<SiteSettings> {
-  const settings = await getSettings();
+// Pure derivation shared by getEffectiveSiteSettings (popup path) and the
+// content-script controller's batched readApplyInputs(): per-site override
+// when present, else the global theme id folded into the site defaults.
+export function deriveEffectiveSiteSettings(settings: AppSettings, siteKey: string): SiteSettings {
   return settings.sites[siteKey] ?? createDefaultSiteSettings(settings.globalThemeId);
 }
 
+export async function getEffectiveSiteSettings(siteKey: string): Promise<SiteSettings> {
+  const settings = await getSettings();
+  return deriveEffectiveSiteSettings(settings, siteKey);
+}
+
+// Fires on browser.storage.local changes to either the settings blob
+// (STORAGE_KEY) or the imported-themes store (IMPORTED_THEMES_KEY) --
+// imported themes feed theme resolution (see resolveTheme in themes/index.ts),
+// so a delete/re-import must trigger the same re-apply path as a settings
+// change.
 export function onSettingsChanged(callback: () => void): () => void {
   const listener = (changes: Record<string, unknown>, areaName: string) => {
-    if (areaName === 'local' && Object.hasOwn(changes, STORAGE_KEY)) {
+    const touchesRelevantKey =
+      Object.hasOwn(changes, STORAGE_KEY) || Object.hasOwn(changes, IMPORTED_THEMES_KEY);
+    if (areaName === 'local' && touchesRelevantKey) {
       callback();
     }
   };

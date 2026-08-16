@@ -1,3 +1,4 @@
+import { browser } from 'wxt/browser';
 import { collectPageFacts } from '../engine/pageFacts';
 import { composeStylesheet } from '../engine/composeStylesheet';
 import { aggregateCoverage } from '../engine/coverage';
@@ -7,12 +8,19 @@ import { writePlanDiagnostics } from '../engine/diagnostics';
 import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
 import { observeDomChanges, type DomChangeObserver } from '../live/observeDomChanges';
 import {
-  getEffectiveSiteSettings,
+  IMPORTED_THEMES_KEY,
+  normalizeImportedThemes,
+  type ImportedTheme,
+} from '../storage/importedThemesStore';
+import {
+  deriveEffectiveSiteSettings,
+  normalizeSettings,
   onSettingsChanged,
+  STORAGE_KEY,
   type SiteSettings,
 } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
-import { getThemeById } from '../themes';
+import { resolveTheme } from '../themes';
 
 export type PageThemeController = {
   start: () => Promise<void>;
@@ -91,9 +99,28 @@ export function createPageThemeController(): PageThemeController {
     });
   };
 
+  // Single batched read backing apply(): settings and imported themes live
+  // under separate storage.local keys, but the engine pipeline needs both
+  // before it can decide anything, so one browser.storage.local.get([...])
+  // call fetches both raw values and this funnels them through the same
+  // normalization every other reader uses (normalizeSettings,
+  // normalizeImportedThemes) rather than trusting the raw storage shape.
+  const readApplyInputs = async (): Promise<{
+    siteSettings: SiteSettings;
+    importedThemes: readonly ImportedTheme[];
+  }> => {
+    const raw = await browser.storage.local.get([STORAGE_KEY, IMPORTED_THEMES_KEY]);
+    const settings = normalizeSettings(raw[STORAGE_KEY]);
+
+    return {
+      siteSettings: deriveEffectiveSiteSettings(settings, siteKey),
+      importedThemes: normalizeImportedThemes(raw[IMPORTED_THEMES_KEY]).themes,
+    };
+  };
+
   const apply = async (): Promise<void> => {
     const generation = ++applyGeneration;
-    const siteSettings = await getEffectiveSiteSettings(siteKey);
+    const { siteSettings, importedThemes } = await readApplyInputs();
     // A newer apply() started while this one awaited settings — its
     // stylesheet and diagnostics are already current; proceeding here would
     // overwrite them with this call's now-stale results.
@@ -105,7 +132,7 @@ export function createPageThemeController(): PageThemeController {
       return;
     }
 
-    const theme = getThemeById(siteSettings.themeId);
+    const theme = resolveTheme(siteSettings.themeId, importedThemes);
     const facts = collectPageFacts(document);
     const metrics = deriveMetrics(facts, { mutationRate });
     const plan = decideStrategies(metrics, siteSettings.strategy);
