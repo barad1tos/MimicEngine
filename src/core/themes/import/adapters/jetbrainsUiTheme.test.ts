@@ -123,16 +123,49 @@ describe('parseJetbrainsUiTheme', () => {
     expect(slots.tokens.border).toBeUndefined();
   });
 
-  it('falls through to the next candidate when the first one is unusable', () => {
+  it('advances past a present-but-unusable first candidate to a usable second candidate', () => {
     const content = JSON.stringify({
       name: 'Fallthrough',
       dark: false,
-      ui: { '*': { background: '#101010' }, Borders: { color: '#223344' } },
+      ui: {
+        '*': { background: '#101010' },
+        // First candidate for border (Component.borderColor) EXISTS but is
+        // fully transparent, i.e. unusable per the composite semantics.
+        // Second candidate (Borders.color) holds a real opaque value.
+        Component: { borderColor: '#00000000' },
+        Borders: { color: '#223344' },
+      },
     });
 
     const slots = expectSlots(parseJetbrainsUiTheme(content));
-    // Component.borderColor is absent; Borders.color is the fallback.
+    // Semantics-pinning case: under "stop at the first ui key that merely
+    // exists" (a reading the brief doesn't rule out), Component.borderColor
+    // being present would end the chain right there and border would stay
+    // undefined. This adapter instead keeps trying candidates until one
+    // resolves to a usable color, so border falls through to Borders.color.
     expect(slots.tokens.border).toBe('#223344');
+  });
+
+  it('resolves a candidate expressed as nested-object-then-flat-dotted-key (third ui key form)', () => {
+    const content = JSON.stringify({
+      name: 'NestedThenFlatDotted',
+      dark: true,
+      ui: {
+        '*': { background: '#101010' },
+        // accent's first candidate, Component.focusColor, is absent
+        // entirely (no "Component" key at all). Its second candidate,
+        // Button.default.focusedBorderColor, is expressed the way the real
+        // ayu-mirage fixture expresses it: one level of nesting ("Button"),
+        // then a single flat key with a literal dot in it
+        // ("default.focusedBorderColor") rather than a further nested
+        // object. lookupPath must resolve this third form, not just the
+        // fully-flat and fully-nested forms the other tests exercise.
+        Button: { 'default.focusedBorderColor': '#3399ff' },
+      },
+    });
+
+    const slots = expectSlots(parseJetbrainsUiTheme(content));
+    expect(slots.tokens.accent).toBe('#3399ff');
   });
 
   it('leaves mode unset when "dark" is not a boolean', () => {
