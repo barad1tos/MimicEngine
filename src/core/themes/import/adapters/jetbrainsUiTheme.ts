@@ -144,6 +144,25 @@ function resolveMode(dark: JsonValue | undefined): 'dark' | 'light' | undefined 
   return dark ? 'dark' : 'light';
 }
 
+function resolveAuthor(author: JsonValue | undefined): string | undefined {
+  return typeof author === 'string' && author.length > 0 ? author : undefined;
+}
+
+function buildSlots(
+  name: string,
+  tokens: Partial<ThemeTokens>,
+  mode: 'dark' | 'light' | undefined,
+  author: string | undefined,
+): ThemeSlots {
+  return {
+    name,
+    sourceFormat: 'jetbrains-ui',
+    tokens,
+    ...(mode !== undefined ? { mode } : {}),
+    ...(author !== undefined ? { author } : {}),
+  };
+}
+
 export function parseJetbrainsUiTheme(content: string): ThemeSlots | ImportError {
   let parsed: unknown;
   try {
@@ -154,7 +173,7 @@ export function parseJetbrainsUiTheme(content: string): ThemeSlots | ImportError
 
   if (!isJsonObject(parsed)) return parseError('theme root is not a JSON object');
 
-  const { name, ui, colors: colorsRaw } = parsed;
+  const { name, ui, colors: colorsRaw, author: authorRaw } = parsed;
   if (typeof name !== 'string' || name.length === 0) return parseError('theme is missing a name');
   if (!isJsonObject(ui)) return parseError('theme is missing a "ui" object');
 
@@ -172,11 +191,7 @@ export function parseJetbrainsUiTheme(content: string): ThemeSlots | ImportError
   }
 
   const mode = resolveMode(parsed.dark);
+  const author = resolveAuthor(authorRaw);
 
-  return {
-    name,
-    sourceFormat: 'jetbrains-ui',
-    tokens,
-    ...(mode !== undefined ? { mode } : {}),
-  };
+  return buildSlots(name, tokens, mode, author);
 }

@@ -26,6 +26,7 @@ const JETBRAINS_EDITOR_FIXTURE = readFixture('ayu-mirage-editor.icls');
 const VSCODE_FIXTURE = readFixture('vscode-ayu-mirage.json');
 const ITERM_FIXTURE = readFixture('ayu-mirage.itermcolors');
 const ALACRITTY_FIXTURE = readFixture('ayu-mirage.alacritty.toml');
+const KITTY_FIXTURE = readFixture('ayu-mirage.kitty.conf');
 
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/;
 
@@ -81,6 +82,23 @@ describe('importTheme', () => {
     const firstOk = expectSuccess(first);
     const secondOk = expectSuccess(second);
     expect(secondOk.derivedTokens).toEqual(firstOk.derivedTokens);
+  });
+
+  it('carries the source-declared author through the full pipeline for jetbrains-ui', () => {
+    // The real ayu-mirage.theme.json fixture declares "author": "cloud" --
+    // this is the only format whose adapter reads a top-level author field
+    // (see adapters/jetbrainsUiTheme.test.ts), so it's the one that must
+    // survive detect -> parse -> derive -> validate end to end.
+    const result = expectSuccess(importTheme(JETBRAINS_UI_FIXTURE));
+    expect(result.theme.author).toBe('cloud');
+  });
+
+  it('leaves author unset end to end for a format whose spec has no author field', () => {
+    // kitty.conf has no author concept at all; the real ayu-mirage fixture
+    // has enough color entries (background/foreground plus ANSI blue for
+    // accent) to import successfully without ever touching author.
+    const result = expectSuccess(importTheme(KITTY_FIXTURE));
+    expect(Object.hasOwn(result.theme, 'author')).toBe(false);
   });
 
   it('preserves a source-provided token verbatim through derivation (monotonicity)', () => {

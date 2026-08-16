@@ -57,6 +57,7 @@ export function importTheme(content: string): ImportResult {
     name: slots.name,
     mode: derived.mode,
     tokens: derived.tokens,
+    ...(slots.author !== undefined ? { author: slots.author } : {}),
   });
   if ('stage' in validated) return { ok: false, error: validated };
 
