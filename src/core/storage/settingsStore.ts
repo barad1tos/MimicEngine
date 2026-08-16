@@ -84,6 +84,34 @@ export function onSettingsChanged(callback: () => void): () => void {
   };
 }
 
+// Decides whether deleting an imported theme leaves dangling references in
+// settings, and if so, what the repaired settings look like. A dangling
+// global reference resets to DEFAULT_THEME_ID; a dangling per-site override
+// is remapped to that (possibly just-reset) global theme id, mirroring the
+// fallback deriveEffectiveSiteSettings already gives an unset site. Returns
+// null when `themeId` isn't referenced anywhere, so the caller can skip the
+// write entirely instead of persisting a no-op settings blob.
+export function pruneThemeReferences(settings: AppSettings, themeId: string): AppSettings | null {
+  const globalReferencesDeleted = settings.globalThemeId === themeId;
+  const nextGlobalThemeId = globalReferencesDeleted ? DEFAULT_THEME_ID : settings.globalThemeId;
+
+  const siteEntries = Object.entries(settings.sites);
+  const sitesReferenceDeleted = siteEntries.some(([, site]) => site.themeId === themeId);
+
+  if (!globalReferencesDeleted && !sitesReferenceDeleted) return null;
+
+  const sites = sitesReferenceDeleted
+    ? Object.fromEntries(
+        siteEntries.map(([siteKey, site]) => [
+          siteKey,
+          site.themeId === themeId ? { ...site, themeId: nextGlobalThemeId } : site,
+        ]),
+      )
+    : settings.sites;
+
+  return { ...settings, globalThemeId: nextGlobalThemeId, sites };
+}
+
 export function normalizeSettings(value: unknown): AppSettings {
   if (!isObject(value)) return { ...DEFAULT_SETTINGS, sites: {} };
 

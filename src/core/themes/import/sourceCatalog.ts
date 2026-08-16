@@ -4,7 +4,7 @@
 
 import type { SourceFormatId } from './importTypes';
 
-type SourcePlatform = 'mac' | 'linux' | 'windows';
+export type SourcePlatform = 'mac' | 'linux' | 'windows';
 
 export type SourceCard = {
   id: string; // 'jetbrains' | 'vscode' | 'iterm' | 'alacritty' | 'kitty' | 'ghostty' | 'file'
@@ -88,6 +88,17 @@ export const SOURCE_CATALOG: readonly SourceCard[] = [
   },
   FILE_CARD,
 ];
+
+/**
+ * Maps a raw `navigator.platform` string to the coarse platform buckets the
+ * catalog keys its paths by. `Mac` substring wins over `Win`; anything else
+ * (including every Linux/BSD variant) falls back to `linux`.
+ */
+export function detectPlatform(navigatorPlatform: string): SourcePlatform {
+  if (navigatorPlatform.includes('Mac')) return 'mac';
+  if (navigatorPlatform.includes('Win')) return 'windows';
+  return 'linux';
+}
 
 function hasPlatformPaths(card: SourceCard, platform: SourcePlatform): boolean {
   const platformPaths = card.paths[platform];

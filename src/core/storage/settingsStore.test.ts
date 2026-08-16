@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, createDefaultSiteSettings, normalizeSettings } from './settingsStore';
+import { DEFAULT_THEME_ID } from '../themes';
+import {
+  DEFAULT_SETTINGS,
+  createDefaultSiteSettings,
+  normalizeSettings,
+  pruneThemeReferences,
+} from './settingsStore';
 
 describe('normalizeSettings', () => {
   it('defaults preserveBrandColors to true on a freshly created site', () => {
@@ -130,5 +136,48 @@ describe('normalizeSettings', () => {
 
     expect(second.sites['example.com']).toBeUndefined();
     expect(DEFAULT_SETTINGS.sites['example.com']).toBeUndefined();
+  });
+});
+
+describe('pruneThemeReferences', () => {
+  it('resets a dangling global theme reference to DEFAULT_THEME_ID', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      globalThemeId: 'imported:deleted-theme',
+      sites: {},
+    };
+
+    const pruned = pruneThemeReferences(settings, 'imported:deleted-theme');
+
+    expect(pruned).not.toBeNull();
+    expect(pruned?.globalThemeId).toBe(DEFAULT_THEME_ID);
+  });
+
+  it('remaps a dangling per-site override to the (post-reset) global theme id', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      globalThemeId: 'placeholder-theme',
+      sites: {
+        'example.com': { ...createDefaultSiteSettings(), themeId: 'imported:deleted-theme' },
+      },
+    };
+
+    const pruned = pruneThemeReferences(settings, 'imported:deleted-theme');
+
+    expect(pruned).not.toBeNull();
+    expect(pruned?.globalThemeId).toBe('placeholder-theme');
+    expect(pruned?.sites['example.com']?.themeId).toBe('placeholder-theme');
+  });
+
+  it('returns null when the deleted theme id is referenced nowhere', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      globalThemeId: 'placeholder-theme',
+      sites: {
+        'example.com': { ...createDefaultSiteSettings(), themeId: 'placeholder-theme' },
+      },
+    };
+
+    expect(pruneThemeReferences(settings, 'imported:deleted-theme')).toBeNull();
   });
 });

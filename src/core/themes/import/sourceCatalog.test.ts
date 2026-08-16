@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orderSourceCards, SOURCE_CATALOG } from './sourceCatalog';
+import { detectPlatform, orderSourceCards, SOURCE_CATALOG } from './sourceCatalog';
 
 const CATALOG_IDS = SOURCE_CATALOG.map((card) => card.id);
 const NON_FILE_CATALOG_IDS = CATALOG_IDS.filter((id) => id !== 'file');
@@ -156,5 +156,20 @@ describe('orderSourceCards', () => {
     const before = SOURCE_CATALOG.map((card) => card.id);
     orderSourceCards(['ghostty', 'file', 'vscode'], 'linux');
     expect(SOURCE_CATALOG.map((card) => card.id)).toEqual(before);
+  });
+});
+
+describe('detectPlatform', () => {
+  it('maps a Mac navigator.platform string to "mac"', () => {
+    expect(detectPlatform('MacIntel')).toBe('mac');
+  });
+
+  it('maps a Windows navigator.platform string to "windows"', () => {
+    expect(detectPlatform('Win32')).toBe('windows');
+  });
+
+  it('falls back to "linux" for anything else, including unrecognized strings', () => {
+    expect(detectPlatform('Linux x86_64')).toBe('linux');
+    expect(detectPlatform('')).toBe('linux');
   });
 });
