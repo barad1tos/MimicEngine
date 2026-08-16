@@ -308,4 +308,42 @@ describe('collectPageFacts', () => {
     expect(result.authoredRules).toHaveLength(1);
     expect(result.authoredRules[0]?.selector).toBe('.readable');
   });
+
+  it('collects svg presentation-attribute fill/stroke colors, deduped and codepoint-sorted', () => {
+    const doc = buildDocument(
+      '',
+      `
+        <svg>
+          <path fill="#ff0000"></path>
+          <circle stroke="rgb(0, 128, 0)"></circle>
+          <rect fill="none"></rect>
+          <g fill="currentColor"></g>
+          <path fill="#ff0000"></path>
+        </svg>
+      `,
+    );
+    const facts = collectPageFacts(doc);
+    expect(facts.svgPresentationColors).toEqual([
+      { attribute: 'fill', value: '#ff0000', color: { r: 0xff, g: 0, b: 0, a: 1 } },
+      { attribute: 'stroke', value: 'rgb(0, 128, 0)', color: { r: 0, g: 128, b: 0, a: 1 } },
+    ]);
+  });
+
+  it('ignores fill/stroke attributes on elements outside any <svg> ancestor', () => {
+    const doc = buildDocument('', '<div fill="#123456"></div>');
+    const facts = collectPageFacts(doc);
+    expect(facts.svgPresentationColors).toEqual([]);
+  });
+
+  it('truncates svgPresentationColors deterministically at the maxSvgPresentationColors budget', () => {
+    const paths = Array.from(
+      { length: 65 },
+      (_, index) => `<path fill="#${(index + 1).toString(16).padStart(6, '0')}"></path>`,
+    ).join('');
+    const doc = buildDocument('', `<svg>${paths}</svg>`);
+    const facts = collectPageFacts(doc);
+    expect(facts.svgPresentationColors).toHaveLength(64);
+    expect(facts.svgPresentationColors[0]?.value).toBe('#000001');
+    expect(facts.svgPresentationColors[63]?.value).toBe('#000040');
+  });
 });

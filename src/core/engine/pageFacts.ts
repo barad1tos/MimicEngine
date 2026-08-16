@@ -21,10 +21,21 @@ export type AuthoredColorDeclaration = {
   conditions: string[];
 };
 
+// Collected from a `fill`/`stroke` HTML attribute (not a CSS declaration) on
+// an element under an <svg>; `color` is always non-null in practice (entries
+// whose value fails parseCssColor are skipped at the source), mirroring the
+// same always-parseable-in-practice convention as AuthoredColorDeclaration.
+export type SvgPresentationColor = {
+  attribute: 'fill' | 'stroke';
+  value: string;
+  color: RgbaColor | null;
+};
+
 export type PageFacts = {
   customProperties: CustomPropertyFact[];
   authoredRules: AuthoredColorDeclaration[]; // readable sheets only, budget-capped, document order
   inlineStyleColors: AuthoredColorDeclaration[]; // from [style] attributes, capped element walk
+  svgPresentationColors: SvgPresentationColor[]; // from fill/stroke attributes, capped element walk
   domElementCount: number;
   shadowRootCount: number;
   stylesheetCount: number;
@@ -36,6 +47,7 @@ export type CollectPageFactsOptions = {
   maxCustomProperties: number;
   maxElements: number;
   maxAuthoredDeclarations: number;
+  maxSvgPresentationColors: number;
 };
 
 const DEFAULT_OPTIONS: CollectPageFactsOptions = {
@@ -43,6 +55,7 @@ const DEFAULT_OPTIONS: CollectPageFactsOptions = {
   maxCustomProperties: 200,
   maxElements: 1500,
   maxAuthoredDeclarations: 1000,
+  maxSvgPresentationColors: 64,
 };
 
 type RuleWalkBudgets = Pick<CollectPageFactsOptions, 'maxRules' | 'maxAuthoredDeclarations'>;
@@ -77,16 +90,18 @@ export function collectPageFacts(
     0,
     resolved.maxAuthoredDeclarations - authoredRules.length,
   );
-  const { domElementCount, shadowRootCount, inlineStyleColors } = walkDom(
+  const { domElementCount, shadowRootCount, inlineStyleColors, svgPresentationColors } = walkDom(
     doc,
     resolved.maxElements,
     remainingAuthoredBudget,
+    resolved.maxSvgPresentationColors,
   );
 
   return {
     customProperties,
     authoredRules,
     inlineStyleColors,
+    svgPresentationColors,
     domElementCount,
     shadowRootCount,
     stylesheetCount,
@@ -359,14 +374,18 @@ function walkDom(
   doc: Document,
   maxElements: number,
   maxAuthoredDeclarations: number,
+  maxSvgPresentationColors: number,
 ): {
   domElementCount: number;
   shadowRootCount: number;
   inlineStyleColors: AuthoredColorDeclaration[];
+  svgPresentationColors: SvgPresentationColor[];
 } {
   let domElementCount = 0;
   let shadowRootCount = 0;
   const inlineStyleColors: AuthoredColorDeclaration[] = [];
+  const svgPresentationColors: SvgPresentationColor[] = [];
+  const seenSvgPresentationColors = new Set<string>();
   const walker = doc.createTreeWalker(doc.documentElement, NodeFilter.SHOW_ELEMENT);
   while (walker.nextNode() && domElementCount < maxElements) {
     const element = walker.currentNode;
@@ -374,8 +393,49 @@ function walkDom(
     domElementCount += 1;
     if (element.shadowRoot) shadowRootCount += 1;
     collectInlineStyleColors(element, inlineStyleColors, maxAuthoredDeclarations);
+    collectSvgPresentationColors(
+      element,
+      seenSvgPresentationColors,
+      svgPresentationColors,
+      maxSvgPresentationColors,
+    );
   }
-  return { domElementCount, shadowRootCount, inlineStyleColors };
+  svgPresentationColors.sort((a, b) =>
+    compareStrings(`${a.attribute} ${a.value}`, `${b.attribute} ${b.value}`),
+  );
+  return { domElementCount, shadowRootCount, inlineStyleColors, svgPresentationColors };
+}
+
+const SVG_PRESENTATION_ATTRIBUTES = ['fill', 'stroke'] as const;
+
+// `none`/`currentColor` are not colors to remap; `url(...)` references a
+// paint server (gradient/pattern), not an inline literal.
+function isSkippedSvgPresentationValue(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return normalized === 'none' || normalized === 'currentcolor' || normalized.startsWith('url(');
+}
+
+function collectSvgPresentationColors(
+  element: Element,
+  seen: Set<string>,
+  target: SvgPresentationColor[],
+  maxSvgPresentationColors: number,
+): void {
+  if (target.length >= maxSvgPresentationColors) return;
+  if (!element.closest('svg')) return;
+  for (const attribute of SVG_PRESENTATION_ATTRIBUTES) {
+    if (target.length >= maxSvgPresentationColors) return;
+    const rawValue = element.getAttribute(attribute);
+    if (rawValue === null) continue;
+    const value = rawValue.trim();
+    if (value === '' || isSkippedSvgPresentationValue(value)) continue;
+    const key = `${attribute} ${value}`;
+    if (seen.has(key)) continue;
+    const color = parseCssColor(value);
+    if (!color) continue;
+    seen.add(key);
+    target.push({ attribute, value, color });
+  }
 }
 
 function collectInlineStyleColors(

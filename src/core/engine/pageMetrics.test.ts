@@ -6,6 +6,7 @@ const base: PageFacts = {
   customProperties: [],
   authoredRules: [],
   inlineStyleColors: [],
+  svgPresentationColors: [],
   domElementCount: 100,
   shadowRootCount: 2,
   stylesheetCount: 4,
