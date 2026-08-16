@@ -10,7 +10,7 @@ const XML_DOCTYPE_PATTERN = /^<!DOCTYPE[^>]*>/;
 const XML_PREAMBLE_PATTERNS = [XML_PROLOG_PATTERN, XML_COMMENT_PATTERN, XML_DOCTYPE_PATTERN];
 const XML_ROOT_PATTERN = /^<([A-Za-z][\w-]*)/;
 const ANSI_COLOR_PATTERN = /Ansi\s+\d+\s+Color/;
-const ALACRITTY_SECTION_PATTERN = /^\[colors\.(?:primary|normal)\]/m;
+const ALACRITTY_SECTION_PATTERN = /^\[colors\.(?:primary|normal)]/m;
 const GHOSTTY_KEY_PATTERN = /^(?:background|foreground|palette)\s*=/m;
 const KITTY_KEY_PATTERN = /^(?:background|foreground|color\d{1,2})\s+/m;
 
