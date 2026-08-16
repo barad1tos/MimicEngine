@@ -6,7 +6,7 @@ import { decideStrategies } from '../engine/decisionTable';
 import { collectPageFacts } from '../engine/pageFacts';
 import { deriveMetrics } from '../engine/pageMetrics';
 import { createDefaultSiteSettings, type SiteSettings } from '../storage/settingsStore';
-import { builtInThemes } from '../themes';
+import { builtInThemes, type PaletteTheme } from '../themes';
 import {
   injectStylesheet,
   removeStylesheet,
@@ -105,7 +105,12 @@ describe('withStylesheetDisabled', () => {
 });
 
 describe('apply(apply(page)) idempotency invariant', () => {
-  it('produces byte-identical CSS and equal metrics on re-apply', () => {
+  // Shared M4 fixture: the calm-variables-rich custom properties from the
+  // original fixture, plus an inline SVG carrying fill/stroke presentation
+  // attributes and an element with a style="" attribute — the surface
+  // deepRemap (and authoredRemap's inlineStyleColors reads) walk that the
+  // pre-M4 fixture never exercised.
+  function renderFixturePage(): void {
     document.head.innerHTML = `
       <style>
         :root {
@@ -122,28 +127,58 @@ describe('apply(apply(page)) idempotency invariant', () => {
         a { color: var(--brand-link); }
       </style>
     `;
-    document.body.innerHTML = '<div><p>hello</p><a href="#">link</a></div>';
+    document.body.innerHTML = `
+      <div>
+        <p>hello</p>
+        <a href="#">link</a>
+        <span style="color: #585b70;">inline-styled</span>
+        <svg viewBox="0 0 10 10">
+          <circle cx="5" cy="5" r="4" fill="#3a3a44" stroke="#101014" />
+        </svg>
+      </div>
+    `;
+  }
 
+  // collectPageFacts must exclude our own injected <style id=STYLE_ELEMENT_ID>
+  // (Finding 1's fix) — otherwise the second pass would see one more DOM
+  // element than the first and domElementCount would drift.
+  function applyOnce(
+    theme: PaletteTheme,
+    siteSettings: SiteSettings,
+  ): { css: string; metrics: ReturnType<typeof deriveMetrics> } {
+    const facts = collectPageFacts(document);
+    const metrics = deriveMetrics(facts, { mutationRate: 0 });
+    const plan = decideStrategies(metrics, siteSettings.strategy);
+    const { css } = composeStylesheet(theme, siteSettings, facts, plan);
+    injectStylesheet(css);
+    return { css, metrics };
+  }
+
+  it('produces byte-identical CSS and equal metrics on re-apply — auto plan', () => {
+    renderFixturePage();
     const theme = builtInThemes[0];
     const siteSettings: SiteSettings = {
       ...createDefaultSiteSettings(theme.id),
       strategy: 'auto',
     };
 
-    function applyOnce(): { css: string; metrics: ReturnType<typeof deriveMetrics> } {
-      // collectPageFacts must exclude our own injected <style id=STYLE_ELEMENT_ID>
-      // (Finding 1's fix) — otherwise the second pass would see one more DOM
-      // element than the first and domElementCount would drift.
-      const facts = collectPageFacts(document);
-      const metrics = deriveMetrics(facts, { mutationRate: 0 });
-      const plan = decideStrategies(metrics, siteSettings.strategy);
-      const { css } = composeStylesheet(theme, siteSettings, facts, plan);
-      injectStylesheet(css);
-      return { css, metrics };
-    }
+    const first = applyOnce(theme, siteSettings);
+    const second = applyOnce(theme, siteSettings);
 
-    const first = applyOnce();
-    const second = applyOnce();
+    expect(second.css).toBe(first.css);
+    expect(second.metrics).toEqual(first.metrics);
+  });
+
+  it('produces byte-identical CSS and equal metrics on re-apply — manual deepRemap plan composed over the auto row', () => {
+    renderFixturePage();
+    const theme = builtInThemes[0];
+    const siteSettings: SiteSettings = {
+      ...createDefaultSiteSettings(theme.id),
+      strategy: 'deepRemap',
+    };
+
+    const first = applyOnce(theme, siteSettings);
+    const second = applyOnce(theme, siteSettings);
 
     expect(second.css).toBe(first.css);
     expect(second.metrics).toEqual(first.metrics);
