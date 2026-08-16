@@ -5,13 +5,17 @@
 // falls through to the next candidate, and an exhausted list leaves the slot
 // unset for later derivation — this adapter only maps, it never derives.
 
-import { parseCssColor, toHex, type RgbaColor } from '../../../color/parseColor';
+import { parseCssColor, type RgbaColor } from '../../../color/parseColor';
 import { THEME_TOKEN_NAMES, type ThemeTokenName, type ThemeTokens } from '../../themeTypes';
 import type { ImportError, ThemeSlots } from '../importTypes';
 import { stripJsonc } from '../jsonc';
-
-type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
-type JsonObject = { [key: string]: JsonValue };
+import {
+  isJsonObject,
+  parseError,
+  resolveOpaqueHex,
+  type JsonObject,
+  type JsonValue,
+} from '../resolveColor';
 
 // Real VS Code theme JSON files rarely carry their own "name" — the label
 // users see comes from the extension's package.json `contributes.themes`
@@ -19,39 +23,6 @@ type JsonObject = { [key: string]: JsonValue };
 // top-level "name" key at all). Default like the terminal-format adapters
 // do for sources that never carry a name of their own.
 const DEFAULT_NAME = 'VS Code theme';
-
-function parseError(message: string): ImportError {
-  return { stage: 'parse', message };
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Standard "over" alpha compositing of a translucent foreground onto an opaque canvas. */
-function compositeOverCanvas(foreground: RgbaColor, canvas: RgbaColor): RgbaColor {
-  return {
-    r: foreground.r * foreground.a + canvas.r * (1 - foreground.a),
-    g: foreground.g * foreground.a + canvas.g * (1 - foreground.a),
-    b: foreground.b * foreground.a + canvas.b * (1 - foreground.a),
-    a: 1,
-  };
-}
-
-/**
- * Turns a raw color literal into an opaque hex slot value. Fully transparent
- * yields nothing (absent). A partial-alpha value (VS Code's common
- * `#RRGGBBAA` selections) composites over `canvasRgba` when one is already
- * known; without a canvas to composite against, it's also absent rather than
- * guessed.
- */
-function resolveOpaqueHex(rawColor: string, canvasRgba: RgbaColor | undefined): string | undefined {
-  const rgba = parseCssColor(rawColor);
-  if (!rgba || rgba.a === 0) return undefined;
-  if (rgba.a === 1) return toHex(rgba);
-  if (!canvasRgba) return undefined;
-  return toHex(compositeOverCanvas(rgba, canvasRgba));
-}
 
 function resolveSlotColor(
   keys: readonly string[],
