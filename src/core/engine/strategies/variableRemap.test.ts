@@ -107,6 +107,16 @@ describe('assignTokens', () => {
     expect(assignments.has('--sidebar-border')).toBe(false);
   });
 
+  it('never maps a translucent custom property, even with a name-table hit', () => {
+    // --scrim-bg would otherwise win the canvas slot via CANVAS_FAMILY_PATTERN
+    // ("bg"); a translucent scrim (alpha 0.5) must stay unmapped instead.
+    const properties = [colorProperty('--scrim-bg', { r: 16, g: 20, b: 24, a: 0.5 })];
+
+    const assignments = assignTokens(properties, 'dark');
+
+    expect(assignments.has('--scrim-bg')).toBe(false);
+  });
+
   it('orders the surface ladder by luminance ascending for dark mode', () => {
     const properties = [
       colorProperty('--bg-high', GRAY(149)), // relative luminance ~0.30
