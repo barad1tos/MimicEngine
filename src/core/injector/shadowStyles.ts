@@ -5,6 +5,30 @@ import { STYLE_ELEMENT_ID } from './styleElement';
 
 export const MAX_SHADOW_ROOTS = 32;
 
+// Cumulative record of every shadow root we've styled, kept across sync
+// calls so removeShadowStylesheets can reach a host that got detached
+// between a sync and the removal — the document walk collectOpenShadowRoots
+// runs can only see roots still attached under the document, so a detached
+// host is invisible to it and the walk alone would miss the root, leave our
+// style element behind, and resurrect it ungated on re-attach. WeakRef so a
+// host removed for good doesn't keep its ShadowRoot pinned in memory forever.
+const styledRoots = new Set<WeakRef<ShadowRoot>>();
+
+function isRootTracked(shadowRoot: ShadowRoot): boolean {
+  for (const ref of styledRoots) {
+    if (ref.deref() === shadowRoot) return true;
+  }
+  return false;
+}
+
+// Dedupes by identity (not Set membership, which WeakRef wrappers defeat)
+// so re-syncing the same roots on every debounced re-apply doesn't grow this
+// set without bound over a long-lived page.
+function trackStyledRoot(shadowRoot: ShadowRoot): void {
+  if (isRootTracked(shadowRoot)) return;
+  styledRoots.add(new WeakRef(shadowRoot));
+}
+
 // TreeWalker over a Document only ever visits light-DOM elements — shadow
 // trees are separate node trees the walker cannot enter, so "collect the
 // open shadow roots we can see" and "never descend into them" are the same
@@ -72,6 +96,7 @@ function createShadowStyleElement(ownerDocument: Document, css: string): HTMLSty
 // shadow trees would re-trigger itself on our own childList mutation.
 export function syncShadowStylesheets(css: string, roots: readonly ShadowRoot[]): void {
   for (const shadowRoot of roots) {
+    trackStyledRoot(shadowRoot);
     const existing = shadowRoot.getElementById(STYLE_ELEMENT_ID);
     if (existing instanceof HTMLStyleElement) {
       if (existing.textContent !== css) {
@@ -92,4 +117,15 @@ export function removeShadowStylesheets(root: Document): void {
   for (const shadowRoot of roots) {
     shadowRoot.getElementById(STYLE_ELEMENT_ID)?.remove();
   }
+
+  // Belt-and-braces: the document walk above only reaches roots still
+  // attached under `root`. A host detached since its last sync is invisible
+  // to that walk, so tracked roots are swept independently — this is the
+  // only path that reaches a styled-then-detached host. Also covers roots
+  // styled by a previous controller instance in the same document, since
+  // this tracking is module-level, not per-controller.
+  for (const ref of styledRoots) {
+    ref.deref()?.getElementById(STYLE_ELEMENT_ID)?.remove();
+  }
+  styledRoots.clear();
 }
