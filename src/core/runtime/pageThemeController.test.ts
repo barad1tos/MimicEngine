@@ -611,4 +611,42 @@ describe('createPageThemeController — orphan shadow self-heal', () => {
 
     controller.stop();
   });
+
+  it('sweeps an orphaned shadow style element on the first apply of a disabled site, then stops walking on later disabled applies', async () => {
+    const shadowRoot = attachOpenShadowHost();
+    // Same orphan scenario as the enabled/baseline test above, but this
+    // controller's site is disabled from the start. The disabled early
+    // return in apply() has its own shadow removal call
+    // (deactivateShadowStyles(), guarded by shadowStylesActive, which is
+    // always false for a fresh instance) — it must not skip the same
+    // orphan the enabled/non-deepRemap path above already self-heals.
+    const orphanStyle = document.createElement('style');
+    orphanStyle.id = STYLE_ELEMENT_ID;
+    shadowRoot.append(orphanStyle);
+
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), enabled: false } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
+    const removeSpy = vi.spyOn(shadowStylesModule, 'removeShadowStylesheets');
+    const controller = createPageThemeController();
+
+    await controller.start();
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+    expect(document.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    // Second disabled apply: firstApplyCompleted is now true, so it falls
+    // back to the cheap shadowStylesActive-guarded path instead of walking
+    // the shadow tree again.
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+  });
 });
