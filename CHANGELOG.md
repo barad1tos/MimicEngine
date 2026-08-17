@@ -29,7 +29,10 @@ Initial release.
   it composes on top of the automatic plan.
 - **Brand color preservation** — vivid accent colors (logos, brand buttons)
   are left untouched by default; toggle per site.
-- **Readability guard** — every remapped text color is checked for WCAG
-  contrast and repaired without shifting its hue.
+- **Readability guard** — text colors remapped from a page's own palette are
+  checked for WCAG contrast and repaired without shifting their hue; imported
+  themes are validated for readable text/background pairing at import time.
 - **Full reversibility** — disabling the extension restores the page exactly;
   live theme or setting changes apply to open tabs without reload.
+
+[0.1.0]: https://github.com/barad1tos/MimicEngine/releases/tag/v0.1.0
