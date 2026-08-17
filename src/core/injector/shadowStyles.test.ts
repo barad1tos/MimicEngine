@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { builtInThemes } from '../themes';
 import {
   MAX_SHADOW_ROOTS,
+  MAX_VISITED_ELEMENTS,
   buildShadowStylesheet,
   collectOpenShadowRoots,
   removeShadowStylesheets,
@@ -65,6 +66,22 @@ describe('collectOpenShadowRoots', () => {
     const roots = collectOpenShadowRoots(document);
 
     expect(roots).toHaveLength(0);
+  });
+
+  it('stops the walk after MAX_VISITED_ELEMENTS, regardless of unmet maxRoots', () => {
+    // Fill the document with more light-DOM elements than the visited-
+    // elements budget before the shadow host, so the host sits beyond the
+    // point where the walk gives up — proving the budget is a visit cap,
+    // not merely a collected-roots cap (maxRoots is POSITIVE_INFINITY here,
+    // so only the visited-elements budget can be stopping the walk).
+    for (let index = 0; index < MAX_VISITED_ELEMENTS; index += 1) {
+      document.body.append(document.createElement('div'));
+    }
+    const { shadowRoot } = attachOpenShadowHost();
+
+    const roots = collectOpenShadowRoots(document, Number.POSITIVE_INFINITY);
+
+    expect(roots).not.toContain(shadowRoot);
   });
 });
 
@@ -204,6 +221,31 @@ describe('removeShadowStylesheets', () => {
     for (let index = 0; index < 10; index += 1) {
       syncShadowStylesheets(css, [shadowRoot]);
     }
+
+    removeShadowStylesheets(document);
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+  });
+
+  it('removes a tracked root even when it sits beyond the visited-elements budget', () => {
+    // Track and style the root while it is trivially reachable...
+    const { shadowRoot } = attachOpenShadowHost();
+    syncShadowStylesheets(buildShadowStylesheet(theme), [shadowRoot]);
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeInstanceOf(HTMLStyleElement);
+
+    // ...then bury it behind more elements than the visited-elements budget,
+    // inserted before it in document order so the walk exhausts its budget
+    // before ever reaching the host.
+    const filler = document.createElement('div');
+    document.body.prepend(filler);
+    for (let index = 0; index < MAX_VISITED_ELEMENTS; index += 1) {
+      filler.append(document.createElement('div'));
+    }
+
+    // Falsifiability check: the document walk alone can no longer see this
+    // root (even with an unbounded roots cap), so the removal below can only
+    // be explained by the tracked-roots sweep, not collectOpenShadowRoots.
+    expect(collectOpenShadowRoots(document, Number.POSITIVE_INFINITY)).not.toContain(shadowRoot);
 
     removeShadowStylesheets(document);
 
