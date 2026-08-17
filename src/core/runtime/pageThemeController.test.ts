@@ -95,6 +95,14 @@ async function flushMicrotasks(): Promise<void> {
   }
 }
 
+// Shared by every describe block below that needs an open shadow root to
+// assert shadow-stylesheet lifecycle behavior against.
+function attachOpenShadowHost(): ShadowRoot {
+  const host = document.createElement('div');
+  document.body.append(host);
+  return host.attachShadow({ mode: 'open' });
+}
+
 beforeEach(() => {
   capturedObserverCallbacks.length = 0;
   observerStopSpy.mockClear();
@@ -247,11 +255,19 @@ describe('createPageThemeController — stop() invalidates in-flight apply()', (
     expect(document.documentElement.dataset.pmActive).toBeUndefined();
     expect(errorSpy).not.toHaveBeenCalled();
 
-    // start() only registers its settings-changed listener after its initial
-    // apply() settles (even an aborted one) — since that registration ran
-    // after the stop() above, it must be torn down again here, or it would
-    // keep firing apply() for every later test's emitChange call.
-    controller.stop();
+    // LISTENER-AFTER-STOP: start() only registers its settings-changed
+    // listener after its initial apply() settles — stop() ran while that
+    // apply() was still stalled, so start() must skip registration entirely
+    // once the stall resolves, rather than registering a listener on an
+    // already-stopped controller. A settings change here must therefore
+    // trigger nothing; this replaces the previous workaround of calling
+    // controller.stop() a second time just to silence the leaked listener
+    // for later tests.
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(injectSpy).not.toHaveBeenCalled();
+    expect(fakeBrowser.storage.session.set).not.toHaveBeenCalled();
   });
 });
 
@@ -428,12 +444,6 @@ describe('createPageThemeController — shadow stylesheet lifecycle', () => {
     fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
   }
 
-  function attachOpenShadowHost(): ShadowRoot {
-    const host = document.createElement('div');
-    document.body.append(host);
-    return host.attachShadow({ mode: 'open' });
-  }
-
   afterEach(() => {
     document.body.innerHTML = '';
   });
@@ -482,7 +492,7 @@ describe('createPageThemeController — shadow stylesheet lifecycle', () => {
     controller.stop();
   });
 
-  it('removes the shadow style element on stop() while deepRemap is active', async () => {
+  it('keeps the shadow style element on stop() while deepRemap is active', async () => {
     const shadowRoot = attachOpenShadowHost();
     seedSiteSettings();
     const controller = createPageThemeController();
@@ -491,7 +501,15 @@ describe('createPageThemeController — shadow stylesheet lifecycle', () => {
 
     controller.stop();
 
-    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+    // BFCACHE SYMMETRY RULING: stop() no longer removes shadow styles.
+    // stop() already left the document stylesheet and the data-pm-active
+    // gate in place — a bfcache-restored page shows a fully themed static
+    // page — so removing only the shadow styles here used to leave a
+    // themed-document/unthemed-shadow asymmetry instead. The orphan
+    // self-heal in apply() (pageThemeController.ts) is the safety net that
+    // cleans up any shadow styles a now-dead controller instance leaves
+    // behind, the next time a controller starts on this page.
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).not.toBeNull();
   });
 
   it('identity-skips the shadow stylesheet write when a later apply produces the same theme', async () => {
@@ -542,6 +560,54 @@ describe('createPageThemeController — shadow stylesheet lifecycle', () => {
     await flushMicrotasks();
 
     expect(syncSpy).toHaveBeenCalledTimes(2);
+
+    controller.stop();
+  });
+});
+
+describe('createPageThemeController — orphan shadow self-heal', () => {
+  const siteKey = normalizeHostname(window.location.hostname);
+
+  function seedBaselineSettings(): void {
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), strategy: 'baseline' } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
+  }
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('sweeps an orphaned shadow style element left by a dead controller instance on the first apply of a non-deepRemap plan, then stops walking on later applies', async () => {
+    const shadowRoot = attachOpenShadowHost();
+    // Simulate a style element a previous (now-dead) controller instance
+    // left behind in this shadow root: this fresh controller never synced
+    // it itself, so shadowStylesActive starts false and the cheap guarded
+    // removal path (deactivateShadowStyles) would otherwise never catch it.
+    const orphanStyle = document.createElement('style');
+    orphanStyle.id = STYLE_ELEMENT_ID;
+    shadowRoot.append(orphanStyle);
+
+    seedBaselineSettings();
+    const removeSpy = vi.spyOn(shadowStylesModule, 'removeShadowStylesheets');
+    const controller = createPageThemeController();
+
+    await controller.start();
+
+    expect(shadowRoot.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    // Second apply: firstApplyCompleted is now true, so it falls back to
+    // the cheap shadowStylesActive-guarded path (false, since this
+    // controller never synced shadow styles itself) instead of walking the
+    // shadow tree again.
+    expect(removeSpy).toHaveBeenCalledTimes(1);
 
     controller.stop();
   });

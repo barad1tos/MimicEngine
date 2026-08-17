@@ -64,8 +64,23 @@ export function createPageThemeController(): PageThemeController {
   // Tracks whether the previous apply() left our style element in every open
   // shadow root, so a plan without deepRemap only walks the shadow tree to
   // remove it when there's actually something to remove — an unconditional
-  // walk on every apply would tax every page, deepRemap or not.
+  // walk on every apply would tax every page, deepRemap or not. Always false
+  // for a fresh controller instance, even when a previous instance (e.g. a
+  // re-injection into a still-live page) left shadow styles behind — see
+  // firstApplyCompleted below for how that orphan gets cleaned up anyway.
   let shadowStylesActive = false;
+  // Flips true once this controller instance's first apply() completes past
+  // the generation guard (whichever branch it takes). Lets that one apply —
+  // and only that one — run an unconditional shadow-tree sweep when its plan
+  // lacks deepRemap, self-healing any orphaned shadow styles a previous
+  // controller instance left behind; every apply after that falls back to
+  // the cheap shadowStylesActive-guarded path.
+  let firstApplyCompleted = false;
+  // Set by stop(); checked by start() after its initial apply() settles, so
+  // a stop() that lands while that apply() is still stalled (e.g. on the
+  // settings read) stops start() from registering onSettingsChanged
+  // afterward and leaking a listener on an already-stopped controller.
+  let stopped = false;
 
   const stopDomObserver = (): void => {
     domObserver?.stop();
@@ -164,9 +179,23 @@ export function createPageThemeController(): PageThemeController {
     if (planStrategies(plan).includes('deepRemap')) {
       syncShadowStylesheets(buildShadowStylesheet(theme), collectOpenShadowRoots(document));
       shadowStylesActive = true;
-    } else {
+      // No extra sweep needed here even on the first apply: the sync above
+      // already overwrites (by element id) any shadow style content a
+      // previous controller instance left behind in these roots.
+    } else if (firstApplyCompleted) {
       deactivateShadowStyles();
+    } else {
+      // ORPHAN SELF-HEAL: this is this controller instance's first
+      // completed apply and its plan lacks deepRemap. shadowStylesActive
+      // starts false for a fresh instance, so the guarded
+      // deactivateShadowStyles() above would no-op even though a previous
+      // controller instance (e.g. a fresh re-injection into a still-live
+      // page) may have left its shadow style elements behind. Run one
+      // unconditional sweep here instead; every later apply reverts to the
+      // cheap guarded path via the firstApplyCompleted check above.
+      removeShadowStylesheets(document);
     }
+    firstApplyCompleted = true;
 
     if (needsLiveObserver(siteSettings, plan)) {
       ensureDomObserver();
@@ -206,6 +235,13 @@ export function createPageThemeController(): PageThemeController {
       await apply().catch((error: unknown) => {
         console.error('[Palette Mimicry] initial apply failed', error);
       });
+      // LISTENER-AFTER-STOP: stop() may have run while the initial apply()
+      // above was still in flight (e.g. stalled on the settings read) — its
+      // generation guard already aborts that apply()'s own side effects, but
+      // without this check start() would still register the
+      // settings-changed listener afterward, leaking it on an
+      // already-stopped controller.
+      if (stopped) return;
       stopSettingsListener = onSettingsChanged(() => {
         capTripped = false;
         mutationWindowStart = 0;
@@ -223,10 +259,21 @@ export function createPageThemeController(): PageThemeController {
       // re-check then fails and it aborts before re-injecting the
       // stylesheet, re-setting data-pm-active, or re-syncing shadow styles.
       applyGeneration += 1;
+      // Set before start() can observe it — see the LISTENER-AFTER-STOP note
+      // on start() above.
+      stopped = true;
       stopSettingsListener?.();
       stopSettingsListener = null;
       stopDomObserver();
-      deactivateShadowStyles();
+      // BFCACHE SYMMETRY RULING: stop() deliberately leaves shadow styles in
+      // place, same as it already leaves the document stylesheet and the
+      // data-pm-active gate untouched. A bfcache-restored page shows a fully
+      // themed static page; removing only the shadow styles here used to
+      // leave it themed-document/unthemed-shadow instead. Teardown stays
+      // complete on the other two removal paths inside apply() (the disable
+      // path and the plan-switch-away-from-deepRemap path); any shadow
+      // styles a now-dead controller instance leaves behind are the orphan
+      // self-heal's job (see firstApplyCompleted above), not stop()'s.
     },
   };
 }
