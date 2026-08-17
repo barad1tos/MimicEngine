@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 // src/core/injector/shadowStyles.test.ts
+import { Window } from 'happy-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { builtInThemes } from '../themes';
 import {
@@ -94,12 +95,36 @@ describe('syncShadowStylesheets', () => {
   });
 
   it("creates the style element from the root's own document, not the module-global document", () => {
-    const { shadowRoot } = attachOpenShadowHost();
+    // A single-document happy-dom test file makes an ownerDocument assertion
+    // non-falsifiable twice over: shadowRoot.ownerDocument already equals the
+    // shared global `document` before any code runs, AND `shadowRoot.append`
+    // auto-adopts its argument into the target tree's document per spec (the
+    // WHATWG "pre-insert" algorithm adopts a node whose node document differs
+    // from the parent's) — so even a genuinely second document can't catch a
+    // hardcoded-global-`document` regression by inspecting ownerDocument
+    // *after* syncShadowStylesheets runs, since append silently corrects it
+    // either way. Spying on createElement at the call site observes which
+    // document's method actually ran, which auto-adopt cannot mask.
+    // happy-dom ships its own Document/ShadowRoot classes rather than the
+    // lib.dom interfaces this module is typed against, so bridging them at
+    // the call boundary needs the same `as unknown as` idiom used elsewhere
+    // in this suite for cross-implementation DOM fakes.
+    const second = new Window();
+    const secondDocument = second.document as unknown as Document;
+    const host = secondDocument.createElement('div');
+    secondDocument.body.append(host);
+    const shadowRoot = host.attachShadow({ mode: 'open' });
+
+    const secondCreateElement = vi.spyOn(secondDocument, 'createElement');
+    const globalCreateElement = vi.spyOn(document, 'createElement');
 
     syncShadowStylesheets(buildShadowStylesheet(theme), [shadowRoot]);
 
-    const element = shadowRoot.getElementById(STYLE_ELEMENT_ID);
-    expect(element?.ownerDocument).toBe(shadowRoot.ownerDocument);
+    expect(secondCreateElement).toHaveBeenCalledWith('style');
+    expect(globalCreateElement).not.toHaveBeenCalled();
+
+    secondCreateElement.mockRestore();
+    globalCreateElement.mockRestore();
   });
 
   it('identity-skips the write when css is unchanged across two syncs', () => {
