@@ -71,10 +71,12 @@ export function createPageThemeController(): PageThemeController {
   let shadowStylesActive = false;
   // Flips true once this controller instance's first apply() completes past
   // the generation guard (whichever branch it takes). Lets that one apply —
-  // and only that one — run an unconditional shadow-tree sweep when its plan
-  // lacks deepRemap, self-healing any orphaned shadow styles a previous
-  // controller instance left behind; every apply after that falls back to
-  // the cheap shadowStylesActive-guarded path.
+  // and only that one — run an unconditional shadow-tree sweep whenever it
+  // removes shadow styles without also syncing new ones (disabled site or a
+  // plan without deepRemap), self-healing any orphaned shadow styles a
+  // previous controller instance left behind; every apply after that falls
+  // back to the cheap shadowStylesActive-guarded path. See
+  // deactivateOrSweepShadowStyles below.
   let firstApplyCompleted = false;
   // Set by stop(); checked by start() after its initial apply() settles, so
   // a stop() that lands while that apply() is still stalled (e.g. on the
@@ -91,6 +93,23 @@ export function createPageThemeController(): PageThemeController {
     if (!shadowStylesActive) return;
     removeShadowStylesheets(document);
     shadowStylesActive = false;
+  };
+
+  // ORPHAN SELF-HEAL, shared by every apply() branch that removes shadow
+  // styles without also syncing new ones (the disabled-site path and the
+  // plan-without-deepRemap path): the cheap shadowStylesActive-guarded path
+  // once this instance's first apply has completed, or one unconditional
+  // sweep on that first apply itself. shadowStylesActive always starts false
+  // for a fresh controller instance — even when a previous instance (e.g. a
+  // re-injection into a still-live page) left shadow styles behind, disabled
+  // site or not — so the guarded path alone would never catch that orphan.
+  const deactivateOrSweepShadowStyles = (): void => {
+    if (firstApplyCompleted) {
+      deactivateShadowStyles();
+    } else {
+      removeShadowStylesheets(document);
+    }
+    firstApplyCompleted = true;
   };
 
   // Rolling mutation-rate window: a simple counter+windowStart pair rather than
@@ -164,7 +183,7 @@ export function createPageThemeController(): PageThemeController {
 
     if (!siteSettings.enabled) {
       removeStylesheet();
-      deactivateShadowStyles();
+      deactivateOrSweepShadowStyles();
       stopDomObserver();
       return;
     }
@@ -179,23 +198,13 @@ export function createPageThemeController(): PageThemeController {
     if (planStrategies(plan).includes('deepRemap')) {
       syncShadowStylesheets(buildShadowStylesheet(theme), collectOpenShadowRoots(document));
       shadowStylesActive = true;
+      firstApplyCompleted = true;
       // No extra sweep needed here even on the first apply: the sync above
       // already overwrites (by element id) any shadow style content a
       // previous controller instance left behind in these roots.
-    } else if (firstApplyCompleted) {
-      deactivateShadowStyles();
     } else {
-      // ORPHAN SELF-HEAL: this is this controller instance's first
-      // completed apply and its plan lacks deepRemap. shadowStylesActive
-      // starts false for a fresh instance, so the guarded
-      // deactivateShadowStyles() above would no-op even though a previous
-      // controller instance (e.g. a fresh re-injection into a still-live
-      // page) may have left its shadow style elements behind. Run one
-      // unconditional sweep here instead; every later apply reverts to the
-      // cheap guarded path via the firstApplyCompleted check above.
-      removeShadowStylesheets(document);
+      deactivateOrSweepShadowStyles();
     }
-    firstApplyCompleted = true;
 
     if (needsLiveObserver(siteSettings, plan)) {
       ensureDomObserver();
