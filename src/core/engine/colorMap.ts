@@ -46,7 +46,7 @@ const ACCENT_TOKEN_ORDER: readonly ThemeTokenName[] = [
   'danger',
 ];
 const ACCENT_CHROMA_THRESHOLD = 0.09;
-const BRAND_CHROMA_THRESHOLD = 0.14;
+export const BRAND_CHROMA_THRESHOLD = 0.14;
 
 function comparePaletteEntries(a: SitePaletteEntry, b: SitePaletteEntry): number {
   if (b.weight !== a.weight) return b.weight - a.weight;

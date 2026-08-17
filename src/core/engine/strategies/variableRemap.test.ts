@@ -53,11 +53,14 @@ function anyPlan(): StrategyPlan {
 
 const GRAY = (level: number): RgbaColor => ({ r: level, g: level, b: level, a: 1 });
 
+// Vivid enough to clear BRAND_CHROMA_THRESHOLD (0.14) in colorMap.ts.
+const VIVID_BRAND: RgbaColor = { r: 255, g: 68, b: 0, a: 1 };
+
 describe('assignTokens', () => {
   it('maps a name-table hit before considering usage', () => {
     const properties = [colorProperty('--sidebar-border', GRAY(100))];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.get('--sidebar-border')).toBe('border');
   });
@@ -67,7 +70,7 @@ describe('assignTokens', () => {
       colorProperty('--x1', GRAY(10), { background: 3, text: 0, border: 0, other: 0 }),
     ];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.get('--x1')).toBe('canvas');
   });
@@ -77,7 +80,7 @@ describe('assignTokens', () => {
       colorProperty('--x2', GRAY(20), { background: 2, text: 2, border: 0, other: 0 }),
     ];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.has('--x2')).toBe(false);
   });
@@ -87,7 +90,7 @@ describe('assignTokens', () => {
       colorProperty('--x3', GRAY(20), { background: 1, text: 0, border: 0, other: 5 }),
     ];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.has('--x3')).toBe(false);
   });
@@ -95,7 +98,7 @@ describe('assignTokens', () => {
   it('skips properties with no recorded usage at all', () => {
     const properties = [colorProperty('--x4', GRAY(20))];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.has('--x4')).toBe(false);
   });
@@ -103,7 +106,7 @@ describe('assignTokens', () => {
   it('never maps a property with a null color', () => {
     const properties = [colorProperty('--sidebar-border', null)];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.has('--sidebar-border')).toBe(false);
   });
@@ -113,7 +116,7 @@ describe('assignTokens', () => {
     // ("bg"); a translucent scrim (alpha 0.5) must stay unmapped instead.
     const properties = [colorProperty('--scrim-bg', { r: 16, g: 20, b: 24, a: 0.5 })];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.has('--scrim-bg')).toBe(false);
   });
@@ -125,7 +128,7 @@ describe('assignTokens', () => {
       colorProperty('--bg-mid', GRAY(89)), // relative luminance ~0.10
     ];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.get('--bg-low')).toBe('canvas');
     expect(assignments.get('--bg-mid')).toBe('surface1');
@@ -139,7 +142,7 @@ describe('assignTokens', () => {
       colorProperty('--bg-mid', GRAY(89)),
     ];
 
-    const assignments = assignTokens(properties, 'light');
+    const assignments = assignTokens(properties, 'light', false);
 
     expect(assignments.get('--bg-high')).toBe('canvas');
     expect(assignments.get('--bg-mid')).toBe('surface1');
@@ -152,7 +155,7 @@ describe('assignTokens', () => {
       colorProperty('--bg-alpha', GRAY(50)),
     ];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.get('--bg-alpha')).toBe('canvas');
     expect(assignments.get('--bg-zebra')).toBe('surface1');
@@ -163,7 +166,7 @@ describe('assignTokens', () => {
       colorProperty(`--bg-${index.toString()}`, GRAY(index * 40 + 10)),
     );
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.get('--bg-3')).toBe('surface3');
     expect(assignments.get('--bg-4')).toBe('surface3');
@@ -180,7 +183,7 @@ describe('assignTokens', () => {
       colorProperty('--page-bg', GRAY(120)),
     ];
 
-    const assignments = assignTokens(properties, 'light');
+    const assignments = assignTokens(properties, 'light', false);
 
     expect(assignments.get('--page-bg')).toBe('canvas');
     expect(assignments.get('--card-panel')).toBe('surface1');
@@ -200,11 +203,36 @@ describe('assignTokens', () => {
       colorProperty('--panel-bg', GRAY(40)), // darkest — old rule's winner
     ];
 
-    const assignments = assignTokens(properties, 'dark');
+    const assignments = assignTokens(properties, 'dark', false);
 
     expect(assignments.get('--page-bg')).toBe('canvas');
     expect(assignments.get('--panel-bg')).toBe('surface1');
     expect(assignments.get('--card-bg')).toBe('surface2');
+  });
+
+  it('excludes a vivid custom property from token assignment entirely when preserveBrandColors is on', () => {
+    // Mirrors mapAccent's exemption (colorMap.ts): the brand stays authored,
+    // not merely re-pointed at the accent token.
+    const properties = [colorProperty('--brand', VIVID_BRAND)];
+
+    const assignments = assignTokens(properties, 'dark', true);
+
+    expect(assignments.has('--brand')).toBe(false);
+  });
+
+  it('assigns the same vivid custom property normally when preserveBrandColors is off', () => {
+    const properties = [colorProperty('--brand', VIVID_BRAND)];
+
+    const assignments = assignTokens(properties, 'dark', false);
+
+    expect(assignments.get('--brand')).toBe('accent');
+  });
+
+  it('assigns a muted custom property regardless of preserveBrandColors', () => {
+    const properties = [colorProperty('--sidebar-border', GRAY(100))];
+
+    expect(assignTokens(properties, 'dark', true).get('--sidebar-border')).toBe('border');
+    expect(assignTokens(properties, 'dark', false).get('--sidebar-border')).toBe('border');
   });
 });
 
@@ -256,5 +284,30 @@ describe('variableRemap strategy', () => {
 
     expect(declarationLines.length).toBeGreaterThan(0);
     expect(declarationLines.every((line) => line.trimEnd().endsWith('!important;'))).toBe(true);
+  });
+
+  it('honors preserveBrandColors from site settings, leaving a vivid property unmapped', () => {
+    // anySiteSettings() sets preserveBrandColors: true; a single vivid
+    // property with nothing else to classify must produce no CSS at all.
+    const facts: PageFacts = {
+      ...emptyFacts(),
+      customProperties: [colorProperty('--brand', VIVID_BRAND)],
+    };
+
+    const { css } = variableRemap.produce(builtInThemes[0], anySiteSettings(), facts, anyPlan());
+
+    expect(css).toBe('');
+  });
+
+  it('remaps the same vivid property when preserveBrandColors is off', () => {
+    const facts: PageFacts = {
+      ...emptyFacts(),
+      customProperties: [colorProperty('--brand', VIVID_BRAND)],
+    };
+    const settings: SiteSettings = { ...anySiteSettings(), preserveBrandColors: false };
+
+    const { css } = variableRemap.produce(builtInThemes[0], settings, facts, anyPlan());
+
+    expect(css).toContain('--brand: var(--pm-accent) !important;');
   });
 });

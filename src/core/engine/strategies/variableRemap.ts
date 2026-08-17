@@ -1,6 +1,8 @@
 import { relativeLuminance } from '../../color/contrast';
+import { rgbaToOklch } from '../../color/oklch';
 import { isOpaque, type RgbaColor } from '../../color/parseColor';
 import type { ThemeTokenName } from '../../themes';
+import { BRAND_CHROMA_THRESHOLD } from '../colorMap';
 import type { CustomPropertyFact } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
@@ -59,8 +61,12 @@ const SURFACE_LADDER: readonly ThemeTokenName[] = ['canvas', 'surface1', 'surfac
 export const variableRemap: PaletteEngine = {
   id: 'variableRemap',
   label: 'Site variables',
-  produce(theme, _siteSettings, facts) {
-    const assignments = assignTokens(facts.customProperties, theme.mode);
+  produce(theme, siteSettings, facts) {
+    const assignments = assignTokens(
+      facts.customProperties,
+      theme.mode,
+      siteSettings.preserveBrandColors,
+    );
     return { css: assignments.size === 0 ? '' : emitCss(assignments) };
   },
 };
@@ -68,11 +74,14 @@ export const variableRemap: PaletteEngine = {
 export function assignTokens(
   properties: CustomPropertyFact[],
   mode: 'dark' | 'light',
+  preserveBrandColors: boolean,
 ): Map<string, ThemeTokenName> {
   const assignments = new Map<string, ThemeTokenName>();
   const surfaceGroup: SurfaceCandidate[] = [];
 
   for (const property of properties.filter(hasOpaqueColor)) {
+    if (isBrandProtected(property, preserveBrandColors)) continue;
+
     const nameMatch = matchNameTableEntry(property.name);
     const classification = nameMatch?.token ?? classifyUsage(property.usage);
     if (classification === 'surface-group') {
@@ -94,6 +103,14 @@ export function assignTokens(
 // opaque surface color once reduced through toHex downstream.
 function hasOpaqueColor(property: CustomPropertyFact): property is ColoredProperty {
   return property.color !== null && isOpaque(property.color);
+}
+
+// Mirrors mapAccent's exemption (colorMap.ts): when the site owner asked to
+// preserve brand colors, a vivid (accent-family) custom property is excluded
+// from token assignment entirely — its authored value stays, brand intact.
+// Muted surfaces/text-ish properties are unaffected either way.
+function isBrandProtected(property: ColoredProperty, preserveBrandColors: boolean): boolean {
+  return preserveBrandColors && rgbaToOklch(property.color).c > BRAND_CHROMA_THRESHOLD;
 }
 
 function matchNameTableEntry(name: string): NameTableEntry | null {
