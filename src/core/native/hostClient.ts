@@ -86,11 +86,11 @@ function openConnection(port: Browser.runtime.Port) {
     pending.clear();
   };
 
-  port.onDisconnect.addListener(() => {
+  const handleDisconnect = (): void => {
     if (disconnected) return;
     disconnected = true;
     failAllPending(transportFailure('native host disconnected'));
-  });
+  };
 
   // Every inbound message passes isHostResponse before it can resolve
   // anything — a frame that doesn't match one of the host's four known
@@ -98,7 +98,7 @@ function openConnection(port: Browser.runtime.Port) {
   // no matching pending entry (unknown or already-settled id) is dropped
   // silently: past its own timeout, or a duplicate, either way there is
   // nothing left to route it to.
-  port.onMessage.addListener((message: unknown) => {
+  const handleMessage = (message: unknown): void => {
     if (!isHostResponse(message)) {
       console.warn('[Palette Mimicry] ignoring malformed native host message', message);
       return;
@@ -108,7 +108,10 @@ function openConnection(port: Browser.runtime.Port) {
     clearTimeout(entry.timeoutHandle);
     pending.delete(message.id);
     entry.resolve(message);
-  });
+  };
+
+  port.onDisconnect.addListener(handleDisconnect);
+  port.onMessage.addListener(handleMessage);
 
   const send = (body: HostRequestBody, timeoutMs: number): Promise<RequestOutcome> => {
     if (disconnected) {
@@ -122,8 +125,21 @@ function openConnection(port: Browser.runtime.Port) {
         resolve(timeoutFailure(body.op, timeoutMs));
       }, timeoutMs);
       pending.set(id, { resolve, timeoutHandle });
+
       const request: HostRequest = { ...body, id };
-      port.postMessage(request);
+      // postMessage throws synchronously on an already-dead port (most
+      // commonly: the native host isn't installed at all) rather than
+      // routing through onDisconnect — without this guard that throw would
+      // escape this Promise executor as a rejection, breaking the
+      // errors-as-values contract on the very first request. Mirrors the
+      // connectNative guard in connectHost() below.
+      try {
+        port.postMessage(request);
+      } catch (error) {
+        clearTimeout(timeoutHandle);
+        pending.delete(id);
+        resolve(transportFailure(describeError(error)));
+      }
     });
   };
 
@@ -136,6 +152,8 @@ function openConnection(port: Browser.runtime.Port) {
       disconnected = true;
       failAllPending(transportFailure('native host connection closed'));
     }
+    port.onDisconnect.removeListener(handleDisconnect);
+    port.onMessage.removeListener(handleMessage);
     port.disconnect();
   };
 
