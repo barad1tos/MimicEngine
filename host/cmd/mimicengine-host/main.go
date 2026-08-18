@@ -146,7 +146,8 @@ func runInstall(args []string, stdin io.Reader, stdout io.Writer, home string) e
 	browsers := fs.String("browsers", "", "comma-separated browser ids to install (default: every detected browser)")
 	dev := fs.Bool("dev", false, "tag the manifest description as a dev build")
 	binary := fs.String("binary", "", "override the manifest's binary path (default: this executable's own path; a relative value is resolved to absolute)")
-	extensionID := fs.String("extension-id", "", "Chromium extension id (required for any Chromium-family browser)")
+	extensionID := fs.String("extension-id", setup.DefaultExtensionID,
+		"Chromium extension id (default: the production MimicEngine extension's stable id, derived from wxt.config.ts's manifest.key)")
 	geckoID := fs.String("gecko-id", "", "Firefox extension id (default: "+setup.DefaultGeckoID+")")
 	if err := fs.Parse(args); err != nil {
 		return err

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/barad1tos/MimicEngine/host/internal/setup"
 )
 
 // chromeManifestDir returns the directory runInstall writes Chrome's
@@ -199,14 +202,70 @@ func TestRunVersion_WritesVersionString(t *testing.T) {
 	}
 }
 
-func TestRunInstall_MissingExtensionIDFailsAfterForcedScope(t *testing.T) {
+// TestRunInstall_NoExtensionIDFlagUsesDefaultProductionID pins task report
+// finding W2's fix: bare `install` (no --extension-id) used to fail for
+// every Chromium-family browser, even though that is exactly the command
+// the options page and Homebrew caveat document. --extension-id now
+// defaults to the production extension's stable id (setup.DefaultExtensionID,
+// derived from wxt.config.ts's manifest.key), so bare install must succeed
+// and the written manifest must allow-list that id.
+func TestRunInstall_NoExtensionIDFlagUsesDefaultProductionID(t *testing.T) {
 	home := t.TempDir()
 	var out bytes.Buffer
 
-	err := runInstall([]string{"--browsers=chrome", "--yes"}, strings.NewReader(""), &out, home)
-	if err == nil {
-		t.Fatal("runInstall() = nil error, want an error for a Chromium target with no --extension-id")
+	err := runInstall([]string{"--browsers=chrome", "--yes", "--binary=/opt/mimicengine-host"}, strings.NewReader(""), &out, home)
+	if err != nil {
+		t.Fatalf("runInstall: %v (output: %s)", err, out.String())
 	}
+
+	manifest := readChromeManifestAllowedOrigins(t, home)
+	want := "chrome-extension://" + setup.DefaultExtensionID + "/"
+	if len(manifest) != 1 || manifest[0] != want {
+		t.Fatalf("allowed_origins = %v, want [%q] (the default production extension id)", manifest, want)
+	}
+}
+
+// TestRunInstall_ExplicitExtensionIDOverridesDefault proves the default
+// introduced for W2 is still a default, not a hardcoded value: an explicit
+// --extension-id must win.
+func TestRunInstall_ExplicitExtensionIDOverridesDefault(t *testing.T) {
+	home := t.TempDir()
+	var out bytes.Buffer
+	override := strings.Repeat("cd", 16)
+
+	err := runInstall(
+		[]string{"--browsers=chrome", "--yes", "--extension-id=" + override, "--binary=/opt/mimicengine-host"},
+		strings.NewReader(""), &out, home,
+	)
+	if err != nil {
+		t.Fatalf("runInstall: %v (output: %s)", err, out.String())
+	}
+
+	manifest := readChromeManifestAllowedOrigins(t, home)
+	want := "chrome-extension://" + override + "/"
+	if len(manifest) != 1 || manifest[0] != want {
+		t.Fatalf("allowed_origins = %v, want [%q] (the explicit --extension-id, not the default)", manifest, want)
+	}
+}
+
+// readChromeManifestAllowedOrigins reads the chrome manifest install wrote
+// under home and returns its allowed_origins field.
+func readChromeManifestAllowedOrigins(t *testing.T, home string) []string {
+	t.Helper()
+
+	manifestPath := filepath.Join(chromeManifestDir(home), "com.barad1tos.mimicengine.json")
+	body, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	var manifest struct {
+		AllowedOrigins []string `json:"allowed_origins"`
+	}
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		t.Fatalf("Unmarshal manifest: %v", err)
+	}
+	return manifest.AllowedOrigins
 }
 
 func TestRunInstall_WritesManifestWithForcedScopeAndYes(t *testing.T) {
