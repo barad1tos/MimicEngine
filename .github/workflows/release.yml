@@ -48,3 +48,50 @@ jobs:
           files: .output/*.zip
           generate_release_notes: true
           draft: false
+
+  # Builds and publishes the native-messaging host on the same tag, after
+  # the extension's release exists so goreleaser can append host archives
+  # + checksums to it (host/.goreleaser.yml: release.mode: keep-existing).
+  host-release:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    needs: [verify, publish]
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: host/go.mod
+          # No module cache: this job publishes real release artifacts, and
+          # zizmor's cache-poisoning audit flags caching in any job that
+          # does. Module cache buys nothing anyway — host/go.mod has zero
+          # external dependencies.
+          cache: false
+      - name: goreleaser release
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.17.1
+          workdir: host
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pushes the brew/scoop manifests to barad1tos/homebrew-tap and
+          # barad1tos/scoop-bucket — repos GITHUB_TOKEN (scoped to THIS
+          # repo) cannot write to. Needs a PAT with repo scope on those two
+          # repos, stored in the `production` environment.
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          # macOS codesign+notarize, consumed by scripts/sign-macos.sh via
+          # the universal_binaries hook. Empty/unset until Roman adds his
+          # Apple Developer ID to the `production` environment — the script
+          # no-ops in that case and this job stays green either way.
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          AC_USERNAME: ${{ secrets.AC_USERNAME }}
+          AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
+          AC_TEAM_ID: ${{ secrets.AC_TEAM_ID }}
