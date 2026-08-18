@@ -3,22 +3,17 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 
 	"github.com/barad1tos/MimicEngine/host/internal/ops"
 	"github.com/barad1tos/MimicEngine/host/internal/protocol"
+	"github.com/barad1tos/MimicEngine/host/internal/sandbox"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=...".
 var version = "dev"
-
-// noSources is a temporary stand-in for the sandbox package's Box, which
-// does not exist yet. It reports no source ids until that package lands and
-// this wiring is replaced with a real *sandbox.Box.
-type noSources struct{}
-
-func (noSources) SourceIDs() []string { return []string{} }
 
 func main() {
 	if err := run(); err != nil {
@@ -28,8 +23,18 @@ func main() {
 }
 
 func run() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving user home directory: %w", err)
+	}
+
+	box, err := sandbox.New(home)
+	if err != nil {
+		return fmt.Errorf("building sandbox: %w", err)
+	}
+
 	writer := protocol.NewWriter(os.Stdout)
 	defer func() { _ = writer.Close() }()
 
-	return ops.Serve(os.Stdin, writer, version, noSources{})
+	return ops.Serve(os.Stdin, writer, version, box)
 }

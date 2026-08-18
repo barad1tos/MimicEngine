@@ -10,14 +10,20 @@ import (
 	"testing"
 
 	"github.com/barad1tos/MimicEngine/host/internal/protocol"
+	"github.com/barad1tos/MimicEngine/host/internal/sandbox"
 )
+
+// *sandbox.Box must satisfy fileProvider so main can hand a real Box to
+// ops.Serve. This mirrors the narrower pin sandbox_test.go already carries
+// for sourceLister alone (sandbox cannot import ops to assert the reverse).
+var _ fileProvider = (*sandbox.Box)(nil)
 
 func TestHandleFrame_UnsupportedOp(t *testing.T) {
 	var buf bytes.Buffer
 	out := protocol.NewWriter(&buf)
 	t.Cleanup(func() { _ = out.Close() })
 
-	payload, err := json.Marshal(protocol.Request{ID: 5, Op: "enumerate"})
+	payload, err := json.Marshal(protocol.Request{ID: 5, Op: "bogus-op"})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
@@ -122,7 +128,7 @@ func TestServe_ProcessesFramesUntilEOF(t *testing.T) {
 	if err := inWriter.Send(protocol.Request{ID: 1, Op: "ping"}); err != nil {
 		t.Fatalf("building fixture: %v", err)
 	}
-	if err := inWriter.Send(protocol.Request{ID: 2, Op: "enumerate"}); err != nil {
+	if err := inWriter.Send(protocol.Request{ID: 2, Op: "bogus-op"}); err != nil {
 		t.Fatalf("building fixture: %v", err)
 	}
 	if err := inWriter.Close(); err != nil {

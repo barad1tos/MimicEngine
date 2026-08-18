@@ -9,12 +9,26 @@ import (
 	"github.com/barad1tos/MimicEngine/host/internal/protocol"
 )
 
-// Error codes used by this task's handlers.
+// Error codes used by this package's handlers.
 const (
 	codeBadRequest    = "bad-request"
 	codeUnsupportedOp = "unsupported-op"
 	codeInternalError = "internal-error"
+	codePathDenied    = "path-denied"
+	codeNotFound      = "not-found"
+	codeTooLarge      = "too-large"
 )
+
+// fileProvider is everything the serve loop's handlers need from the
+// sandbox: sourceLister for ping, enumerator for enumerate, opener for
+// read. *sandbox.Box satisfies all three; Serve accepts the composed
+// interface so each handler still declares only the narrow slice of it that
+// handler actually calls.
+type fileProvider interface {
+	sourceLister
+	enumerator
+	opener
+}
 
 // errorEnvelope is the wire shape of a failed response.
 type errorEnvelope struct {
@@ -38,7 +52,7 @@ func newErrorEnvelope(id int64, code, message string) errorEnvelope {
 // recovered handler panic — both end the loop, and the caller (main) is
 // expected to exit non-zero so the browser respawns the host on next
 // connect.
-func Serve(in io.Reader, out *protocol.Writer, version string, sources sourceLister) error {
+func Serve(in io.Reader, out *protocol.Writer, version string, sources fileProvider) error {
 	for {
 		payload, err := protocol.ReadFrame(in, protocol.MaxFrameLen)
 		if err != nil {
@@ -58,7 +72,7 @@ func Serve(in io.Reader, out *protocol.Writer, version string, sources sourceLis
 // while handling is recovered here — the only recover point in the serve
 // loop — reported to the caller as a best-effort error frame, and
 // re-surfaced as the returned error so Serve ends the loop.
-func handleFrame(payload []byte, out *protocol.Writer, version string, sources sourceLister) (err error) {
+func handleFrame(payload []byte, out *protocol.Writer, version string, sources fileProvider) (err error) {
 	var requestID int64 // best-effort correlation id, used if a handler panics
 
 	defer func() {
@@ -78,6 +92,10 @@ func handleFrame(payload []byte, out *protocol.Writer, version string, sources s
 	switch req.Op {
 	case "ping":
 		return out.Send(handlePing(req, version, sources))
+	case "enumerate":
+		return out.Send(handleEnumerate(req, sources))
+	case "read":
+		return out.Send(handleRead(req, sources))
 	default:
 		return out.Send(newErrorEnvelope(req.ID, codeUnsupportedOp, fmt.Sprintf("unsupported op %q", req.Op)))
 	}

@@ -2,21 +2,41 @@ package ops
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"reflect"
 	"testing"
 
 	"github.com/barad1tos/MimicEngine/host/internal/protocol"
+	"github.com/barad1tos/MimicEngine/host/internal/sandbox"
 )
 
+// stubFileProvider gives an embedder no-op Enumerate and Open
+// implementations so a fake built to test one op (ping's SourceIDs, here)
+// still satisfies the full fileProvider interface Serve/handleFrame
+// require. Tests that actually exercise enumerate or read define their own
+// dedicated fakes against the narrower enumerator/opener interfaces instead
+// of using these.
+type stubFileProvider struct{}
+
+func (stubFileProvider) Enumerate(int, int) ([]sandbox.FileInfo, error) { return nil, nil }
+
+func (stubFileProvider) Open(string) (*os.File, error) {
+	return nil, errors.New("stubFileProvider: Open not implemented")
+}
+
 // fakeSources is a minimal sourceLister test double.
-type fakeSources struct{ ids []string }
+type fakeSources struct {
+	stubFileProvider
+	ids []string
+}
 
 func (f fakeSources) SourceIDs() []string { return f.ids }
 
 // panickingSources simulates a handler-internal panic (e.g. an unexpected
 // nil dereference deep in Task 2's sandbox.Box) so the serve loop's panic
 // recovery can be exercised without a real fault.
-type panickingSources struct{}
+type panickingSources struct{ stubFileProvider }
 
 func (panickingSources) SourceIDs() []string { panic("boom: simulated handler panic") }
 
