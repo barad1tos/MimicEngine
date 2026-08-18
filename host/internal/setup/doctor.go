@@ -36,7 +36,7 @@ type TargetReport struct {
 }
 
 // DoctorReport runs doctorCheck over every target, in table order.
-func DoctorReport(targets []Target, reg registryWriter) []TargetReport {
+func DoctorReport(targets []Target, reg RegistryWriter) []TargetReport {
 	reports := make([]TargetReport, 0, len(targets))
 	for _, t := range targets {
 		reports = append(reports, doctorCheck(t, reg))
@@ -49,7 +49,7 @@ func DoctorReport(targets []Target, reg registryWriter) []TargetReport {
 // is executable, and that it carries a usable extension id. A Windows
 // target additionally checks that its registry value still points at the
 // manifest file doctorCheck just read.
-func doctorCheck(t Target, reg registryWriter) TargetReport {
+func doctorCheck(t Target, reg RegistryWriter) TargetReport {
 	path := manifestPath(t)
 	body, err := os.ReadFile(path)
 	if err != nil {

@@ -129,12 +129,7 @@ func TestEnumerate_PatternMissNotEnumerated(t *testing.T) {
 
 func TestEnumerate_SymlinkedFileEscapesDenied(t *testing.T) {
 	home := resolvedTempDir(t) // Path comparisons below need the same symlink resolution Box applies to every root.
-	root := filepath.Join(home, "root")
-	outside := filepath.Join(home, "outside")
-	mustMkdirAll(t, root)
-	mustMkdirAll(t, outside)
-	secret := filepath.Join(outside, "secret.toml")
-	mustWriteFile(t, secret, "secret")
+	root, _, secret := mustPlantOutside(t, home, "outside", "secret.toml", "secret")
 	link := filepath.Join(root, "escape.toml")
 	if err := os.Symlink(secret, link); err != nil {
 		t.Fatalf("Symlink: %v", err)
@@ -157,10 +152,10 @@ func TestEnumerate_SymlinkedFileWithinAllowlistResolves(t *testing.T) {
 	home := resolvedTempDir(t) // Path comparisons below need the same symlink resolution Box applies to every root.
 	root := filepath.Join(home, "root")
 	mustMkdirAll(t, root)
-	real := filepath.Join(root, "real.toml")
-	mustWriteFile(t, real, "x")
+	realFile := filepath.Join(root, "real.toml")
+	mustWriteFile(t, realFile, "x")
 	link := filepath.Join(root, "alias.toml")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realFile, link); err != nil {
 		t.Fatalf("Symlink: %v", err)
 	}
 
@@ -172,19 +167,14 @@ func TestEnumerate_SymlinkedFileWithinAllowlistResolves(t *testing.T) {
 	}
 	// Both the symlink and its target resolve to the same allow-listed
 	// file, so exactly one entry — the resolved real path — is expected.
-	if len(results) != 1 || results[0].Path != real {
-		t.Fatalf("Enumerate() = %+v, want exactly one result for %s", results, real)
+	if len(results) != 1 || results[0].Path != realFile {
+		t.Fatalf("Enumerate() = %+v, want exactly one result for %s", results, realFile)
 	}
 }
 
 func TestEnumerate_SymlinkedDirNotFollowed(t *testing.T) {
 	home := resolvedTempDir(t) // Path comparisons below need the same symlink resolution Box applies to every root.
-	root := filepath.Join(home, "root")
-	outsideDir := filepath.Join(home, "outside-dir")
-	mustMkdirAll(t, root)
-	mustMkdirAll(t, outsideDir)
-	hidden := filepath.Join(outsideDir, "hidden.toml")
-	mustWriteFile(t, hidden, "x")
+	root, outsideDir, _ := mustPlantOutside(t, home, "outside-dir", "hidden.toml", "x")
 
 	linkDir := filepath.Join(root, "linked")
 	if err := os.Symlink(outsideDir, linkDir); err != nil {
@@ -214,4 +204,21 @@ func TestEnumerate_MissingRootReturnsEmpty(t *testing.T) {
 	if len(results) != 0 {
 		t.Fatalf("Enumerate() = %d results, want 0 for a missing root", len(results))
 	}
+}
+
+// mustPlantOutside creates an allow-listed root and an "outside" sibling
+// directory under home, writes fileName inside outside with content, and
+// returns (root, outside dir, planted file path) — the setup every
+// escaping-symlink test in this file shares before it links from root back
+// into outside, whether the link target ends up being the file itself or
+// its containing directory.
+func mustPlantOutside(t *testing.T, home, outsideDirName, fileName, content string) (root, outsideDir, plantedPath string) {
+	t.Helper()
+	root = filepath.Join(home, "root")
+	outsideDir = filepath.Join(home, outsideDirName)
+	mustMkdirAll(t, root)
+	mustMkdirAll(t, outsideDir)
+	plantedPath = filepath.Join(outsideDir, fileName)
+	mustWriteFile(t, plantedPath, content)
+	return root, outsideDir, plantedPath
 }

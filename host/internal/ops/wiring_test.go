@@ -64,21 +64,10 @@ func TestServe_EnumerateAndReadDispatchEndToEnd(t *testing.T) {
 	if err := inWriter.Send(protocol.Request{ID: 2, Op: "read", Path: contentPath}); err != nil {
 		t.Fatalf("building fixture: %v", err)
 	}
-	if err := inWriter.Close(); err != nil {
-		t.Fatalf("closing fixture writer: %v", err)
-	}
 
-	var out bytes.Buffer
-	outWriter := protocol.NewWriter(&out)
+	out := drainServe(t, &in, inWriter, provider)
 
-	if err := Serve(&in, outWriter, "1.0.0-test", provider); err != nil {
-		t.Fatalf("Serve() = %v, want nil on clean EOF", err)
-	}
-	if err := outWriter.Close(); err != nil {
-		t.Fatalf("closing out writer: %v", err)
-	}
-
-	enumerateFrame := readGenericFrame(t, &out)
+	enumerateFrame := readGenericFrame(t, out)
 	files, hasFiles := enumerateFrame["files"]
 	if !hasFiles {
 		t.Fatalf("enumerate response missing \"files\": %v", enumerateFrame)
@@ -95,7 +84,7 @@ func TestServe_EnumerateAndReadDispatchEndToEnd(t *testing.T) {
 		t.Fatalf("enumerate files[0] = %v, want the fake enumerator's own entry", fileList[0])
 	}
 
-	readFrame := readGenericFrame(t, &out)
+	readFrame := readGenericFrame(t, out)
 	content, hasContent := readFrame["content"]
 	if !hasContent {
 		t.Fatalf("read response missing \"content\": %v", readFrame)
@@ -127,21 +116,10 @@ func TestServe_RealSandboxBoxSourceIDsFlowThroughPing(t *testing.T) {
 	if err := inWriter.Send(protocol.Request{ID: 1, Op: "ping"}); err != nil {
 		t.Fatalf("building fixture: %v", err)
 	}
-	if err := inWriter.Close(); err != nil {
-		t.Fatalf("closing fixture writer: %v", err)
-	}
 
-	var out bytes.Buffer
-	outWriter := protocol.NewWriter(&out)
+	out := drainServe(t, &in, inWriter, box)
 
-	if err := Serve(&in, outWriter, "1.0.0-test", box); err != nil {
-		t.Fatalf("Serve() = %v, want nil on clean EOF", err)
-	}
-	if err := outWriter.Close(); err != nil {
-		t.Fatalf("closing out writer: %v", err)
-	}
-
-	frame, readErr := protocol.ReadFrame(&out, protocol.MaxFrameLen)
+	frame, readErr := protocol.ReadFrame(out, protocol.MaxFrameLen)
 	if readErr != nil {
 		t.Fatalf("ReadFrame: %v", readErr)
 	}
@@ -155,6 +133,28 @@ func TestServe_RealSandboxBoxSourceIDsFlowThroughPing(t *testing.T) {
 	if len(env.SourceIDs) == 0 {
 		t.Fatal("ping sourceIds is empty — want a real *sandbox.Box's rule table (non-empty on every supported OS) to reach the wire")
 	}
+}
+
+// drainServe closes inWriter (finalizing the fixture already written into
+// in), runs Serve against in with a fresh out buffer, and closes the
+// resulting writer — the close-run-close sequence every dispatch test in
+// this file needs before it can read response frames.
+func drainServe(t *testing.T, in *bytes.Buffer, inWriter *protocol.Writer, sources fileProvider) *bytes.Buffer {
+	t.Helper()
+
+	if err := inWriter.Close(); err != nil {
+		t.Fatalf("closing fixture writer: %v", err)
+	}
+
+	var out bytes.Buffer
+	outWriter := protocol.NewWriter(&out)
+	if err := Serve(in, outWriter, "1.0.0-test", sources); err != nil {
+		t.Fatalf("Serve() = %v, want nil on clean EOF", err)
+	}
+	if err := outWriter.Close(); err != nil {
+		t.Fatalf("closing out writer: %v", err)
+	}
+	return &out
 }
 
 // readGenericFrame reads exactly one frame from buf and decodes it into a

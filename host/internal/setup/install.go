@@ -21,7 +21,7 @@ type InstallResult struct {
 // default extension id to fall back to (see ManifestOptions.ExtensionID),
 // so a partially-written install across several browsers is never a
 // possible outcome of a missing flag.
-func Install(candidates []Target, opts ManifestOptions, reg registryWriter) (InstallResult, error) {
+func Install(candidates []Target, opts ManifestOptions, reg RegistryWriter) (InstallResult, error) {
 	if opts.ExtensionID == "" && anyChromiumFamily(candidates) {
 		return InstallResult{}, errors.New(
 			"setup: --extension-id is required to install a Chromium-family manifest " +
@@ -41,7 +41,7 @@ func Install(candidates []Target, opts ManifestOptions, reg registryWriter) (Ins
 // writeManifest renders and writes t's manifest file, creating t.Dir if
 // necessary, then — for a Windows target — points t.RegistryPath's
 // HostName value at the file it just wrote.
-func writeManifest(t Target, opts ManifestOptions, reg registryWriter) error {
+func writeManifest(t Target, opts ManifestOptions, reg RegistryWriter) error {
 	body, err := buildManifest(t.Family, opts)
 	if err != nil {
 		return err

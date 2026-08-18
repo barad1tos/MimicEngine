@@ -10,12 +10,12 @@ import (
 	"strings"
 )
 
-// hkcuPrefix is prepended to every registryWriter path before it reaches
+// hkcuPrefix is prepended to every RegistryWriter path before it reaches
 // reg.exe: Target.RegistryPath stores the subkey relative to
 // HKEY_CURRENT_USER (e.g. `Software\Google\Chrome\NativeMessagingHosts`).
 const hkcuPrefix = `HKCU\`
 
-// realRegistry implements registryWriter by shelling out to reg.exe.
+// realRegistry implements RegistryWriter by shelling out to reg.exe.
 //
 // Tradeoff, documented rather than hidden: host/go.mod is stdlib-only (see
 // its package doc), which rules out golang.org/x/sys/windows/registry —
@@ -26,8 +26,8 @@ const hkcuPrefix = `HKCU\`
 // this a handful of times per run, never in a hot path.
 type realRegistry struct{}
 
-// NewRegistryWriter returns this OS's registryWriter implementation.
-func NewRegistryWriter() registryWriter { return realRegistry{} }
+// NewRegistryWriter returns this OS's RegistryWriter implementation.
+func NewRegistryWriter() RegistryWriter { return realRegistry{} }
 
 func (realRegistry) keyExists(path string) (bool, error) {
 	err := exec.Command("reg", "query", hkcuPrefix+path).Run()
