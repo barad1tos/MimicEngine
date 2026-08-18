@@ -65,10 +65,12 @@ type Target struct {
 	// folder, since nothing else ever reads or creates it — see
 	// targets_windows.go for why detection there uses RegistryPath instead.
 	Dir string
-	// RegistryPath is the HKEY_CURRENT_USER subkey (e.g.
-	// `Software\Google\Chrome\NativeMessagingHosts`) that must carry a
-	// HostName value pointing at the manifest file. Empty on every POSIX
-	// target — Windows is the only platform using the registry at all.
+	// RegistryPath is the HKEY_CURRENT_USER key Chrome/Firefox actually
+	// read this host from: the FULL key including the host-name leaf
+	// (e.g. `Software\Google\Chrome\NativeMessagingHosts\`+HostName), whose
+	// DEFAULT (unnamed) value must hold the manifest's absolute path.
+	// Empty on every POSIX target — Windows is the only platform using the
+	// registry at all.
 	RegistryPath string
 }
 

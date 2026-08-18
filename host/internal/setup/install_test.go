@@ -72,7 +72,7 @@ func TestInstall_WindowsTargetRegistersManifestPath(t *testing.T) {
 	target := Target{
 		ID: "chrome", Name: "Google Chrome", Family: Chromium,
 		Dir:          filepath.Join(home, "MimicEngine", "chromium"),
-		RegistryPath: `Software\Google\Chrome\NativeMessagingHosts`,
+		RegistryPath: `Software\Google\Chrome\NativeMessagingHosts\` + HostName,
 	}
 	reg := newFakeRegistry()
 
@@ -87,12 +87,12 @@ func TestInstall_WindowsTargetRegistersManifestPath(t *testing.T) {
 	}
 
 	wantPath := filepath.Join(target.Dir, HostName+".json")
-	data, present, err := reg.value(target.RegistryPath, HostName)
+	data, present, err := reg.value(target.RegistryPath)
 	if err != nil {
 		t.Fatalf("value: %v", err)
 	}
 	if !present || data != wantPath {
-		t.Fatalf("registry value = (%q, %v), want (%q, true)", data, present, wantPath)
+		t.Fatalf("registry default value = (%q, %v), want (%q, true)", data, present, wantPath)
 	}
 }
 
@@ -138,7 +138,7 @@ func TestInstall_RegistrySetValueFailurePropagates(t *testing.T) {
 	first := Target{ID: "firefox", Family: Firefox, Dir: t.TempDir()}
 	second := Target{
 		ID: "chrome", Family: Chromium, Dir: t.TempDir(),
-		RegistryPath: `Software\Google\Chrome\NativeMessagingHosts`,
+		RegistryPath: `Software\Google\Chrome\NativeMessagingHosts\` + HostName,
 	}
 
 	result, err := Install([]Target{first, second}, ManifestOptions{ExtensionID: "x", BinaryPath: "/bin/host"}, erroringRegistry{})
@@ -150,6 +150,12 @@ func TestInstall_RegistrySetValueFailurePropagates(t *testing.T) {
 	}
 	if result.Written[0].ID != "firefox" {
 		t.Fatalf("Install().Written = %v, want [firefox] (the target written before the failing one)", result.Written)
+	}
+	// The chrome manifest file was written to disk before the registry
+	// write failed; it must not survive, or it becomes an orphan invisible
+	// to registry-keyed detection (see writeManifest's cleanup-on-failure).
+	if _, statErr := os.Stat(manifestPath(second)); !os.IsNotExist(statErr) {
+		t.Fatalf("manifest for the failing target (%s) still exists after registry-write failure: err=%v", second.ID, statErr)
 	}
 }
 

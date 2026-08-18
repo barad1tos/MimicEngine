@@ -12,7 +12,8 @@ import (
 
 // hkcuPrefix is prepended to every RegistryWriter path before it reaches
 // reg.exe: Target.RegistryPath stores the subkey relative to
-// HKEY_CURRENT_USER (e.g. `Software\Google\Chrome\NativeMessagingHosts`).
+// HKEY_CURRENT_USER, including the host-name leaf (e.g.
+// `Software\Google\Chrome\NativeMessagingHosts\com.barad1tos.mimicengine`).
 const hkcuPrefix = `HKCU\`
 
 // realRegistry implements RegistryWriter by shelling out to reg.exe.
@@ -41,48 +42,61 @@ func (realRegistry) keyExists(path string) (bool, error) {
 	return false, fmt.Errorf("reg query %q: %w", path, err)
 }
 
-func (realRegistry) value(path, name string) (string, bool, error) {
-	out, err := exec.Command("reg", "query", hkcuPrefix+path, "/v", name).Output()
+// value reads path's DEFAULT (unnamed) value — the shape Chrome/Firefox
+// actually read a native-messaging host's manifest path from (see
+// setValue). /ve queries that value specifically, never a named sibling.
+func (realRegistry) value(path string) (string, bool, error) {
+	out, err := exec.Command("reg", "query", hkcuPrefix+path, "/ve").Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return "", false, nil
 		}
-		return "", false, fmt.Errorf("reg query %q /v %q: %w", path, name, err)
+		return "", false, fmt.Errorf("reg query %q /ve: %w", path, err)
 	}
-	return parseRegQueryValue(string(out), name)
+	return parseRegQueryDefaultValue(string(out))
 }
 
-func (realRegistry) setValue(path, name, data string) error {
-	cmd := exec.Command("reg", "add", hkcuPrefix+path, "/v", name, "/t", "REG_SZ", "/d", data, "/f")
+// setValue creates path if it does not already exist and writes data into
+// its DEFAULT (unnamed) value via /ve — the registry shape Chrome/Firefox
+// require: HKCU\...\NativeMessagingHosts\<host name>'s default value holds
+// the manifest's absolute path, not a value named after the host under a
+// shared parent key.
+func (realRegistry) setValue(path, data string) error {
+	cmd := exec.Command("reg", "add", hkcuPrefix+path, "/ve", "/t", "REG_SZ", "/d", data, "/f")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reg add %q /v %q: %w (%s)", path, name, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("reg add %q /ve: %w (%s)", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func (realRegistry) deleteValue(path, name string) error {
-	cmd := exec.Command("reg", "delete", hkcuPrefix+path, "/v", name, "/f")
+// deleteValue removes path's default value via /ve — the inverse of
+// setValue. It leaves the (now-valueless) key itself in place rather than
+// deleting the key outright; deleting a value that is already absent is
+// not an error, so uninstall stays idempotent.
+func (realRegistry) deleteValue(path string) error {
+	cmd := exec.Command("reg", "delete", hkcuPrefix+path, "/ve", "/f")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return nil // already absent; uninstall stays idempotent
 		}
-		return fmt.Errorf("reg delete %q /v %q: %w (%s)", path, name, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("reg delete %q /ve: %w (%s)", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-// parseRegQueryValue extracts name's data from `reg query <path> /v <name>`
-// output. The relevant line has the form "    <name>    REG_SZ    <data>",
-// fields separated by runs of whitespace; every other line (the key header,
-// blank separators) is ignored.
-func parseRegQueryValue(output, name string) (string, bool, error) {
+// parseRegQueryDefaultValue extracts a key's default (unnamed) value from
+// `reg query <path> /ve` output. reg.exe labels that line "(Default)"
+// literally, in the same whitespace-separated "<name> <type> <data>" shape
+// a named value uses; every other line (the key header, blank separators)
+// is ignored.
+func parseRegQueryDefaultValue(output string) (string, bool, error) {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) < 3 || fields[0] != name {
+		if len(fields) < 3 || fields[0] != "(Default)" {
 			continue
 		}
 		return strings.Join(fields[2:], " "), true, nil

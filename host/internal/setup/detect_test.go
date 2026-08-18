@@ -28,14 +28,18 @@ func TestDetected_PosixDirPresence(t *testing.T) {
 }
 
 func TestDetected_WindowsRegistryPresence(t *testing.T) {
+	// RegistryPath is the FULL host-specific key (see targets_windows.go),
+	// so — unlike the POSIX shared-directory signal — only a prior install
+	// of THIS host can make it exist; that's what's simulated here.
+	chromeKey := `Software\Google\Chrome\NativeMessagingHosts\` + HostName
 	reg := newFakeRegistry()
-	if err := reg.setValue(`Software\Google\Chrome\NativeMessagingHosts`, "some-other-host", "C:\\other.json"); err != nil {
+	if err := reg.setValue(chromeKey, "C:\\mimicengine-host.json"); err != nil {
 		t.Fatalf("setValue: %v", err)
 	}
 
 	all := []Target{
-		{ID: "chrome", Name: "Chrome", Family: Chromium, RegistryPath: `Software\Google\Chrome\NativeMessagingHosts`},
-		{ID: "firefox", Name: "Firefox", Family: Firefox, RegistryPath: `Software\Mozilla\NativeMessagingHosts`},
+		{ID: "chrome", Name: "Chrome", Family: Chromium, RegistryPath: chromeKey},
+		{ID: "firefox", Name: "Firefox", Family: Firefox, RegistryPath: `Software\Mozilla\NativeMessagingHosts\` + HostName},
 	}
 
 	detected, err := Detected(all, reg)
@@ -43,7 +47,7 @@ func TestDetected_WindowsRegistryPresence(t *testing.T) {
 		t.Fatalf("Detected: %v", err)
 	}
 	if len(detected) != 1 || detected[0].ID != "chrome" {
-		t.Fatalf("Detected() = %v, want exactly [chrome] (key exists from another app's value)", detected)
+		t.Fatalf("Detected() = %v, want exactly [chrome] (its own host key already exists)", detected)
 	}
 }
 

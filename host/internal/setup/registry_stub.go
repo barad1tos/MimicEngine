@@ -17,13 +17,13 @@ type stubRegistry struct{}
 
 func (stubRegistry) keyExists(string) (bool, error) { return false, errRegistryUnsupported }
 
-func (stubRegistry) value(string, string) (string, bool, error) {
+func (stubRegistry) value(string) (string, bool, error) {
 	return "", false, errRegistryUnsupported
 }
 
-func (stubRegistry) setValue(string, string, string) error { return errRegistryUnsupported }
+func (stubRegistry) setValue(string, string) error { return errRegistryUnsupported }
 
-func (stubRegistry) deleteValue(string, string) error { return errRegistryUnsupported }
+func (stubRegistry) deleteValue(string) error { return errRegistryUnsupported }
 
 // NewRegistryWriter returns this OS's RegistryWriter implementation.
 func NewRegistryWriter() RegistryWriter { return stubRegistry{} }

@@ -126,8 +126,8 @@ func TestDoctorReport_WindowsRegistryMismatch(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 
-	// Simulate drift: something else rewrote the registry value.
-	if err := reg.setValue(target.RegistryPath, HostName, "C:\\elsewhere.json"); err != nil {
+	// Simulate drift: something else rewrote the registry's default value.
+	if err := reg.setValue(target.RegistryPath, "C:\\elsewhere.json"); err != nil {
 		t.Fatalf("setValue: %v", err)
 	}
 

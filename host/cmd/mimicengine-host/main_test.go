@@ -3,16 +3,101 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestRun_UnknownSubcommandErrors(t *testing.T) {
-	err := run([]string{"bogus"})
-	if err == nil || !strings.Contains(err.Error(), "bogus") {
-		t.Fatalf("run([\"bogus\"]) = %v, want an error naming the unknown subcommand", err)
+// withClosedStdin temporarily replaces the real os.Stdin with a pipe whose
+// write end is already closed, so anything reading from it (here, the
+// serve loop's underlying ops.Serve) hits a clean io.EOF immediately
+// instead of blocking on the test process's real stdin. Restored via
+// t.Cleanup so later tests in this package see the original os.Stdin.
+func withClosedStdin(t *testing.T) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe write end: %v", err)
+	}
+	original := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = original
+		_ = r.Close()
+	})
+}
+
+// TestRun_ChromiumShapedArgvFallsThroughToServe pins the fix for Fix round
+// 3's finding C1: Chrome spawns this host with the extension's own origin
+// as args[0] ("chrome-extension://<id>/"), never a recognized subcommand
+// name. Before the fix, run() treated any non-matching args[0] as an
+// "unknown subcommand" error, making serve() unreachable from every real
+// Chrome launch.
+func TestRun_ChromiumShapedArgvFallsThroughToServe(t *testing.T) {
+	withClosedStdin(t)
+	err := run([]string{"chrome-extension://" + strings.Repeat("ab", 16) + "/"})
+	if err != nil {
+		t.Fatalf("run() = %v, want nil — Chromium-shaped argv must fall through to serve, not error as an unknown subcommand", err)
+	}
+}
+
+// TestRun_FirefoxShapedArgvFallsThroughToServe mirrors the Chromium case
+// for Firefox's launch shape: the manifest path followed by the extension
+// id, as two separate argv entries.
+func TestRun_FirefoxShapedArgvFallsThroughToServe(t *testing.T) {
+	withClosedStdin(t)
+	err := run([]string{"/path/to/com.barad1tos.mimicengine.json", "palette-mimicry@barad1tos.github.io"})
+	if err != nil {
+		t.Fatalf("run() = %v, want nil — Firefox-shaped argv must fall through to serve, not error as an unknown subcommand", err)
+	}
+}
+
+// TestRun_VersionSubcommandIsRecognizedExactly proves "version" is matched
+// as an exact subcommand rather than falling through to serve. A closed
+// stdin alone can't tell the two outcomes apart — serve() also returns nil
+// on immediate EOF — so this captures the real os.Stdout too: runVersion
+// writes the version string, while a fall-through to serve would read no
+// frames (closed stdin) and write nothing.
+func TestRun_VersionSubcommandIsRecognizedExactly(t *testing.T) {
+	withClosedStdin(t) // safety net: a misroute to serve must return promptly, not hang
+
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = stdoutWrite
+	t.Cleanup(func() { os.Stdout = originalStdout })
+
+	runErr := run([]string{"version"})
+	if closeErr := stdoutWrite.Close(); closeErr != nil {
+		t.Fatalf("closing pipe write end: %v", closeErr)
+	}
+	if runErr != nil {
+		t.Fatalf("run([\"version\"]) = %v, want nil", runErr)
+	}
+
+	captured, err := io.ReadAll(stdoutRead)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if got := strings.TrimSpace(string(captured)); got != version {
+		t.Fatalf("run([\"version\"]) wrote %q to stdout, want %q (a fall-through to serve would write nothing)", got, version)
+	}
+}
+
+func TestRunVersion_WritesVersionString(t *testing.T) {
+	var out bytes.Buffer
+	if err := runVersion(&out); err != nil {
+		t.Fatalf("runVersion: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != version {
+		t.Errorf("runVersion() wrote %q, want %q", got, version)
 	}
 }
 
@@ -44,6 +129,42 @@ func TestRunInstall_WritesManifestWithForcedScopeAndYes(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "installed:") {
 		t.Errorf("output = %q, want an \"installed:\" section", out.String())
+	}
+}
+
+// TestRunInstall_RelativeBinaryIsAbsolutized pins Fix round 3's finding
+// I1: Chrome/Firefox require an absolute "path" in the manifest, so a
+// relative --binary must be resolved to absolute before it lands there —
+// otherwise it would resolve against whatever directory the browser
+// happens to spawn the host from, not the directory install was run in.
+func TestRunInstall_RelativeBinaryIsAbsolutized(t *testing.T) {
+	home := t.TempDir()
+	var out bytes.Buffer
+	const relativeBinary = "relative/path/mimicengine-host"
+
+	err := runInstall(
+		[]string{"--browsers=chrome", "--yes", "--extension-id=" + strings.Repeat("ab", 16), "--binary=" + relativeBinary},
+		strings.NewReader(""), &out, home,
+	)
+	if err != nil {
+		t.Fatalf("runInstall: %v (output: %s)", err, out.String())
+	}
+
+	manifestPath := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", "com.barad1tos.mimicengine.json")
+	body, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	wantAbs, err := filepath.Abs(relativeBinary)
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+	if !strings.Contains(string(body), wantAbs) {
+		t.Errorf("manifest = %s, want it to contain the absolutized binary path %q", body, wantAbs)
+	}
+	if strings.Contains(string(body), `"path":"`+relativeBinary+`"`) {
+		t.Errorf("manifest = %s, still contains the relative --binary verbatim", body)
 	}
 }
 

@@ -71,7 +71,7 @@ func doctorCheck(t Target, reg RegistryWriter) TargetReport {
 	}
 
 	if t.RegistryPath != "" {
-		data, present, err := reg.value(t.RegistryPath, HostName)
+		data, present, err := reg.value(t.RegistryPath)
 		if err != nil {
 			return TargetReport{Target: t, Status: StatusFail, Detail: fmt.Sprintf("reading registry value: %v", err)}
 		}
