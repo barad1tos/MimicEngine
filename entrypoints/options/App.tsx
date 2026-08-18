@@ -602,14 +602,17 @@ export function App() {
   // registered once on mount and would otherwise close over the 'idle'
   // state from that first render forever.
   const hostConnectionRef = useRef<HostConnectionState>({ kind: 'idle' });
-  // Guards handleScanCard's two post-await setScanState calls against a
-  // cross-card race: click Scan on a slow card, then a different card,
-  // before the first enumerate() resolves. Set synchronously (before the
-  // await) to the card that most recently started a scan; a response
-  // lands only if it still matches. Deliberately a guard rather than also
-  // disabling the other cards' Scan buttons while one is loading -- fewer
-  // moving parts in the UI, and the guard alone is sufficient since a
-  // superseded response is simply dropped, never rendered.
+  // Tracks which card owns the in-flight scan/import work, guarding
+  // handleScanCard's post-await setScanState calls AND
+  // handleImportSelectedScanFiles's completion against a cross-card race:
+  // click Scan on a slow card, then a different card, before the first
+  // resolves. Set synchronously (before the relevant await) to the card
+  // that most recently started a scan; a stale response or completion
+  // only takes effect if it still matches. Deliberately a guard rather
+  // than also disabling the other cards' Scan buttons while one is
+  // loading/importing -- fewer moving parts in the UI, and the guard
+  // alone is sufficient since a superseded response is simply dropped,
+  // never rendered.
   const scanCardIdRef = useRef<string | null>(null);
   // Same last-write-wins discipline as the popup's T12 pattern: the mount-time
   // load races the local-area onChanged listener below, and a stale slow load
@@ -869,6 +872,10 @@ export function App() {
     if (hostConnectionRef.current.kind !== 'connected') return;
     const session = hostConnectionRef.current.session;
     const filesToImport = current.files.filter((file) => current.selected.has(file.path));
+    // Captured now so the completion guard below can tell whether this
+    // import's card is still the one scanCardIdRef points at once the
+    // read() loop finishes -- see the comment there.
+    const owningCardId = current.cardId;
 
     setScanState({ ...current, phase: 'importing' });
 
@@ -897,7 +904,15 @@ export function App() {
     }
 
     enqueue(entries);
-    setScanState(null);
+    // Mirrors handleScanCard's guard: a Scan click on a DIFFERENT card
+    // while this import's read() loop was still running moved
+    // scanCardIdRef off `owningCardId` and replaced scanState with that
+    // card's own panel. Clearing scanState here unconditionally would
+    // silently wipe that newer panel, so completion only clears it when
+    // this import's card is still the active one.
+    if (scanCardIdRef.current === owningCardId) {
+      setScanState(null);
+    }
     setStatusMessage(describeScanImportOutcome(entries.length, failedNames));
   };
 
