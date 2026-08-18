@@ -602,6 +602,15 @@ export function App() {
   // registered once on mount and would otherwise close over the 'idle'
   // state from that first render forever.
   const hostConnectionRef = useRef<HostConnectionState>({ kind: 'idle' });
+  // Guards handleScanCard's two post-await setScanState calls against a
+  // cross-card race: click Scan on a slow card, then a different card,
+  // before the first enumerate() resolves. Set synchronously (before the
+  // await) to the card that most recently started a scan; a response
+  // lands only if it still matches. Deliberately a guard rather than also
+  // disabling the other cards' Scan buttons while one is loading -- fewer
+  // moving parts in the UI, and the guard alone is sufficient since a
+  // superseded response is simply dropped, never rendered.
+  const scanCardIdRef = useRef<string | null>(null);
   // Same last-write-wins discipline as the popup's T12 pattern: the mount-time
   // load races the local-area onChanged listener below, and a stale slow load
   // must not clobber a fresher onChanged refresh.
@@ -804,9 +813,14 @@ export function App() {
 
   const handleScanCard = async (card: SourceCard): Promise<void> => {
     if (hostConnection.kind !== 'connected') return;
+    scanCardIdRef.current = card.id;
     setScanState({ cardId: card.id, phase: 'loading' });
 
     const result = await hostConnection.session.enumerate();
+    // A different card started its own scan while this enumerate() was in
+    // flight -- that card's response already owns `scanState`, so this
+    // stale one is dropped instead of clobbering it.
+    if (scanCardIdRef.current !== card.id) return;
     if (!result.ok) {
       setScanState({ cardId: card.id, phase: 'error', message: result.error.message });
       return;
