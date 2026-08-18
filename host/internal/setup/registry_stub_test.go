@@ -2,7 +2,10 @@
 
 package setup
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // TestStubRegistry_EveryMethodReportsUnsupported proves the non-Windows
 // registryWriter is a total, honest stub: every method returns
@@ -14,16 +17,16 @@ import "testing"
 func TestStubRegistry_EveryMethodReportsUnsupported(t *testing.T) {
 	reg := NewRegistryWriter()
 
-	if _, err := reg.keyExists("Software\\X"); err != errRegistryUnsupported {
+	if _, err := reg.keyExists("Software\\X"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("keyExists() error = %v, want errRegistryUnsupported", err)
 	}
-	if _, _, err := reg.value("Software\\X", "name"); err != errRegistryUnsupported {
+	if _, _, err := reg.value("Software\\X", "name"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("value() error = %v, want errRegistryUnsupported", err)
 	}
-	if err := reg.setValue("Software\\X", "name", "data"); err != errRegistryUnsupported {
+	if err := reg.setValue("Software\\X", "name", "data"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("setValue() error = %v, want errRegistryUnsupported", err)
 	}
-	if err := reg.deleteValue("Software\\X", "name"); err != errRegistryUnsupported {
+	if err := reg.deleteValue("Software\\X", "name"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("deleteValue() error = %v, want errRegistryUnsupported", err)
 	}
 }
