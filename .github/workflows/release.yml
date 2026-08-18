@@ -82,8 +82,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pushes the brew/scoop manifests to barad1tos/homebrew-tap and
           # barad1tos/scoop-bucket — repos GITHUB_TOKEN (scoped to THIS
-          # repo) cannot write to. Needs a PAT with repo scope on those two
-          # repos, stored in the `production` environment.
+          # repo) cannot write to. Needs a FINE-GRAINED personal access
+          # token — NOT a classic PAT with the "repo" scope, which grants
+          # write access to every repo the owner can reach, not just these
+          # two. Repository access: only barad1tos/homebrew-tap and
+          # barad1tos/scoop-bucket. Permissions: Contents: Read and write.
+          # Nothing else. Stored in the `production` environment.
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
           # macOS codesign+notarize, consumed by scripts/sign-macos.sh via
           # the universal_binaries hook. Empty/unset until Roman adds his
