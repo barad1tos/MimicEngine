@@ -1,0 +1,93 @@
+version: 2
+
+project_name: mimicengine-host
+
+# Monorepo, shared release tag (design decision, see
+# docs/superpowers/specs/2026-08-18-native-messaging-design.md): this repo
+# is not a Go module at its root, and the release tag `vX.Y.Z` is shared
+# with the extension rather than scoped to a `host/vX.Y.Z` stream. GoReleaser
+# OSS has no `monorepo:` config block (that's a Pro-only feature — verified
+# by running `goreleaser check` against this file: OSS v2.17.1 rejects an
+# unknown `monorepo` field outright) so subdirectory placement is handled
+# entirely by the goreleaser-action `workdir: host` input in the workflows;
+# default tag detection (`git describe --tags` against the shared `v*`
+# stream) already does what a `tag_prefix: v` would have asked for. The one
+# thing Pro's `monorepo.dir` would have added — scoping the changelog to
+# commits under host/ — is not available here; the changelog for a host
+# release will list every commit since the last tag, extension-only ones
+# included.
+
+builds:
+  - id: mimicengine-host
+    main: ./cmd/mimicengine-host
+    binary: mimicengine-host
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+universal_binaries:
+  - ids: [mimicengine-host]
+    replace: true
+    # Codesign + notarize the combined macOS binary. Gated on secret
+    # presence: sign-macos.sh no-ops (exit 0) unless every required Apple
+    # credential env var is set. Those env vars are only ever populated by
+    # release.yml's host-release job, which pulls them from this repo's
+    # `production` GitHub Actions environment — PR CI, and this repo today
+    # (no Developer ID has been provisioned yet), never see them, so the
+    # hook is a no-op in every CI run until Roman adds the secrets. See
+    # scripts/sign-macos.sh for the exact variable names.
+    hooks:
+      post: ./scripts/sign-macos.sh "{{ .Path }}"
+
+archives:
+  - format_overrides:
+      - goos: windows
+        formats: [zip]
+
+# `brews` (Formula) is deprecated in favor of `homebrew_casks`, but Casks
+# are macOS-only — using one would silently drop the Linux Homebrew support
+# the design spec requires ("Homebrew tap ... (macOS + Linux)"). Formula is
+# still fully functional; only `goreleaser check` objects (see ci.yml's
+# host-goreleaser job, where that step is informational, not gating).
+brews:
+  - name: mimicengine-host
+    repository:
+      owner: barad1tos
+      name: homebrew-tap
+      token: '{{ .Env.TAP_GITHUB_TOKEN }}'
+    homepage: 'https://github.com/barad1tos/MimicEngine'
+    description: 'Native messaging host for the Palette Mimicry browser extension'
+    caveats: |
+      Run `mimicengine-host install` to register native-messaging manifests
+      for your installed browsers.
+    test: |
+      system "#{bin}/mimicengine-host version"
+
+scoops:
+  - name: mimicengine-host
+    repository:
+      owner: barad1tos
+      name: scoop-bucket
+      token: '{{ .Env.TAP_GITHUB_TOKEN }}'
+    homepage: 'https://github.com/barad1tos/MimicEngine'
+    description: 'Native messaging host for the Palette Mimicry browser extension'
+
+release:
+  # The extension's own GitHub Release for this tag is already created by
+  # release.yml's `publish` job (softprops/action-gh-release) before this
+  # runs (host-release needs: [verify, publish]). GoReleaser finds that
+  # existing release by tag and appends the host archives + checksums to
+  # it instead of creating a second one; `keep-existing` leaves the
+  # extension's generated release notes untouched.
+  mode: keep-existing

@@ -225,11 +225,54 @@ jobs:
             echo "::endgroup::"
           done
 
+  # Tier 2: validate the host's goreleaser config and a full snapshot build
+  # (every OS/arch, archives, universal binary) without publishing anything.
+  host-goreleaser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: host/go.mod
+          # No module cache here (unlike the `host` job): this job invokes
+          # goreleaser-action, and zizmor's cache-poisoning audit flags
+          # module caching in any job that touches a runtime-artifact
+          # publisher, even with --skip=publish. Module cache buys nothing
+          # anyway — host/go.mod has zero external dependencies.
+          cache: false
+      - name: goreleaser check
+        # Informational, not gating: `check` hard-fails on ANY deprecated
+        # field, and this config deliberately keeps the deprecated `brews:`
+        # publisher — its replacement, `homebrew_casks`, is macOS-only,
+        # which would silently drop the Linux Homebrew support the design
+        # spec requires (docs/superpowers/specs/2026-08-18-native-messaging-
+        # design.md, "Install & distribution": "Homebrew tap ... (macOS +
+        # Linux)"). Verified locally: `goreleaser release --snapshot` still
+        # renders a correct on_macos/on_linux formula despite the warning.
+        # The snapshot release step below is the real functional gate.
+        continue-on-error: true
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.17.1
+          workdir: host
+          args: check
+      - name: goreleaser snapshot release (no publish)
+        # release, not build: exercises archives, checksums, and the brew/
+        # scoop manifest templates too, not just the cross-compile step.
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.17.1
+          workdir: host
+          args: release --snapshot --clean --skip=publish,announce,validate
+
   # Single required check: pass only when every needed job succeeded or was skipped.
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [lint-files, gha-security, quality, test, build, host]
+    needs: [lint-files, gha-security, quality, test, build, host, host-goreleaser]
     if: always()
     steps:
       - name: Verify all jobs passed
