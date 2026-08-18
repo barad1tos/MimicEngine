@@ -461,7 +461,7 @@ function SourceCardView({
           </button>
         ) : (
           <label className="file-input-label">
-            Browse…
+            <span>Browse…</span>
             <input
               type="file"
               multiple
@@ -614,7 +614,7 @@ export function App() {
   const [setAsGlobal, setSetAsGlobal] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [hasNativeMessagingPermission, setHasNativeMessagingPermission] = useState<boolean>(false);
-  const [hostConnection, setHostConnectionState] = useState<HostConnectionState>({ kind: 'idle' });
+  const [hostConnection, setHostConnection] = useState<HostConnectionState>({ kind: 'idle' });
   const [scanState, setScanState] = useState<ScanState | null>(null);
   const queueKeySeq = useRef(0);
   // Mirrors `hostConnection` for the pagehide handler below, which is
@@ -641,9 +641,9 @@ export function App() {
   const platform = detectPlatform(resolveNavigatorPlatform(navigator));
   const orderedCards = orderSourceCards(recentSources, platform);
 
-  const setHostConnection = (next: HostConnectionState): void => {
+  const updateHostConnection = (next: HostConnectionState): void => {
     hostConnectionRef.current = next;
-    setHostConnectionState(next);
+    setHostConnection(next);
   };
 
   // Mount-time behavior is deliberately passive: `permissions.contains`
@@ -687,14 +687,14 @@ export function App() {
     let isMounted = true;
     const seq = ++importedThemesSeq.current;
 
-    async function load(): Promise<void> {
+    const load = async (): Promise<void> => {
       const [themes, sources] = await Promise.all([readImportedThemes(), readRecentSources()]);
       if (!isMounted) return;
       if (seq === importedThemesSeq.current) {
         setImportedThemes(themes);
         setRecentSources(sources);
       }
-    }
+    };
 
     load().catch((error: unknown) => {
       console.error('[Palette Mimicry] failed to load imported themes', error);
@@ -729,7 +729,7 @@ export function App() {
     if (!entry || currentOutcome !== null) return;
     let cancelled = false;
 
-    async function resolve(currentEntry: QueueEntry): Promise<void> {
+    const resolve = async (currentEntry: QueueEntry): Promise<void> => {
       const content =
         currentEntry.source.kind === 'file'
           ? await currentEntry.source.file.text()
@@ -764,7 +764,7 @@ export function App() {
           message: `${result.error.stage}: ${result.error.message}`,
         });
       }
-    }
+    };
 
     resolve(entry).catch((error: unknown) => {
       if (cancelled) return;
@@ -800,11 +800,11 @@ export function App() {
   };
 
   const handleEnableDiskScan = async (): Promise<void> => {
-    // Re-entrancy guard: a second click on any card's button while the
+    // Reentrancy guard: a second click on any card's button while the
     // first click's request/connect is still in flight must not start a
     // second permission prompt or a second connectHost() race.
     if (hostConnectionRef.current.kind === 'connecting') return;
-    setHostConnection({ kind: 'connecting' });
+    updateHostConnection({ kind: 'connecting' });
 
     if (!hasNativeMessagingPermission) {
       let granted: boolean;
@@ -812,45 +812,45 @@ export function App() {
         granted = await browser.permissions.request({ permissions: ['nativeMessaging'] });
       } catch (error) {
         console.error('[Palette Mimicry] failed to request nativeMessaging permission', error);
-        setHostConnection({ kind: 'idle' });
+        updateHostConnection({ kind: 'idle' });
         return;
       }
       // The user declining the browser's own permission dialog is not a
       // host-absent failure -- no install hint, just revert to idle so
       // every card's button is clickable again.
       if (!granted) {
-        setHostConnection({ kind: 'idle' });
+        updateHostConnection({ kind: 'idle' });
         return;
       }
       setHasNativeMessagingPermission(true);
     }
 
     const result = await connectHost();
-    setHostConnection(
+    updateHostConnection(
       result.ok
         ? { kind: 'connected', session: result.session, close: result.close }
         : { kind: 'error', error: result.error },
     );
   };
 
-  const handleScanCard = async (card: SourceCard): Promise<void> => {
+  const handleScanCard = async ({ id }: SourceCard): Promise<void> => {
     if (hostConnection.kind !== 'connected') return;
-    scanCardIdRef.current = card.id;
-    setScanState({ cardId: card.id, phase: 'loading' });
+    scanCardIdRef.current = id;
+    setScanState({ cardId: id, phase: 'loading' });
 
     const result = await hostConnection.session.enumerate();
     // A different card started its own scan while this enumerate() was in
     // flight -- that card's response already owns `scanState`, so this
     // stale one is dropped instead of clobbering it.
-    if (scanCardIdRef.current !== card.id) return;
+    if (scanCardIdRef.current !== id) return;
     if (!result.ok) {
-      setScanState({ cardId: card.id, phase: 'error', message: result.error.message });
+      setScanState({ cardId: id, phase: 'error', message: result.error.message });
       return;
     }
 
-    const files = result.files.filter((file) => file.sourceId === card.id);
+    const files = result.files.filter((file) => file.sourceId === id);
     setScanState({
-      cardId: card.id,
+      cardId: id,
       phase: 'ready',
       files,
       selected: new Set(files.map((file) => file.path)),
@@ -874,10 +874,11 @@ export function App() {
   const handleToggleSelectAllScanFiles = (): void => {
     setScanState((previous) => {
       if (previous?.phase !== 'ready') return previous;
+      const { selected: previousSelected, files } = previous;
       const selected =
-        previous.selected.size === previous.files.length
+        previousSelected.size === files.length
           ? new Set<string>()
-          : new Set(previous.files.map((file) => file.path));
+          : new Set(files.map((file) => file.path));
       return { ...previous, selected };
     });
   };
@@ -948,23 +949,21 @@ export function App() {
     setSetAsGlobal(false);
   };
 
-  const handlePickForCard = async (card: SourceCard): Promise<void> => {
+  const handlePickForCard = async ({ id, label, pickerExtensions }: SourceCard): Promise<void> => {
     const picker = readFilePicker(window);
     if (!picker) return;
 
     try {
       const options: FilePickerOptions = {
         multiple: true,
-        id: card.id,
-        ...(card.pickerExtensions.length > 0
-          ? {
-              types: [{ description: card.label, accept: { 'text/plain': card.pickerExtensions } }],
-            }
+        id,
+        ...(pickerExtensions.length > 0
+          ? { types: [{ description: label, accept: { 'text/plain': pickerExtensions } }] }
           : {}),
       };
       const handles = await picker(options);
       const files = await Promise.all(handles.map((handle) => handle.getFile()));
-      enqueueFiles(files, card.id);
+      enqueueFiles(files, id);
     } catch (error) {
       // AbortError is the user closing the dialog without picking a file --
       // not a failure worth surfacing.
@@ -1001,7 +1000,7 @@ export function App() {
   };
 
   const handleSave = async (): Promise<void> => {
-    // Re-entrancy guard: a second click or Enter-repeat while the save below
+    // Reentrancy guard: a second click or Enter-repeat while the save below
     // is still in flight must not re-enter this function -- both the button
     // and Skip are also disabled while isSaving, but this is the guard that
     // actually matters (disabled attributes only stop DOM events, not a
