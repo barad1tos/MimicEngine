@@ -20,13 +20,13 @@ func TestStubRegistry_EveryMethodReportsUnsupported(t *testing.T) {
 	if _, err := reg.keyExists("Software\\X"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("keyExists() error = %v, want errRegistryUnsupported", err)
 	}
-	if _, _, err := reg.value("Software\\X", "name"); !errors.Is(err, errRegistryUnsupported) {
+	if _, _, err := reg.value("Software\\X"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("value() error = %v, want errRegistryUnsupported", err)
 	}
-	if err := reg.setValue("Software\\X", "name", "data"); !errors.Is(err, errRegistryUnsupported) {
+	if err := reg.setValue("Software\\X", "data"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("setValue() error = %v, want errRegistryUnsupported", err)
 	}
-	if err := reg.deleteValue("Software\\X", "name"); !errors.Is(err, errRegistryUnsupported) {
+	if err := reg.deleteValue("Software\\X"); !errors.Is(err, errRegistryUnsupported) {
 		t.Errorf("deleteValue() error = %v, want errRegistryUnsupported", err)
 	}
 }

@@ -44,7 +44,7 @@ func removeManifest(t Target, reg RegistryWriter) error {
 	if t.RegistryPath == "" {
 		return nil
 	}
-	if err := reg.deleteValue(t.RegistryPath, HostName); err != nil {
+	if err := reg.deleteValue(t.RegistryPath); err != nil {
 		return fmt.Errorf("removing registry value under %q: %w", t.RegistryPath, err)
 	}
 	return nil

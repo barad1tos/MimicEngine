@@ -12,11 +12,23 @@ import (
 // Every target's Dir is this app's OWN manifest storage folder under
 // %APPDATA%\MimicEngine — unlike the POSIX targets, nothing else ever
 // creates or writes there, so (unlike POSIX) Dir carries no detection
-// signal; targetDetected checks RegistryPath instead, matching the
-// registry key another native-messaging app may already have created for
-// that browser. Chromium-family browsers all read the same manifest
-// content (one --extension-id per install run), so they share one
-// manifest file; Firefox gets its own.
+// signal; targetDetected checks RegistryPath instead.
+//
+// RegistryPath is the FULL key Chrome/Firefox actually read a native-
+// messaging host from — the browser-specific NativeMessagingHosts key plus
+// the host-name leaf, e.g.
+// `Software\Google\Chrome\NativeMessagingHosts\`+HostName — whose DEFAULT
+// value must hold the manifest's absolute path (see registry.go's
+// RegistryWriter doc). That makes Windows detection narrower than the
+// POSIX per-family-dir signal: it reflects whether THIS host is already
+// registered for that browser, not merely whether the browser supports
+// native messaging at all. That's the shape the browser itself reads, so
+// it's authoritative here regardless of the detection-breadth tradeoff;
+// `install --browsers` remains the escape hatch for a browser this host
+// has never been installed into yet (see ResolveCandidates in detect.go).
+// Chromium-family browsers all read the same manifest content (one
+// --extension-id per install run), so they share one manifest file;
+// Firefox gets its own.
 //
 // Arc and Dia have no verified Windows registry path, so no targets exist
 // for them here — mirrors sandbox/rules_windows.go omitting kitty/Ghostty/
@@ -34,27 +46,27 @@ func platformTargets(home string) []Target {
 	return []Target{
 		{
 			ID: "chrome", Name: "Google Chrome", Family: Chromium, Dir: chromiumDir,
-			RegistryPath: `Software\Google\Chrome\NativeMessagingHosts`,
+			RegistryPath: `Software\Google\Chrome\NativeMessagingHosts\` + HostName,
 		},
 		{
 			ID: "chromium", Name: "Chromium", Family: Chromium, Dir: chromiumDir,
-			RegistryPath: `Software\Chromium\NativeMessagingHosts`,
+			RegistryPath: `Software\Chromium\NativeMessagingHosts\` + HostName,
 		},
 		{
 			ID: "brave", Name: "Brave", Family: Chromium, Dir: chromiumDir,
-			RegistryPath: `Software\BraveSoftware\Brave-Browser\NativeMessagingHosts`,
+			RegistryPath: `Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\` + HostName,
 		},
 		{
 			ID: "edge", Name: "Microsoft Edge", Family: Chromium, Dir: chromiumDir,
-			RegistryPath: `Software\Microsoft\Edge\NativeMessagingHosts`,
+			RegistryPath: `Software\Microsoft\Edge\NativeMessagingHosts\` + HostName,
 		},
 		{
 			ID: "vivaldi", Name: "Vivaldi", Family: Chromium, Dir: chromiumDir,
-			RegistryPath: `Software\Vivaldi\NativeMessagingHosts`,
+			RegistryPath: `Software\Vivaldi\NativeMessagingHosts\` + HostName,
 		},
 		{
 			ID: "firefox", Name: "Firefox", Family: Firefox, Dir: firefoxDir,
-			RegistryPath: `Software\Mozilla\NativeMessagingHosts`,
+			RegistryPath: `Software\Mozilla\NativeMessagingHosts\` + HostName,
 		},
 	}
 }

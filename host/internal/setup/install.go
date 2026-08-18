@@ -44,8 +44,10 @@ func Install(candidates []Target, opts ManifestOptions, reg RegistryWriter) (Ins
 }
 
 // writeManifest renders and writes t's manifest file, creating t.Dir if
-// necessary, then — for a Windows target — points t.RegistryPath's
-// HostName value at the file it just wrote.
+// necessary, then — for a Windows target — points t.RegistryPath's default
+// value at the file it just wrote. If that registry write fails, the just
+// -written manifest file is removed again (best-effort) rather than left
+// behind orphaned and invisible to registry-keyed detection.
 func writeManifest(t Target, opts ManifestOptions, reg RegistryWriter) error {
 	body, err := buildManifest(t.Family, opts)
 	if err != nil {
@@ -64,7 +66,14 @@ func writeManifest(t Target, opts ManifestOptions, reg RegistryWriter) error {
 	if t.RegistryPath == "" {
 		return nil
 	}
-	if err := reg.setValue(t.RegistryPath, HostName, path); err != nil {
+	if err := reg.setValue(t.RegistryPath, path); err != nil {
+		// The manifest file is now orphaned: Windows detection is
+		// registry-keyed (targetDetected), so a file with no registry
+		// pointer is invisible to it, and a later plain `uninstall`
+		// (scoped to whatever ResolveCandidates detects) would never find
+		// it to remove. Best-effort clean it up rather than leave a stray
+		// file behind — the registry error is still what's reported.
+		_ = os.Remove(path)
 		return fmt.Errorf("registering in %q: %w", t.RegistryPath, err)
 	}
 	return nil

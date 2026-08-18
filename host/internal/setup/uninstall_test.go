@@ -25,7 +25,7 @@ func TestInstallUninstall_RoundTripLeavesNoResidue(t *testing.T) {
 			t.Fatalf("manifest for %s not written: %v", tg.ID, err)
 		}
 	}
-	if _, present, _ := reg.value(targets[1].RegistryPath, HostName); !present {
+	if _, present, _ := reg.value(targets[1].RegistryPath); !present {
 		t.Fatal("registry value not written for the windows-style target")
 	}
 
@@ -42,7 +42,7 @@ func TestInstallUninstall_RoundTripLeavesNoResidue(t *testing.T) {
 			t.Fatalf("manifest for %s still present after uninstall: err=%v", tg.ID, err)
 		}
 	}
-	if _, present, _ := reg.value(targets[1].RegistryPath, HostName); present {
+	if _, present, _ := reg.value(targets[1].RegistryPath); present {
 		t.Fatal("registry value still present after uninstall")
 	}
 }

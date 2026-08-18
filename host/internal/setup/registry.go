@@ -2,10 +2,16 @@ package setup
 
 // RegistryWriter abstracts the HKEY_CURRENT_USER registry operations
 // Detect, Install, Uninstall, and Doctor need for a Windows Target's
-// RegistryPath: whether a browser's own NativeMessagingHosts key already
-// exists (detection — the Windows analogue of a POSIX Target's Dir already
-// existing), reading and writing this host's value under it, and removing
-// that value again on uninstall.
+// RegistryPath: whether the host's own native-messaging key already exists
+// (detection — the Windows analogue of a POSIX Target's Dir already
+// existing), and reading/writing/removing that key's DEFAULT (unnamed)
+// value. This is the actual shape Chrome/Firefox read a native-messaging
+// host from: RegistryPath is the FULL key including the host-name subkey
+// (e.g. `Software\Google\Chrome\NativeMessagingHosts\`+HostName, built in
+// targets_windows.go), and the browser reads that key's default value for
+// the manifest's absolute path — not a value named after the host under a
+// shared parent key. Every value operation below targets that default
+// value; there is no named-value variant in this contract.
 //
 // Exported because NewRegistryWriter's caller lives outside this package
 // (cmd/mimicengine-host/main.go): every POSIX Target leaves RegistryPath
@@ -22,14 +28,14 @@ package setup
 type RegistryWriter interface {
 	// keyExists reports whether path exists under HKEY_CURRENT_USER.
 	keyExists(path string) (bool, error)
-	// value reads name's data under path. present is false, not an error,
-	// when the key or the value does not exist — an expected outcome for
-	// doctor's read side, not a fault.
-	value(path, name string) (data string, present bool, err error)
-	// setValue creates path if it does not already exist and writes
-	// name=data under it.
-	setValue(path, name, data string) error
-	// deleteValue removes name under path. Deleting a value that is
+	// value reads path's default (unnamed) value. present is false, not an
+	// error, when the key or its default value does not exist — an
+	// expected outcome for doctor's read side, not a fault.
+	value(path string) (data string, present bool, err error)
+	// setValue creates path if it does not already exist and writes data
+	// into its default (unnamed) value.
+	setValue(path, data string) error
+	// deleteValue removes path's default value. Deleting a value that is
 	// already absent is not an error — uninstall must stay idempotent.
-	deleteValue(path, name string) error
+	deleteValue(path string) error
 }

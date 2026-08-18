@@ -1,8 +1,11 @@
 // Command mimicengine-host is the native-messaging host Chrome/Firefox spawn
 // to let the MimicEngine extension discover and read theme files from disk.
-// Run with no arguments, it speaks the framed stdio protocol the browser
-// expects; run with install, uninstall, or doctor, it manages its own
-// native-messaging manifests instead.
+// Run with install, uninstall, doctor, or version, it manages its own
+// native-messaging manifests or reports its build version; run with any
+// other argv shape — including what the browser itself passes when it
+// spawns this host (a Chromium extension origin, or a Firefox manifest-path
+// + extension-id pair) — it speaks the framed stdio protocol the browser
+// expects.
 package main
 
 import (
@@ -13,6 +16,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/barad1tos/MimicEngine/host/internal/ops"
@@ -36,30 +40,42 @@ func main() {
 	}
 }
 
-// run dispatches os.Args[1:] to the stdio serve loop (no arguments — the
-// shape Chrome/Firefox spawn the host with) or to one of the setup
-// subcommands. It is separated from main so tests can drive it with
-// synthetic argv without exiting the test binary.
+// run dispatches os.Args[1:] to one of the setup subcommands on an EXACT
+// match of args[0], or to the stdio serve loop for anything else.
+//
+// "anything else" is deliberate, not a fallback for an unrecognized
+// subcommand: Chrome and Firefox spawn this host with their OWN argv, never
+// empty — Chrome passes the extension's origin ("chrome-extension://<id>/"
+// and sometimes "--parent-window=..."), Firefox passes the manifest path
+// followed by the extension id. Neither shape matches a setup subcommand,
+// so treating any non-matching args[0] as an error (as an early version of
+// this dispatch did) made serve() unreachable from every real browser
+// launch — see task-4-report.md's Fix round 3, finding C1. Only the four
+// literal subcommand names below are ever treated as commands; every other
+// argv shape — including a genuine typo — falls through to serve.
+//
+// run is separated from main so tests can drive it with synthetic argv
+// without exiting the test binary.
 func run(args []string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving user home directory: %w", err)
 	}
 
-	if len(args) == 0 {
-		return serve(home)
+	if len(args) > 0 {
+		switch args[0] {
+		case "install":
+			return runInstall(args[1:], os.Stdin, os.Stdout, home)
+		case "uninstall":
+			return runUninstall(args[1:], os.Stdin, os.Stdout, home)
+		case "doctor":
+			return runDoctor(args[1:], os.Stdout, home)
+		case "version":
+			return runVersion(os.Stdout)
+		}
 	}
 
-	switch args[0] {
-	case "install":
-		return runInstall(args[1:], os.Stdin, os.Stdout, home)
-	case "uninstall":
-		return runUninstall(args[1:], os.Stdin, os.Stdout, home)
-	case "doctor":
-		return runDoctor(args[1:], os.Stdout, home)
-	default:
-		return fmt.Errorf("unknown subcommand %q (want install, uninstall, doctor, or no arguments to serve)", args[0])
-	}
+	return serve(home)
 }
 
 // serve runs the native-messaging stdio loop Chrome/Firefox spawn the host
@@ -77,6 +93,14 @@ func serve(home string) error {
 	return ops.Serve(os.Stdin, writer, version, box)
 }
 
+// runVersion writes the build-time version stamped via
+// -ldflags "-X main.version=..." to stdout, unadorned so scripts can
+// consume it directly.
+func runVersion(stdout io.Writer) error {
+	_, err := fmt.Fprintln(stdout, version)
+	return err
+}
+
 // runInstall parses install's flags, resolves which browsers to target,
 // confirms with the user (unless --yes), and writes their native-messaging
 // manifests. stdin/stdout are injected so tests exercise the full
@@ -86,7 +110,7 @@ func runInstall(args []string, stdin io.Reader, stdout io.Writer, home string) e
 	yes := fs.Bool("yes", false, "install without an interactive confirmation prompt")
 	browsers := fs.String("browsers", "", "comma-separated browser ids to install (default: every detected browser)")
 	dev := fs.Bool("dev", false, "tag the manifest description as a dev build")
-	binary := fs.String("binary", "", "override the manifest's binary path (default: this executable's own path)")
+	binary := fs.String("binary", "", "override the manifest's binary path (default: this executable's own path; a relative value is resolved to absolute)")
 	extensionID := fs.String("extension-id", "", "Chromium extension id (required for any Chromium-family browser)")
 	geckoID := fs.String("gecko-id", "", "Firefox extension id (default: "+setup.DefaultGeckoID+")")
 	if err := fs.Parse(args); err != nil {
@@ -126,6 +150,15 @@ func runInstall(args []string, stdin io.Reader, stdout io.Writer, home string) e
 		}
 		binaryPath = resolved
 	}
+	// Chrome/Firefox require an absolute "path" in the manifest; a relative
+	// --binary would otherwise land in the manifest verbatim and resolve
+	// against whatever directory the browser happens to spawn the host
+	// from, not the directory install was run in.
+	absBinaryPath, err := filepath.Abs(binaryPath)
+	if err != nil {
+		return fmt.Errorf("resolving absolute path for %q: %w", binaryPath, err)
+	}
+	binaryPath = absBinaryPath
 
 	result, err := setup.Install(candidates, setup.ManifestOptions{
 		ExtensionID: *extensionID,
