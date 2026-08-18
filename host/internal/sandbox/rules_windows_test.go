@@ -32,12 +32,12 @@ func TestPlatformRules_Windows_FixtureLayout(t *testing.T) {
 
 	box := mustNewBox(t, platformRules(home))
 
-	results, err := box.Enumerate(10000, 500)
+	result, err := box.Enumerate(10000, 500)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	found := make(map[string]string, len(results))
-	for _, r := range results {
+	found := make(map[string]string, len(result.Files))
+	for _, r := range result.Files {
 		found[r.Path] = r.SourceID
 	}
 

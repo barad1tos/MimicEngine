@@ -13,7 +13,8 @@ type Request struct {
 
 // ErrorBody carries a machine-checkable error code alongside a human-readable
 // message. Codes are drawn from the protocol's fixed vocabulary:
-// path-denied, not-found, too-large, bad-request, unsupported-op.
+// path-denied, not-found, too-large, bad-request, unsupported-op,
+// internal-error.
 type ErrorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

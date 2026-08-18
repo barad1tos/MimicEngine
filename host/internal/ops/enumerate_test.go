@@ -14,21 +14,21 @@ import (
 // handleEnumerate actually threads the spec's caps through rather than
 // hardcoding its own.
 type fakeEnumerator struct {
-	results []sandbox.FileInfo
-	err     error
+	result sandbox.EnumerateResult
+	err    error
 
 	gotBudget, gotMaxResults int
 }
 
-func (f *fakeEnumerator) Enumerate(budget, maxResults int) ([]sandbox.FileInfo, error) {
+func (f *fakeEnumerator) Enumerate(budget, maxResults int) (sandbox.EnumerateResult, error) {
 	f.gotBudget, f.gotMaxResults = budget, maxResults
-	return f.results, f.err
+	return f.result, f.err
 }
 
 func TestHandleEnumerate_Success(t *testing.T) {
-	files := &fakeEnumerator{results: []sandbox.FileInfo{
+	files := &fakeEnumerator{result: sandbox.EnumerateResult{Files: []sandbox.FileInfo{
 		{Path: "/home/user/.config/alacritty/alacritty.toml", Size: 42, ModifiedAt: "2026-08-18T00:00:00Z", SourceID: "alacritty"},
-	}}
+	}}}
 
 	got := handleEnumerate(protocol.Request{ID: 7}, files)
 
@@ -38,15 +38,16 @@ func TestHandleEnumerate_Success(t *testing.T) {
 		Files: []enumerateFileEnvelope{
 			{Path: "/home/user/.config/alacritty/alacritty.toml", Size: 42, ModifiedAt: "2026-08-18T00:00:00Z", SourceID: "alacritty"},
 		},
+		Truncated: false,
 	}
-	if diff, ok := got.(enumerateEnvelope); !ok || diff.ID != want.ID || diff.OK != want.OK || len(diff.Files) != 1 || diff.Files[0] != want.Files[0] {
+	if diff, ok := got.(enumerateEnvelope); !ok || diff.ID != want.ID || diff.OK != want.OK || diff.Truncated != want.Truncated || len(diff.Files) != 1 || diff.Files[0] != want.Files[0] {
 		t.Fatalf("handleEnumerate() = %+v, want %+v", got, want)
 	}
 }
 
 // TestHandleEnumerate_JSONShape pins the exact wire field names the spec
-// requires (path/size/modifiedAt/sourceId) and that an empty result set
-// serializes as [] rather than JSON null.
+// requires (path/size/modifiedAt/sourceId/truncated) and that an empty
+// result set serializes files as [] rather than JSON null.
 func TestHandleEnumerate_JSONShape(t *testing.T) {
 	got := handleEnumerate(protocol.Request{ID: 1}, &fakeEnumerator{})
 
@@ -54,9 +55,27 @@ func TestHandleEnumerate_JSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	const want = `{"id":1,"ok":true,"files":[]}`
+	const want = `{"id":1,"ok":true,"files":[],"truncated":false}`
 	if string(data) != want {
 		t.Fatalf("json = %s, want %s", data, want)
+	}
+}
+
+// TestHandleEnumerate_TruncatedPassesThrough pins that a truncated scan
+// (walk budget or result cap cut short — see sandbox.EnumerateResult) is
+// reported on the wire, not silently dropped between sandbox.Box.Enumerate
+// and the enumerate response envelope.
+func TestHandleEnumerate_TruncatedPassesThrough(t *testing.T) {
+	files := &fakeEnumerator{result: sandbox.EnumerateResult{Truncated: true}}
+
+	got := handleEnumerate(protocol.Request{ID: 1}, files)
+
+	env, ok := got.(enumerateEnvelope)
+	if !ok {
+		t.Fatalf("handleEnumerate() = %T, want enumerateEnvelope", got)
+	}
+	if !env.Truncated {
+		t.Fatal("enumerateEnvelope.Truncated = false, want true")
 	}
 }
 

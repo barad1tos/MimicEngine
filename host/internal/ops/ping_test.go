@@ -19,7 +19,9 @@ import (
 // of using these.
 type stubFileProvider struct{}
 
-func (stubFileProvider) Enumerate(int, int) ([]sandbox.FileInfo, error) { return nil, nil }
+func (stubFileProvider) Enumerate(int, int) (sandbox.EnumerateResult, error) {
+	return sandbox.EnumerateResult{}, nil
+}
 
 func (stubFileProvider) Open(string) (*os.File, error) {
 	return nil, errors.New("stubFileProvider: Open not implemented")

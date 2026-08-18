@@ -25,8 +25,8 @@ type dispatchFake struct {
 
 func (d *dispatchFake) SourceIDs() []string { return d.ids }
 
-func (d *dispatchFake) Enumerate(int, int) ([]sandbox.FileInfo, error) {
-	return d.enumerateResults, nil
+func (d *dispatchFake) Enumerate(int, int) (sandbox.EnumerateResult, error) {
+	return sandbox.EnumerateResult{Files: d.enumerateResults}, nil
 }
 
 func (d *dispatchFake) Open(string) (*os.File, error) { return d.openFile, nil }

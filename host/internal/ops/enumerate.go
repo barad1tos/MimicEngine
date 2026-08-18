@@ -16,7 +16,7 @@ const (
 // enumerator reports the allow-listed files handleEnumerate can list.
 // *sandbox.Box satisfies this.
 type enumerator interface {
-	Enumerate(budget, maxResults int) ([]sandbox.FileInfo, error)
+	Enumerate(budget, maxResults int) (sandbox.EnumerateResult, error)
 }
 
 // enumerateFileEnvelope is one file's wire shape inside an enumerate
@@ -29,10 +29,15 @@ type enumerateFileEnvelope struct {
 }
 
 // enumerateEnvelope is the wire shape of a successful enumerate response.
+// Truncated mirrors sandbox.EnumerateResult.Truncated: true when the
+// spec-mandated walk-budget or result-count cap cut the scan short, so the
+// caller knows Files may be an incomplete view of the allowlist rather than
+// a genuinely empty or complete one.
 type enumerateEnvelope struct {
-	ID    int64                   `json:"id"`
-	OK    bool                    `json:"ok"`
-	Files []enumerateFileEnvelope `json:"files"`
+	ID        int64                   `json:"id"`
+	OK        bool                    `json:"ok"`
+	Files     []enumerateFileEnvelope `json:"files"`
+	Truncated bool                    `json:"truncated"`
 }
 
 // handleEnumerate lists every allow-listed file files can discover, capped
@@ -45,13 +50,13 @@ type enumerateEnvelope struct {
 // shapes (enumerateEnvelope vs errorEnvelope), and out.Send already accepts
 // either.
 func handleEnumerate(req protocol.Request, files enumerator) any {
-	results, err := files.Enumerate(walkBudget, maxResults)
+	result, err := files.Enumerate(walkBudget, maxResults)
 	if err != nil {
 		return newErrorEnvelope(req.ID, codeInternalError, err.Error())
 	}
 
-	wire := make([]enumerateFileEnvelope, 0, len(results))
-	for _, f := range results {
+	wire := make([]enumerateFileEnvelope, 0, len(result.Files))
+	for _, f := range result.Files {
 		wire = append(wire, enumerateFileEnvelope{
 			Path:       f.Path,
 			Size:       f.Size,
@@ -60,5 +65,5 @@ func handleEnumerate(req protocol.Request, files enumerator) any {
 		})
 	}
 
-	return enumerateEnvelope{ID: req.ID, OK: true, Files: wire}
+	return enumerateEnvelope{ID: req.ID, OK: true, Files: wire, Truncated: result.Truncated}
 }
