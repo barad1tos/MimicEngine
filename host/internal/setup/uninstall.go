@@ -17,6 +17,11 @@ type UninstallResult struct {
 // the registry value pointing at it. Both removals are idempotent: a
 // manifest file or registry value that is already absent is not an error,
 // so uninstall stays safe to run more than once.
+//
+// A non-nil error from a removal failure partway through candidates does
+// not invalidate the returned UninstallResult: it still reports the
+// targets successfully removed before the failure, so callers can show
+// exactly what was and wasn't touched.
 func Uninstall(candidates []Target, reg RegistryWriter) (UninstallResult, error) {
 	removed := make([]Target, 0, len(candidates))
 	for _, t := range candidates {
