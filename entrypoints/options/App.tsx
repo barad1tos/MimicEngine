@@ -16,6 +16,7 @@ import {
 } from '@/src/core/themes/import/importTypes';
 import {
   detectPlatform,
+  FILE_CARD_ID,
   orderSourceCards,
   type SourceCard,
 } from '@/src/core/themes/import/sourceCatalog';
@@ -124,12 +125,19 @@ type HostConnectionState =
 // panel renders under the right card.
 type ScanState =
   | { cardId: string; phase: 'loading' }
-  | { cardId: string; phase: 'ready'; files: readonly HostFile[]; selected: ReadonlySet<string> }
+  | {
+      cardId: string;
+      phase: 'ready';
+      files: readonly HostFile[];
+      selected: ReadonlySet<string>;
+      truncated: boolean;
+    }
   | {
       cardId: string;
       phase: 'importing';
       files: readonly HostFile[];
       selected: ReadonlySet<string>;
+      truncated: boolean;
     }
   | { cardId: string; phase: 'error'; message: string };
 
@@ -345,9 +353,17 @@ function ScanPanel({
     );
   }
 
+  const truncatedHint = state.truncated ? (
+    <p className="source-card-hint">
+      Scan hit the safety budget — some files may be missing; narrow your theme folders or import
+      manually.
+    </p>
+  ) : null;
+
   if (state.files.length === 0) {
     return (
       <div className="scan-panel">
+        {truncatedHint}
         <p className="empty-hint">No files found.</p>
         <button type="button" className="secondary" onClick={onCancel}>
           Close
@@ -361,6 +377,7 @@ function ScanPanel({
 
   return (
     <div className="scan-panel">
+      {truncatedHint}
       <label className="row">
         <span>Select all ({state.files.length.toString()})</span>
         <input
@@ -459,13 +476,15 @@ function SourceCardView({
       </div>
       <SourceCardPaths card={card} paths={paths} platform={platform} onCopy={handleCopy} />
       {card.instructions && <p className="source-card-instructions">{card.instructions}</p>}
-      <div className="source-card-host-row">
-        <SourceCardHostRow
-          hostStatus={hostStatus}
-          onEnableDiskScan={onEnableDiskScan}
-          onScan={() => onScan(card)}
-        />
-      </div>
+      {card.id !== FILE_CARD_ID && (
+        <div className="source-card-host-row">
+          <SourceCardHostRow
+            hostStatus={hostStatus}
+            onEnableDiskScan={onEnableDiskScan}
+            onScan={() => onScan(card)}
+          />
+        </div>
+      )}
       {scanState?.cardId === card.id && (
         <ScanPanel
           state={scanState}
@@ -835,6 +854,7 @@ export function App() {
       phase: 'ready',
       files,
       selected: new Set(files.map((file) => file.path)),
+      truncated: result.truncated,
     });
   };
 

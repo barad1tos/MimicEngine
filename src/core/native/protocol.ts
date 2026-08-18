@@ -45,7 +45,12 @@ export type HostPingResponse = {
   sourceIds: string[];
 };
 
-export type HostEnumerateResponse = { id: number; ok: true; files: HostFile[] };
+export type HostEnumerateResponse = {
+  id: number;
+  ok: true;
+  files: HostFile[];
+  truncated: boolean;
+};
 export type HostReadResponse = { id: number; ok: true; content: string };
 export type HostErrorResponse = {
   id: number;
@@ -91,7 +96,8 @@ export function isHostEnumerateResponse(value: unknown): value is HostEnumerateR
     typeof value.id === 'number' &&
     value.ok === true &&
     Array.isArray(value.files) &&
-    value.files.every(isFileShape)
+    value.files.every(isFileShape) &&
+    typeof value.truncated === 'boolean'
   );
 }
 
