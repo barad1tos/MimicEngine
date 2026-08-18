@@ -1,0 +1,5 @@
+/mimicengine-host
+/cmd/mimicengine-host/mimicengine-host
+/dist/
+*.test
+*.out
