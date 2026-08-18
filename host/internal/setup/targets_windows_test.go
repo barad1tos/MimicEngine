@@ -14,8 +14,7 @@ import "testing"
 // prefix or suffix check, is what makes the OS contract fail loudly on any
 // future accidental edit.
 func TestPlatformTargets_Windows_RegistryPathsMatchBrowserContract(t *testing.T) {
-	home := t.TempDir()
-	targets := platformTargets(home)
+	got := platformTargetsByID(t)
 
 	want := map[string]string{
 		"chrome":   `Software\Google\Chrome\NativeMessagingHosts\` + HostName,
@@ -26,19 +25,39 @@ func TestPlatformTargets_Windows_RegistryPathsMatchBrowserContract(t *testing.T)
 		"firefox":  `Software\Mozilla\NativeMessagingHosts\` + HostName,
 	}
 
-	got := make(map[string]Target, len(targets))
-	for _, tg := range targets {
-		got[tg.ID] = tg
-	}
+	// The exact key Chrome/Firefox read — not just a prefix/suffix match, so
+	// a future accidental edit fails loudly.
+	assertTargetField(t, got, want, "RegistryPath", func(tg Target) string { return tg.RegistryPath })
+}
 
-	for id, wantPath := range want {
+// platformTargetsByID runs platformTargets against a fresh temp home and
+// indexes the result by ID, the lookup shape every test in this file that
+// checks individual targets' fields needs.
+func platformTargetsByID(t *testing.T) map[string]Target {
+	t.Helper()
+
+	targets := platformTargets(t.TempDir())
+	byID := make(map[string]Target, len(targets))
+	for _, tg := range targets {
+		byID[tg.ID] = tg
+	}
+	return byID
+}
+
+// assertTargetField checks field(tg) against every id/value pair in want,
+// failing loudly on a missing id or a mismatched value — the shared
+// assertion loop every field-pinning test in this file needs.
+func assertTargetField(t *testing.T, got map[string]Target, want map[string]string, fieldName string, field func(Target) string) {
+	t.Helper()
+
+	for id, wantValue := range want {
 		tg, ok := got[id]
 		if !ok {
 			t.Errorf("platformTargets(home) is missing id %q", id)
 			continue
 		}
-		if tg.RegistryPath != wantPath {
-			t.Errorf("%s.RegistryPath = %q, want %q (the exact key Chrome/Firefox read)", id, tg.RegistryPath, wantPath)
+		if got := field(tg); got != wantValue {
+			t.Errorf("%s.%s = %q, want %q", id, fieldName, got, wantValue)
 		}
 	}
 }
@@ -49,8 +68,7 @@ func TestPlatformTargets_Windows_RegistryPathsMatchBrowserContract(t *testing.T)
 // BrowserMarkerKey under the standard Windows "App Paths" registration
 // convention, distinct from RegistryPath (our own host's key).
 func TestPlatformTargets_Windows_BrowserMarkerKeysAreAppPaths(t *testing.T) {
-	home := t.TempDir()
-	targets := platformTargets(home)
+	got := platformTargetsByID(t)
 
 	const appPaths = `Software\Microsoft\Windows\CurrentVersion\App Paths\`
 	want := map[string]string{
@@ -62,21 +80,10 @@ func TestPlatformTargets_Windows_BrowserMarkerKeysAreAppPaths(t *testing.T) {
 		"chromium": "", // no verified App Paths entry; documented gap
 	}
 
-	got := make(map[string]Target, len(targets))
-	for _, tg := range targets {
-		got[tg.ID] = tg
-	}
+	assertTargetField(t, got, want, "BrowserMarkerKey", func(tg Target) string { return tg.BrowserMarkerKey })
 
-	for id, wantKey := range want {
-		tg, ok := got[id]
-		if !ok {
-			t.Errorf("platformTargets(home) is missing id %q", id)
-			continue
-		}
-		if tg.BrowserMarkerKey != wantKey {
-			t.Errorf("%s.BrowserMarkerKey = %q, want %q", id, tg.BrowserMarkerKey, wantKey)
-		}
-		if tg.BrowserMarkerKey == tg.RegistryPath {
+	for id, tg := range got {
+		if tg.BrowserMarkerKey != "" && tg.BrowserMarkerKey == tg.RegistryPath {
 			t.Errorf("%s.BrowserMarkerKey must not equal RegistryPath — they answer different questions (browser presence vs our host's own installed state)", id)
 		}
 	}
