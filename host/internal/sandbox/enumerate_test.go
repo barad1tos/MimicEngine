@@ -20,17 +20,20 @@ func TestEnumerate_WalkBudgetStops(t *testing.T) {
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
 	const budget = 5
-	results, err := box.Enumerate(budget, 1000)
+	result, err := box.Enumerate(budget, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
 
-	if len(results) >= planted {
+	if len(result.Files) >= planted {
 		t.Fatalf("Enumerate did not stop at the walk budget: got %d results from %d planted files (budget=%d)",
-			len(results), planted, budget)
+			len(result.Files), planted, budget)
 	}
-	if len(results) > budget {
-		t.Fatalf("Enumerate returned %d results, more than the budget (%d) allows", len(results), budget)
+	if len(result.Files) > budget {
+		t.Fatalf("Enumerate returned %d results, more than the budget (%d) allows", len(result.Files), budget)
+	}
+	if !result.Truncated {
+		t.Fatal("Enumerate() Truncated = false, want true when the walk budget is exhausted")
 	}
 }
 
@@ -54,14 +57,17 @@ func TestEnumerate_WalkBudgetSharedAcrossRoots(t *testing.T) {
 	// 11) must not let rootB contribute any results — the budget is shared
 	// across the whole Enumerate call, not reset per root.
 	const budget = 11
-	results, err := box.Enumerate(budget, 1000)
+	result, err := box.Enumerate(budget, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	for _, r := range results {
+	for _, r := range result.Files {
 		if r.SourceID == "b" {
 			t.Fatalf("Enumerate() included a rootB result (%s) after the shared budget was exhausted by rootA", r.Path)
 		}
+	}
+	if !result.Truncated {
+		t.Fatal("Enumerate() Truncated = false, want true when the shared walk budget is exhausted")
 	}
 }
 
@@ -76,12 +82,15 @@ func TestEnumerate_ResultCap(t *testing.T) {
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
 	const maxResults = 3
-	results, err := box.Enumerate(10000, maxResults)
+	result, err := box.Enumerate(10000, maxResults)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	if len(results) != maxResults {
-		t.Fatalf("Enumerate() returned %d results, want exactly %d (the cap)", len(results), maxResults)
+	if len(result.Files) != maxResults {
+		t.Fatalf("Enumerate() returned %d results, want exactly %d (the cap)", len(result.Files), maxResults)
+	}
+	if !result.Truncated {
+		t.Fatal("Enumerate() Truncated = false, want true when the result cap is hit with more matches left unwalked")
 	}
 }
 
@@ -95,15 +104,18 @@ func TestEnumerate_SortedByPath(t *testing.T) {
 
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
-	results, err := box.Enumerate(1000, 1000)
+	result, err := box.Enumerate(1000, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	if len(results) != 3 {
-		t.Fatalf("len(results) = %d, want 3", len(results))
+	if len(result.Files) != 3 {
+		t.Fatalf("len(result.Files) = %d, want 3", len(result.Files))
 	}
-	if !sort.SliceIsSorted(results, func(i, j int) bool { return results[i].Path < results[j].Path }) {
-		t.Fatalf("Enumerate() results not sorted by path: %+v", results)
+	if !sort.SliceIsSorted(result.Files, func(i, j int) bool { return result.Files[i].Path < result.Files[j].Path }) {
+		t.Fatalf("Enumerate() results not sorted by path: %+v", result.Files)
+	}
+	if result.Truncated {
+		t.Fatal("Enumerate() Truncated = true, want false when neither the walk budget nor the result cap was hit")
 	}
 }
 
@@ -118,12 +130,12 @@ func TestEnumerate_PatternMissNotEnumerated(t *testing.T) {
 
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
-	results, err := box.Enumerate(1000, 1000)
+	result, err := box.Enumerate(1000, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	if len(results) != 1 || results[0].Path != matching {
-		t.Fatalf("Enumerate() = %+v, want exactly one result for %s", results, matching)
+	if len(result.Files) != 1 || result.Files[0].Path != matching {
+		t.Fatalf("Enumerate() = %+v, want exactly one result for %s", result.Files, matching)
 	}
 }
 
@@ -137,11 +149,11 @@ func TestEnumerate_SymlinkedFileEscapesDenied(t *testing.T) {
 
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
-	results, err := box.Enumerate(1000, 1000)
+	result, err := box.Enumerate(1000, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	for _, r := range results {
+	for _, r := range result.Files {
 		if r.Path == secret {
 			t.Fatalf("Enumerate() included %s via an escaping symlink, want it denied", secret)
 		}
@@ -161,14 +173,14 @@ func TestEnumerate_SymlinkedFileWithinAllowlistResolves(t *testing.T) {
 
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
-	results, err := box.Enumerate(1000, 1000)
+	result, err := box.Enumerate(1000, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
 	// Both the symlink and its target resolve to the same allow-listed
 	// file, so exactly one entry — the resolved real path — is expected.
-	if len(results) != 1 || results[0].Path != realFile {
-		t.Fatalf("Enumerate() = %+v, want exactly one result for %s", results, realFile)
+	if len(result.Files) != 1 || result.Files[0].Path != realFile {
+		t.Fatalf("Enumerate() = %+v, want exactly one result for %s", result.Files, realFile)
 	}
 }
 
@@ -183,12 +195,12 @@ func TestEnumerate_SymlinkedDirNotFollowed(t *testing.T) {
 
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
-	results, err := box.Enumerate(1000, 1000)
+	result, err := box.Enumerate(1000, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	if len(results) != 0 {
-		t.Fatalf("Enumerate() = %+v, want 0 (WalkDir must not descend into a symlinked directory)", results)
+	if len(result.Files) != 0 {
+		t.Fatalf("Enumerate() = %+v, want 0 (WalkDir must not descend into a symlinked directory)", result.Files)
 	}
 }
 
@@ -197,12 +209,12 @@ func TestEnumerate_MissingRootReturnsEmpty(t *testing.T) {
 	root := filepath.Join(home, "never-created")
 	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
 
-	results, err := box.Enumerate(1000, 1000)
+	result, err := box.Enumerate(1000, 1000)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
-	if len(results) != 0 {
-		t.Fatalf("Enumerate() = %d results, want 0 for a missing root", len(results))
+	if len(result.Files) != 0 {
+		t.Fatalf("Enumerate() = %d results, want 0 for a missing root", len(result.Files))
 	}
 }
 

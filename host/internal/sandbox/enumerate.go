@@ -17,6 +17,17 @@ type FileInfo struct {
 	SourceID   string
 }
 
+// EnumerateResult is Enumerate's return value: the matched files plus
+// whether the walk budget or the result cap cut the scan short before every
+// allow-listed root was fully walked. Truncated means the caller may be
+// missing matches — not that it definitely is: a scan that lands exactly on
+// the cap with nothing left to find still reports Truncated=false, since
+// nothing was actually cut off in that case.
+type EnumerateResult struct {
+	Files     []FileInfo
+	Truncated bool
+}
+
 // Enumerate walks every rule's root, in table order, collecting files that
 // match their rule's patterns. visited entries — directories and files
 // alike, across every root — are counted against a single shared budget;
@@ -24,8 +35,9 @@ type FileInfo struct {
 // fs.SkipAll) and every subsequent root's walk stops on its first entry, so
 // the cap holds regardless of how many roots exist or in what order they
 // are walked. Collection separately stops once maxResults matches have been
-// found. Results are sorted by path before returning, independent of walk
-// or table order, so the response is deterministic.
+// found. Either stopping condition firing sets the returned result's
+// Truncated to true. Results are sorted by path before returning,
+// independent of walk or table order, so the response is deterministic.
 //
 // A symlinked file that matches its containing rule's pattern is resolved
 // and re-verified against the FULL allowlist (as Open would) before being
@@ -35,13 +47,15 @@ type FileInfo struct {
 // deduplicated by resolved path, since a symlink can resolve to a file
 // WalkDir also visits directly (or that a different symlink already
 // resolved to) — each real file is reported at most once.
-func (b *Box) Enumerate(budget, maxResults int) ([]FileInfo, error) {
+func (b *Box) Enumerate(budget, maxResults int) (EnumerateResult, error) {
 	var results []FileInfo
 	visited := 0
+	truncated := false
 	seen := make(map[string]bool) // resolved path -> already collected; a symlink can resolve to a file WalkDir also visits directly, or that another symlink already resolved to
 
 	for _, rule := range b.rules {
 		if len(results) >= maxResults {
+			truncated = true
 			break
 		}
 
@@ -52,6 +66,7 @@ func (b *Box) Enumerate(budget, maxResults int) ([]FileInfo, error) {
 
 			visited++
 			if visited > budget {
+				truncated = true
 				return fs.SkipAll
 			}
 			if d.IsDir() {
@@ -104,6 +119,7 @@ func (b *Box) Enumerate(budget, maxResults int) ([]FileInfo, error) {
 				return nil
 			}
 			if len(results) >= maxResults {
+				truncated = true
 				return fs.SkipAll
 			}
 			seen[entryPath] = true
@@ -116,10 +132,10 @@ func (b *Box) Enumerate(budget, maxResults int) ([]FileInfo, error) {
 			return nil
 		})
 		if walkErr != nil {
-			return nil, fmt.Errorf("enumerating %s: %w", rule.sourceID, walkErr)
+			return EnumerateResult{}, fmt.Errorf("enumerating %s: %w", rule.sourceID, walkErr)
 		}
 	}
 
 	sort.Slice(results, func(i, j int) bool { return results[i].Path < results[j].Path })
-	return results, nil
+	return EnumerateResult{Files: results, Truncated: truncated}, nil
 }

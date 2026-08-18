@@ -57,6 +57,13 @@ func main() {
 // run is separated from main so tests can drive it with synthetic argv
 // without exiting the test binary.
 func run(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "-h", "--help", "help":
+			return runHelp(os.Stdout)
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving user home directory: %w", err)
@@ -78,9 +85,35 @@ func run(args []string) error {
 	return serve(home)
 }
 
+// runHelp writes the subcommand usage summary to stdout. "-h", "--help",
+// and "help" are matched exactly, the same way the four setup subcommands
+// are: see run's doc comment for why every other argv shape — including a
+// genuine typo — falls through to serve instead of landing here.
+func runHelp(stdout io.Writer) error {
+	const usage = `mimicengine-host is the native-messaging host the MimicEngine browser
+extension spawns to read theme files from disk.
+
+Subcommands:
+  install    write this host's native-messaging manifest for detected browsers
+  uninstall  remove this host's native-messaging manifest
+  doctor     report each browser's native-messaging install health
+  version    print the build version and exit
+
+Run with no subcommand to serve the native-messaging protocol on stdio --
+this is how Chrome/Firefox invoke the host; it is not meant to be run this
+way by hand.
+`
+	_, err := fmt.Fprint(stdout, usage)
+	return err
+}
+
 // serve runs the native-messaging stdio loop Chrome/Firefox spawn the host
 // with: no subcommand, no confirmation, framed JSON on stdin/stdout until
-// the browser closes the pipe.
+// the browser closes the pipe. It logs one line to stderr before entering
+// the loop — the wire protocol itself is silent, so without this a human
+// who lands here (a typo'd subcommand, manual testing) sees nothing at all;
+// the native-messaging spec permits stderr logging since the browser never
+// reads it as protocol data.
 func serve(home string) error {
 	box, err := sandbox.New(home)
 	if err != nil {
@@ -89,6 +122,8 @@ func serve(home string) error {
 
 	writer := protocol.NewWriter(os.Stdout)
 	defer func() { _ = writer.Close() }()
+
+	_, _ = fmt.Fprintln(os.Stderr, "mimicengine-host: serving native messaging on stdio")
 
 	return ops.Serve(os.Stdin, writer, version, box)
 }

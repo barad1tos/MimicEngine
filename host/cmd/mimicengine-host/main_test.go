@@ -117,6 +117,78 @@ func TestRun_VersionSubcommandIsRecognizedExactly(t *testing.T) {
 	}
 }
 
+// TestRun_HelpFlagPrintsUsageWithoutServing pins I1: "-h", "--help", and
+// "help" are matched exactly as args[0] and print usage instead of falling
+// through to serve — the same closed-stdin trick as
+// TestRun_VersionSubcommandIsRecognizedExactly distinguishes the two
+// outcomes, since serve() also returns nil on immediate EOF but writes
+// nothing to stdout.
+func TestRun_HelpFlagPrintsUsageWithoutServing(t *testing.T) {
+	for _, helpArg := range []string{"-h", "--help", "help"} {
+		t.Run(helpArg, func(t *testing.T) {
+			withClosedStdin(t) // safety net: a misroute to serve must return promptly, not hang
+
+			stdoutRead, stdoutWrite, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("os.Pipe: %v", err)
+			}
+			originalStdout := os.Stdout
+			os.Stdout = stdoutWrite
+			t.Cleanup(func() { os.Stdout = originalStdout })
+
+			runErr := run([]string{helpArg})
+			if closeErr := stdoutWrite.Close(); closeErr != nil {
+				t.Fatalf("closing pipe write end: %v", closeErr)
+			}
+			if runErr != nil {
+				t.Fatalf("run([]string{%q}) = %v, want nil", helpArg, runErr)
+			}
+
+			captured, err := io.ReadAll(stdoutRead)
+			if err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			got := string(captured)
+			if !strings.Contains(got, "Subcommands:") || !strings.Contains(got, "install") {
+				t.Fatalf("run([]string{%q}) stdout = %q, want usage text listing subcommands", helpArg, got)
+			}
+		})
+	}
+}
+
+// TestRun_ServeWritesStderrStartupLine pins the second half of I1: entering
+// the real serve loop (Chromium-shaped argv falls through to it, same as
+// TestRun_ChromiumShapedArgvFallsThroughToServe) logs one line to stderr, so
+// a human who lands in serve — a typo'd subcommand, manual testing — sees
+// something instead of silence.
+func TestRun_ServeWritesStderrStartupLine(t *testing.T) {
+	withClosedStdin(t)
+
+	stderrRead, stderrWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = stderrWrite
+	t.Cleanup(func() { os.Stderr = originalStderr })
+
+	runErr := run([]string{"chrome-extension://" + strings.Repeat("ab", 16) + "/"})
+	if closeErr := stderrWrite.Close(); closeErr != nil {
+		t.Fatalf("closing pipe write end: %v", closeErr)
+	}
+	if runErr != nil {
+		t.Fatalf("run() = %v, want nil", runErr)
+	}
+
+	captured, err := io.ReadAll(stderrRead)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !strings.Contains(string(captured), "serving native messaging") {
+		t.Fatalf("stderr = %q, want it to mention serving native messaging", captured)
+	}
+}
+
 func TestRunVersion_WritesVersionString(t *testing.T) {
 	var out bytes.Buffer
 	if err := runVersion(&out); err != nil {

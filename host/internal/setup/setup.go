@@ -12,7 +12,10 @@ import "path/filepath"
 
 // HostName is the native-messaging host identifier Chrome/Firefox use to
 // find this host: the manifest's "name" field, the manifest filename (sans
-// extension), and the Windows registry value name are all HostName.
+// extension), and — on Windows — the leaf component of the registry KEY
+// Chrome/Firefox read this host from (see Target.RegistryPath) are all
+// HostName. The manifest's own path is not stored under a registry value
+// named HostName; it lives in that key's DEFAULT (unnamed) value.
 const HostName = "com.barad1tos.mimicengine"
 
 // DefaultGeckoID is the extension id Firefox manifests pin via
