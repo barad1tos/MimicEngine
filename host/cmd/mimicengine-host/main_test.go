@@ -6,9 +6,35 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// chromeManifestDir returns the directory runInstall writes Chrome's
+// native-messaging manifest into on the current OS. It mirrors the
+// "chrome" target's Dir from internal/setup's per-OS platformTargets
+// (targets_darwin.go / targets_linux.go / targets_windows.go) — this
+// package can't call that unexported function directly, and the tests
+// below force --browsers=chrome, so they need to know exactly where
+// install lands the file regardless of which OS runs them. Ran only on
+// darwin locally until CI actually started running `go test` for this
+// module on ubuntu-latest, which is when these tests' previously
+// hardcoded macOS-only path first got exercised on Linux and failed.
+func chromeManifestDir(home string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			appData = filepath.Join(home, "AppData", "Roaming")
+		}
+		return filepath.Join(appData, "MimicEngine", "chromium")
+	default: // linux and other POSIX platforms
+		return filepath.Join(home, ".config", "google-chrome", "NativeMessagingHosts")
+	}
+}
 
 // withClosedStdin temporarily replaces the real os.Stdin with a pipe whose
 // write end is already closed, so anything reading from it (here, the
@@ -123,7 +149,7 @@ func TestRunInstall_WritesManifestWithForcedScopeAndYes(t *testing.T) {
 		t.Fatalf("runInstall: %v (output: %s)", err, out.String())
 	}
 
-	manifestPath := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", "com.barad1tos.mimicengine.json")
+	manifestPath := filepath.Join(chromeManifestDir(home), "com.barad1tos.mimicengine.json")
 	if _, statErr := os.Stat(manifestPath); statErr != nil {
 		t.Fatalf("expected manifest at %s: %v", manifestPath, statErr)
 	}
@@ -150,7 +176,7 @@ func TestRunInstall_RelativeBinaryIsAbsolutized(t *testing.T) {
 		t.Fatalf("runInstall: %v (output: %s)", err, out.String())
 	}
 
-	manifestPath := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", "com.barad1tos.mimicengine.json")
+	manifestPath := filepath.Join(chromeManifestDir(home), "com.barad1tos.mimicengine.json")
 	body, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
@@ -170,7 +196,7 @@ func TestRunInstall_RelativeBinaryIsAbsolutized(t *testing.T) {
 
 func TestRunInstall_DeclineAbortsWithoutWriting(t *testing.T) {
 	home := t.TempDir()
-	chromeDir := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
+	chromeDir := chromeManifestDir(home)
 	if err := os.MkdirAll(chromeDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -216,7 +242,7 @@ func TestRunUninstall_RemovesWhatInstallWrote(t *testing.T) {
 		t.Fatalf("runInstall: %v", err)
 	}
 
-	manifestPath := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", "com.barad1tos.mimicengine.json")
+	manifestPath := filepath.Join(chromeManifestDir(home), "com.barad1tos.mimicengine.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("setup precondition failed, manifest missing: %v", err)
 	}
@@ -246,7 +272,7 @@ func TestRunUninstall_NoDetectionReportsNothingToDo(t *testing.T) {
 
 func TestRunUninstall_DeclineAborts(t *testing.T) {
 	home := t.TempDir()
-	chromeDir := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
+	chromeDir := chromeManifestDir(home)
 	if err := os.MkdirAll(chromeDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -285,7 +311,7 @@ func TestRunDoctor_AllNotInstalledExitsClean(t *testing.T) {
 
 func TestRunDoctor_BrokenManifestFailsWithErrDoctorFailed(t *testing.T) {
 	home := t.TempDir()
-	chromeDir := filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts")
+	chromeDir := chromeManifestDir(home)
 	if err := os.MkdirAll(chromeDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
