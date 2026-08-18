@@ -165,11 +165,71 @@ jobs:
           name: palette-mimicry-${{ matrix.browser }}
           path: .output/*.zip
 
+  # Tier 2: the Go native-messaging host — format, vet, staticcheck, tests
+  # with a coverage gate, and a cross-OS build smoke test.
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: host
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: host/go.mod
+          cache: true
+          # host/go.mod has no dependencies (stdlib-only) so there is no
+          # go.sum for the default `**/go.sum` cache-key lookup to find;
+          # point it at go.mod instead so `cache: true` has a real file to
+          # hash rather than silently finding nothing.
+          cache-dependency-path: host/go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needs to be run on:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: staticcheck
+        run: |
+          GOBIN="${RUNNER_TEMP}/gobin" go install honnef.co/go/tools/cmd/staticcheck@v0.7.0 # 2026.1
+          "${RUNNER_TEMP}/gobin/staticcheck" ./...
+      - name: Test with coverage gate (>=85% statements)
+        run: |
+          go test ./... -race -coverprofile=coverage.out
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Total statement coverage: ${total}%"
+          awk -v total="$total" 'BEGIN {
+            if (total + 0 < 85) {
+              print "::error::coverage " total "% is below the 85% gate";
+              exit 1;
+            }
+          }'
+      - name: Cross-compile smoke (darwin/linux/windows)
+        run: |
+          set -e
+          for goos in darwin linux windows; do
+            echo "::group::GOOS=${goos}"
+            # Trailing slash: ./... matches multiple packages (only one of
+            # them, cmd/mimicengine-host, is a main package), and `go build
+            # -o` requires a directory target once more than one package is
+            # in play.
+            mkdir -p "${RUNNER_TEMP}/smoke-${goos}"
+            GOOS="$goos" GOARCH=amd64 CGO_ENABLED=0 go build -o "${RUNNER_TEMP}/smoke-${goos}/" ./...
+            echo "::endgroup::"
+          done
+
   # Single required check: pass only when every needed job succeeded or was skipped.
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [lint-files, gha-security, quality, test, build]
+    needs: [lint-files, gha-security, quality, test, build, host]
     if: always()
     steps:
       - name: Verify all jobs passed
