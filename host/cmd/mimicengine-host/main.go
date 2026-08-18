@@ -1,33 +1,71 @@
 // Command mimicengine-host is the native-messaging host Chrome/Firefox spawn
 // to let the MimicEngine extension discover and read theme files from disk.
+// Run with no arguments, it speaks the framed stdio protocol the browser
+// expects; run with install, uninstall, or doctor, it manages its own
+// native-messaging manifests instead.
 package main
 
 import (
+	"bufio"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/barad1tos/MimicEngine/host/internal/ops"
 	"github.com/barad1tos/MimicEngine/host/internal/protocol"
 	"github.com/barad1tos/MimicEngine/host/internal/sandbox"
+	"github.com/barad1tos/MimicEngine/host/internal/setup"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
+// errDoctorFailed is runDoctor's exit-nonzero signal: at least one target's
+// report came back StatusFail. It carries no extra detail because
+// runDoctor already printed every finding before returning it.
+var errDoctorFailed = errors.New("doctor found one or more problems")
+
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		log.Println(err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run dispatches os.Args[1:] to the stdio serve loop (no arguments — the
+// shape Chrome/Firefox spawn the host with) or to one of the setup
+// subcommands. It is separated from main so tests can drive it with
+// synthetic argv without exiting the test binary.
+func run(args []string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving user home directory: %w", err)
 	}
 
+	if len(args) == 0 {
+		return serve(home)
+	}
+
+	switch args[0] {
+	case "install":
+		return runInstall(args[1:], os.Stdin, os.Stdout, home)
+	case "uninstall":
+		return runUninstall(args[1:], os.Stdin, os.Stdout, home)
+	case "doctor":
+		return runDoctor(args[1:], os.Stdout, home)
+	default:
+		return fmt.Errorf("unknown subcommand %q (want install, uninstall, doctor, or no arguments to serve)", args[0])
+	}
+}
+
+// serve runs the native-messaging stdio loop Chrome/Firefox spawn the host
+// with: no subcommand, no confirmation, framed JSON on stdin/stdout until
+// the browser closes the pipe.
+func serve(home string) error {
 	box, err := sandbox.New(home)
 	if err != nil {
 		return fmt.Errorf("building sandbox: %w", err)
@@ -37,4 +75,181 @@ func run() error {
 	defer func() { _ = writer.Close() }()
 
 	return ops.Serve(os.Stdin, writer, version, box)
+}
+
+// runInstall parses install's flags, resolves which browsers to target,
+// confirms with the user (unless --yes), and writes their native-messaging
+// manifests. stdin/stdout are injected so tests exercise the full
+// detect-confirm-write flow without touching the real console.
+func runInstall(args []string, stdin io.Reader, stdout io.Writer, home string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "install without an interactive confirmation prompt")
+	browsers := fs.String("browsers", "", "comma-separated browser ids to install (default: every detected browser)")
+	dev := fs.Bool("dev", false, "tag the manifest description as a dev build")
+	binary := fs.String("binary", "", "override the manifest's binary path (default: this executable's own path)")
+	extensionID := fs.String("extension-id", "", "Chromium extension id (required for any Chromium-family browser)")
+	geckoID := fs.String("gecko-id", "", "Firefox extension id (default: "+setup.DefaultGeckoID+")")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	targets := setup.PlatformTargets(home)
+	reg := setup.NewRegistryWriter()
+
+	candidates, err := setup.ResolveCandidates(targets, *browsers, reg)
+	if err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		_, _ = fmt.Fprintln(stdout, "no browsers detected; pass --browsers to target one explicitly")
+		return nil
+	}
+
+	printTargetList(stdout, "detected", candidates)
+
+	if !*yes {
+		proceed, err := confirmYesNo(stdin, stdout, "proceed with install? [y/N] ")
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			_, _ = fmt.Fprintln(stdout, "aborted")
+			return nil
+		}
+	}
+
+	binaryPath := *binary
+	if binaryPath == "" {
+		resolved, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolving current executable: %w", err)
+		}
+		binaryPath = resolved
+	}
+
+	result, err := setup.Install(candidates, setup.ManifestOptions{
+		ExtensionID: *extensionID,
+		GeckoID:     *geckoID,
+		BinaryPath:  binaryPath,
+		Dev:         *dev,
+	}, reg)
+	if err != nil {
+		return err
+	}
+
+	printTargetList(stdout, "installed", result.Written)
+	return nil
+}
+
+// runUninstall parses uninstall's flags, resolves which browsers to target
+// (the same detection Install uses), confirms with the user (unless
+// --yes), and removes their native-messaging manifests.
+func runUninstall(args []string, stdin io.Reader, stdout io.Writer, home string) error {
+	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "uninstall without an interactive confirmation prompt")
+	browsers := fs.String("browsers", "", "comma-separated browser ids to uninstall (default: every detected browser)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	targets := setup.PlatformTargets(home)
+	reg := setup.NewRegistryWriter()
+
+	candidates, err := setup.ResolveCandidates(targets, *browsers, reg)
+	if err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		_, _ = fmt.Fprintln(stdout, "no browsers detected; nothing to uninstall")
+		return nil
+	}
+
+	printTargetList(stdout, "detected", candidates)
+
+	if !*yes {
+		proceed, err := confirmYesNo(stdin, stdout, "proceed with uninstall? [y/N] ")
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			_, _ = fmt.Fprintln(stdout, "aborted")
+			return nil
+		}
+	}
+
+	result, err := setup.Uninstall(candidates, reg)
+	if err != nil {
+		return err
+	}
+
+	printTargetList(stdout, "removed", result.Removed)
+	return nil
+}
+
+// runDoctor parses doctor's flags and prints one health line per target
+// (every known browser by default, or --browsers' subset). It returns
+// errDoctorFailed — main's cue to exit(1) — when any target's check came
+// back StatusFail; StatusNotInstalled is not a failure.
+func runDoctor(args []string, stdout io.Writer, home string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	browsers := fs.String("browsers", "", "comma-separated browser ids to check (default: every known browser)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	targets := setup.PlatformTargets(home)
+	if *browsers != "" {
+		resolved, err := setup.ResolveTargets(targets, *browsers)
+		if err != nil {
+			return err
+		}
+		targets = resolved
+	}
+
+	reports := setup.DoctorReport(targets, setup.NewRegistryWriter())
+
+	failed := false
+	for _, r := range reports {
+		_, _ = fmt.Fprintf(stdout, "%s (%s): %s\n", r.Target.Name, r.Target.ID, r.Detail)
+		if r.Status == setup.StatusFail {
+			failed = true
+		}
+	}
+	if failed {
+		return errDoctorFailed
+	}
+	return nil
+}
+
+// printTargetList prints label followed by one indented "Name (id)" line
+// per target. It prints nothing when targets is empty, so callers can call
+// it unconditionally after an operation that may have written/removed zero
+// targets.
+func printTargetList(w io.Writer, label string, targets []setup.Target) {
+	if len(targets) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%s:\n", label)
+	for _, t := range targets {
+		_, _ = fmt.Fprintf(w, "  %s (%s)\n", t.Name, t.ID)
+	}
+}
+
+// confirmYesNo prints prompt to stdout and reads one line from stdin,
+// answering true only for "y" or "yes" (case-insensitive). An empty read
+// (immediate EOF, e.g. stdin closed) answers false rather than erroring —
+// the safe default for a destructive-adjacent confirmation.
+func confirmYesNo(stdin io.Reader, stdout io.Writer, prompt string) (bool, error) {
+	_, _ = fmt.Fprint(stdout, prompt)
+
+	line, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && line == "" {
+		if errors.Is(err, io.EOF) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading confirmation: %w", err)
+	}
+
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes", nil
 }
