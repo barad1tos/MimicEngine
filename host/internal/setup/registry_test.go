@@ -7,7 +7,7 @@ import "errors"
 // throwaway error value.
 var errBoom = errors.New("boom")
 
-// erroringRegistry is a registryWriter test double whose value/setValue/
+// erroringRegistry is a RegistryWriter test double whose value/setValue/
 // deleteValue always fail, and whose keyExists fails only when keyExistsErr
 // is set. It exercises Install/Uninstall/Doctor's registry-error
 // propagation paths without a real Windows registry.
@@ -34,7 +34,7 @@ func (erroringRegistry) deleteValue(string, string) error {
 	return errors.New("fake registry: deleteValue failed")
 }
 
-// fakeRegistry is a registryWriter test double backed by an in-memory map,
+// fakeRegistry is a RegistryWriter test double backed by an in-memory map,
 // keyed by "path\x00name". It lets tests exercise Detect/Install/Uninstall/
 // Doctor's Windows-target code paths (registry-based detection, and value
 // read/write/delete) on any development machine, without a real Windows

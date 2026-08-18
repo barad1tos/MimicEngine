@@ -10,7 +10,7 @@ import (
 // Detected returns the subset of all whose native-messaging infrastructure
 // already exists on this machine: targetDetected's Dir-or-registry check,
 // applied to every target in table order.
-func Detected(all []Target, reg registryWriter) ([]Target, error) {
+func Detected(all []Target, reg RegistryWriter) ([]Target, error) {
 	detected := make([]Target, 0, len(all))
 	for _, t := range all {
 		ok, err := targetDetected(t, reg)
@@ -28,7 +28,7 @@ func Detected(all []Target, reg registryWriter) ([]Target, error) {
 // infrastructure present. A Windows target (RegistryPath set) checks the
 // registry key; every other target checks its Dir. See Target's field docs
 // and targets_windows.go for why the two platforms use different signals.
-func targetDetected(t Target, reg registryWriter) (bool, error) {
+func targetDetected(t Target, reg RegistryWriter) (bool, error) {
 	if t.RegistryPath != "" {
 		exists, err := reg.keyExists(t.RegistryPath)
 		if err != nil {
@@ -55,7 +55,7 @@ func targetDetected(t Target, reg registryWriter) (bool, error) {
 // registered against it yet has no infrastructure of its own to detect —
 // see platformTargets' docs on both POSIX and Windows). An empty browsers
 // value falls back to Detected(all, reg).
-func ResolveCandidates(all []Target, browsers string, reg registryWriter) ([]Target, error) {
+func ResolveCandidates(all []Target, browsers string, reg RegistryWriter) ([]Target, error) {
 	if strings.TrimSpace(browsers) != "" {
 		return ResolveTargets(all, browsers)
 	}

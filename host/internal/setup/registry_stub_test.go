@@ -8,12 +8,12 @@ import (
 )
 
 // TestStubRegistry_EveryMethodReportsUnsupported proves the non-Windows
-// registryWriter is a total, honest stub: every method returns
+// RegistryWriter is a total, honest stub: every method returns
 // errRegistryUnsupported rather than silently succeeding or panicking. It
 // is only reachable in production if a Target with a non-empty
 // RegistryPath ever exists on this OS, which platformTargets never
 // produces here — but NewRegistryWriter must still hand back something
-// that satisfies registryWriter for main.go to compile and run.
+// that satisfies RegistryWriter for main.go to compile and run.
 func TestStubRegistry_EveryMethodReportsUnsupported(t *testing.T) {
 	reg := NewRegistryWriter()
 

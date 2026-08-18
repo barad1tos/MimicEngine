@@ -4,15 +4,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// testExtensionID is a syntactically valid 32-character Chromium extension
+// id (the alphabet is a-p) built from a repeating pair rather than a
+// dictionary-shaped string, so spellcheck inspections don't flag it as a
+// typo.
+var testExtensionID = strings.Repeat("ab", 16)
 
 func TestInstall_WritesGoldenChromiumManifest(t *testing.T) {
 	home := t.TempDir()
 	target := Target{ID: "chrome", Name: "Google Chrome", Family: Chromium, Dir: filepath.Join(home, "chrome-nmh")}
 
 	result, err := Install([]Target{target}, ManifestOptions{
-		ExtensionID: "abcdefghijklmnopabcdefghijklmnop",
+		ExtensionID: testExtensionID,
 		BinaryPath:  "/opt/mimicengine-host",
 	}, newFakeRegistry())
 	if err != nil {
@@ -33,7 +40,7 @@ func TestInstall_WritesGoldenChromiumManifest(t *testing.T) {
 	if m.Name != HostName || m.Path != "/opt/mimicengine-host" || m.Type != "stdio" {
 		t.Fatalf("manifest = %+v, want the golden chromium shape", m)
 	}
-	if len(m.AllowedOrigins) != 1 || m.AllowedOrigins[0] != "chrome-extension://abcdefghijklmnopabcdefghijklmnop/" {
+	if len(m.AllowedOrigins) != 1 || m.AllowedOrigins[0] != "chrome-extension://"+testExtensionID+"/" {
 		t.Fatalf("AllowedOrigins = %v", m.AllowedOrigins)
 	}
 }
@@ -138,7 +145,10 @@ func TestInstall_RegistrySetValueFailurePropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("Install() = nil error, want an error when the registry write fails")
 	}
-	if len(result.Written) != 1 || result.Written[0].ID != "firefox" {
+	if len(result.Written) != 1 {
+		t.Fatalf("Install().Written = %v, want exactly one entry ([firefox])", result.Written)
+	}
+	if result.Written[0].ID != "firefox" {
 		t.Fatalf("Install().Written = %v, want [firefox] (the target written before the failing one)", result.Written)
 	}
 }

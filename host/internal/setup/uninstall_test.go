@@ -92,7 +92,10 @@ func TestUninstall_DeleteValueErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("Uninstall() = nil error, want an error when the registry delete fails")
 	}
-	if len(result.Removed) != 1 || result.Removed[0].ID != "firefox" {
+	if len(result.Removed) != 1 {
+		t.Fatalf("Uninstall().Removed = %v, want exactly one entry ([firefox])", result.Removed)
+	}
+	if result.Removed[0].ID != "firefox" {
 		t.Fatalf("Uninstall().Removed = %v, want [firefox] (the target removed before the failing one)", result.Removed)
 	}
 }

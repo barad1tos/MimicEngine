@@ -31,7 +31,7 @@ func TestRunInstall_WritesManifestWithForcedScopeAndYes(t *testing.T) {
 	var out bytes.Buffer
 
 	err := runInstall(
-		[]string{"--browsers=chrome", "--yes", "--extension-id=abcdefghijklmnopabcdefghijklmnop", "--binary=/opt/mimicengine-host"},
+		[]string{"--browsers=chrome", "--yes", "--extension-id=" + strings.Repeat("ab", 16), "--binary=/opt/mimicengine-host"},
 		strings.NewReader(""), &out, home,
 	)
 	if err != nil {

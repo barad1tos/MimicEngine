@@ -7,7 +7,7 @@ import (
 
 func TestBuildManifest_Chromium(t *testing.T) {
 	body, err := buildManifest(Chromium, ManifestOptions{
-		ExtensionID: "abcdefghijklmnopabcdefghijklmnop",
+		ExtensionID: testExtensionID,
 		BinaryPath:  "/usr/local/bin/mimicengine-host",
 	})
 	if err != nil {
@@ -27,7 +27,7 @@ func TestBuildManifest_Chromium(t *testing.T) {
 	if m.Type != "stdio" {
 		t.Errorf("Type = %q, want \"stdio\"", m.Type)
 	}
-	wantOrigin := "chrome-extension://abcdefghijklmnopabcdefghijklmnop/"
+	wantOrigin := "chrome-extension://" + testExtensionID + "/"
 	if len(m.AllowedOrigins) != 1 || m.AllowedOrigins[0] != wantOrigin {
 		t.Errorf("AllowedOrigins = %v, want [%q]", m.AllowedOrigins, wantOrigin)
 	}

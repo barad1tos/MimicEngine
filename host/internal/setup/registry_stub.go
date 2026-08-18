@@ -10,7 +10,7 @@ import "errors"
 // targets_darwin.go and targets_linux.go.
 var errRegistryUnsupported = errors.New("setup: the Windows registry is not available on this platform")
 
-// stubRegistry is the non-Windows registryWriter. NewRegistryWriter returns
+// stubRegistry is the non-Windows RegistryWriter. NewRegistryWriter returns
 // it on every OS but Windows, where registry_windows.go's realRegistry
 // takes over instead.
 type stubRegistry struct{}
@@ -25,5 +25,5 @@ func (stubRegistry) setValue(string, string, string) error { return errRegistryU
 
 func (stubRegistry) deleteValue(string, string) error { return errRegistryUnsupported }
 
-// NewRegistryWriter returns this OS's registryWriter implementation.
-func NewRegistryWriter() registryWriter { return stubRegistry{} }
+// NewRegistryWriter returns this OS's RegistryWriter implementation.
+func NewRegistryWriter() RegistryWriter { return stubRegistry{} }

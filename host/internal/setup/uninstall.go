@@ -17,7 +17,7 @@ type UninstallResult struct {
 // the registry value pointing at it. Both removals are idempotent: a
 // manifest file or registry value that is already absent is not an error,
 // so uninstall stays safe to run more than once.
-func Uninstall(candidates []Target, reg registryWriter) (UninstallResult, error) {
+func Uninstall(candidates []Target, reg RegistryWriter) (UninstallResult, error) {
 	removed := make([]Target, 0, len(candidates))
 	for _, t := range candidates {
 		if err := removeManifest(t, reg); err != nil {
@@ -30,7 +30,7 @@ func Uninstall(candidates []Target, reg registryWriter) (UninstallResult, error)
 
 // removeManifest deletes t's manifest file (if present) and, for a Windows
 // target, its registry value.
-func removeManifest(t Target, reg registryWriter) error {
+func removeManifest(t Target, reg RegistryWriter) error {
 	path := manifestPath(t)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("removing manifest %q: %w", path, err)
