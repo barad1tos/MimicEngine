@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,8 +15,14 @@ import (
 
 // maxReadBytes is the spec's per-file read cap. A file at or under this size
 // reads in full; a file over it is rejected as too-large rather than
-// silently truncated.
-const maxReadBytes = 2 * 1024 * 1024 // 2MB
+// silently truncated. 512KiB, not the 2MB this cap started at: Chrome
+// itself caps host→browser messages at protocol.MaxFrameLen (1MB), and a
+// file large enough to approach 2MB of raw content could never fit its own
+// JSON-encoded response back through that limit — see frameFits for the
+// belt-and-suspenders check that catches the cases even 512KiB doesn't rule
+// out (heavy escaping headroom for theme files' actual content, which is
+// small text, not raw binary).
+const maxReadBytes = 512 * 1024 // 512KiB
 
 // errTooLarge signals that readCapped found more than its limit's worth of
 // bytes without reaching EOF.
@@ -37,12 +44,15 @@ type readEnvelope struct {
 
 // handleRead returns the UTF-8 text content of req.Path, verified and
 // opened through files. See mapOpenErrorCode for how sandbox.Open's denial
-// reasons map to wire error codes, and readCapped for the too-large cap.
-// Content that is not valid UTF-8 is rejected as codeBadRequest: the read
-// op's contract is a text file, and silently replacing invalid bytes with
-// U+FFFD (json.Marshal's default behavior) would mangle binary content
-// without telling the caller. This reading is the implementer's own call,
-// not spec text — flagged in the task report for the reviewer to confirm.
+// reasons map to wire error codes, readCapped for the too-large read cap,
+// and frameFits for the separate too-large check on the RESPONSE this
+// builds (content under the read cap can still marshal into a JSON payload
+// that overflows the wire frame — see frameFits' doc). Content that is not
+// valid UTF-8 is rejected as codeBadRequest: the read op's contract is a
+// text file, and silently replacing invalid bytes with U+FFFD
+// (json.Marshal's default behavior) would mangle binary content without
+// telling the caller. This reading is the implementer's own call, not spec
+// text — flagged in the task report for the reviewer to confirm.
 func handleRead(req protocol.Request, files opener) any {
 	if req.Path == "" {
 		return newErrorEnvelope(req.ID, codeBadRequest, "read requires a non-empty path")
@@ -66,7 +76,35 @@ func handleRead(req protocol.Request, files opener) any {
 		return newErrorEnvelope(req.ID, codeBadRequest, "file is not valid utf-8")
 	}
 
-	return readEnvelope{ID: req.ID, OK: true, Content: string(data)}
+	env := readEnvelope{ID: req.ID, OK: true, Content: string(data)}
+	fits, err := frameFits(env)
+	if err != nil {
+		return newErrorEnvelope(req.ID, codeInternalError, err.Error())
+	}
+	if !fits {
+		// Belt, not just suspenders: maxReadBytes already keeps raw content
+		// well under protocol.MaxFrameLen, but JSON string-escapes control
+		// characters as \u00XX (up to 6 bytes per source byte), so content
+		// comfortably under the read cap can still marshal into a response
+		// that would blow the wire frame limit. Reporting too-large here
+		// keeps the session alive; letting Send's own frameMessage reject it
+		// would tear down the Writer (and therefore every future request).
+		return newErrorEnvelope(req.ID, codeTooLarge,
+			fmt.Sprintf("response exceeds the %d byte frame limit once encoded", protocol.MaxFrameLen))
+	}
+	return env
+}
+
+// frameFits reports whether v's JSON encoding would fit within a single
+// native-messaging frame (protocol.MaxFrameLen), so handleRead can swap an
+// oversized response for a small error envelope before ever handing it to
+// the Writer — see handleRead's call site for why that matters.
+func frameFits(v any) (bool, error) {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return false, fmt.Errorf("marshaling response for frame-size check: %w", err)
+	}
+	return len(payload) <= protocol.MaxFrameLen, nil
 }
 
 // mapOpenErrorCode translates a sandbox.Open failure into the protocol's

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/barad1tos/MimicEngine/host/internal/protocol"
@@ -175,6 +176,58 @@ func TestHandleRead_SparseLargeFileIsTooLargeAndCloses(t *testing.T) {
 
 	if _, err := f.Stat(); err == nil {
 		t.Fatal("f.Stat() succeeded after handleRead, want the descriptor closed on the too-large path")
+	}
+}
+
+// TestFrameFits_UnderLimitSucceeds pins the happy path directly against the
+// frame-size pre-check helper: a small envelope must report it fits.
+func TestFrameFits_UnderLimitSucceeds(t *testing.T) {
+	fits, err := frameFits(readEnvelope{ID: 1, OK: true, Content: "small"})
+	if err != nil {
+		t.Fatalf("frameFits: %v", err)
+	}
+	if !fits {
+		t.Fatal("frameFits() = false, want true for a small envelope")
+	}
+}
+
+// TestFrameFits_OversizedEnvelopeIsTooLarge pins task report finding W3's
+// belt check directly against the new frame-size pre-check helper: an
+// envelope whose JSON encoding alone exceeds protocol.MaxFrameLen must
+// report it does not fit, independent of maxReadBytes or any file I/O.
+func TestFrameFits_OversizedEnvelopeIsTooLarge(t *testing.T) {
+	oversized := readEnvelope{ID: 1, OK: true, Content: strings.Repeat("a", protocol.MaxFrameLen+1)}
+
+	fits, err := frameFits(oversized)
+	if err != nil {
+		t.Fatalf("frameFits: %v", err)
+	}
+	if fits {
+		t.Fatal("frameFits() = true, want false for an envelope whose JSON exceeds protocol.MaxFrameLen")
+	}
+}
+
+// TestHandleRead_EscapedContentExceedsFrameIsTooLarge pins the real,
+// reachable-in-production scenario task report finding W3 describes: file
+// content sitting exactly AT maxReadBytes (so readCapped's own too-large
+// check does not fire) but consisting of bytes that json.Marshal escapes to
+// a six-character escape sequence apiece, so the ENCODED response blows past
+// protocol.MaxFrameLen even though the raw file comfortably passed the read
+// cap. NUL bytes are valid single-byte UTF-8, so utf8.Valid does not reject
+// them either — this must be caught by the frame-size belt check, not any
+// earlier guard.
+func TestHandleRead_EscapedContentExceedsFrameIsTooLarge(t *testing.T) {
+	content := bytes.Repeat([]byte{0x00}, maxReadBytes)
+	f := mustOpenTempFile(t, content)
+
+	got := handleRead(protocol.Request{ID: 13, Path: "/whatever"}, fakeOpener{file: f})
+
+	env, ok := got.(errorEnvelope)
+	if !ok {
+		t.Fatalf("handleRead() = %T, want errorEnvelope for content whose escaped JSON exceeds the frame limit", got)
+	}
+	if env.Error.Code != codeTooLarge {
+		t.Fatalf("errorEnvelope.Error.Code = %q, want %q", env.Error.Code, codeTooLarge)
 	}
 }
 

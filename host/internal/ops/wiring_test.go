@@ -97,6 +97,58 @@ func TestServe_EnumerateAndReadDispatchEndToEnd(t *testing.T) {
 	}
 }
 
+// TestServe_TooLargeReadResponseDoesNotEndSession pins task report finding
+// W3's integration guarantee: a "read" whose escaped JSON would blow past
+// protocol.MaxFrameLen must come back as a too-large error frame WITHOUT
+// tearing down the Writer (and therefore the whole native-messaging
+// session) the way letting Send's own frameMessage reject the oversized
+// payload would. A "ping" sent right after must still get answered on the
+// same connection, proving the session survived.
+func TestServe_TooLargeReadResponseDoesNotEndSession(t *testing.T) {
+	contentPath := filepath.Join(t.TempDir(), "control-chars.txt")
+	// NUL bytes are valid single-byte UTF-8 (so handleRead's utf8.Valid
+	// check does not reject them) but json.Marshal escapes each one to a
+	// six-character escape sequence — at maxReadBytes bytes of them, the
+	// raw file is exactly at the read cap (readCapped does not reject it)
+	// while the ENCODED response blows past protocol.MaxFrameLen.
+	content := bytes.Repeat([]byte{0x00}, maxReadBytes)
+	if err := os.WriteFile(contentPath, content, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	openedFile, err := os.Open(contentPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = openedFile.Close() })
+
+	provider := &dispatchFake{ids: []string{"test-source"}, openFile: openedFile}
+
+	var in bytes.Buffer
+	inWriter := protocol.NewWriter(&in)
+	if err := inWriter.Send(protocol.Request{ID: 1, Op: "read", Path: contentPath}); err != nil {
+		t.Fatalf("building fixture: %v", err)
+	}
+	if err := inWriter.Send(protocol.Request{ID: 2, Op: "ping"}); err != nil {
+		t.Fatalf("building fixture: %v", err)
+	}
+
+	out := drainServe(t, &in, inWriter, provider)
+
+	readFrame := readGenericFrame(t, out)
+	errBody, hasError := readFrame["error"].(map[string]any)
+	if !hasError {
+		t.Fatalf("read response = %v, want an error envelope", readFrame)
+	}
+	if errBody["code"] != codeTooLarge {
+		t.Fatalf("read response error code = %v, want %q", errBody["code"], codeTooLarge)
+	}
+
+	pingFrame := readGenericFrame(t, out)
+	if pingFrame["ok"] != true || pingFrame["id"] != float64(2) {
+		t.Fatalf("ping response = %v, want ok=true id=2 — the session must survive the prior too-large response", pingFrame)
+	}
+}
+
 // TestServe_RealSandboxBoxSourceIDsFlowThroughPing wires a real
 // *sandbox.Box (constructed exactly as main.go's run() does, minus the real
 // $HOME) through Serve and checks ping's sourceIds is non-empty. This is
