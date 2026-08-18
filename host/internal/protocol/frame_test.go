@@ -66,6 +66,28 @@ func TestReadFrame_TruncatedPayload(t *testing.T) {
 	}
 }
 
+// TestReadFrame_PeerDiesAfterPrefixBeforePayload covers the boundary where
+// the length prefix arrives fully (announcing a non-zero length) but the
+// stream ends before even one payload byte follows. io.ReadFull's own
+// contract reports that as a bare io.EOF; ReadFrame must not let that bare
+// io.EOF pass through, because a caller checking errors.Is(err, io.EOF) (as
+// Serve does, to detect a clean shutdown between frames) would otherwise
+// mistake a peer that died mid-frame for one that closed the stream
+// cleanly.
+func TestReadFrame_PeerDiesAfterPrefixBeforePayload(t *testing.T) {
+	var header [lengthPrefixSize]byte
+	binary.LittleEndian.PutUint32(header[:], 5) // announces 5 payload bytes that never arrive
+
+	_, err := ReadFrame(bytes.NewReader(header[:]), MaxFrameLen)
+
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("ReadFrame() error = %v, want errors.Is(..., io.ErrUnexpectedEOF)", err)
+	}
+	if errors.Is(err, io.EOF) {
+		t.Fatalf("ReadFrame() error = %v classifies as io.EOF — a caller would wrongly treat a mid-frame peer death as a clean shutdown", err)
+	}
+}
+
 func TestReadFrame_ExactlyAtLimitSucceeds(t *testing.T) {
 	payload := bytes.Repeat([]byte("a"), 64)
 	frame, err := frameMessage(payload)

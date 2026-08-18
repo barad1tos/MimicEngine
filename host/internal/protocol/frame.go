@@ -25,9 +25,14 @@ var ErrFrameTooLarge = errors.New("protocol: frame exceeds size limit")
 // ErrFrameTooLarge without allocating a buffer sized to that length or
 // reading any further bytes from r — the check runs strictly before
 // allocation. A clean EOF before any byte of the length prefix is read is
-// returned as io.EOF, signaling the far end closed the stream; any other
-// short read (a truncated prefix or payload) is wrapped around
-// io.ErrUnexpectedEOF.
+// returned as io.EOF, signaling the far end closed the stream between
+// frames. Every other short read — a truncated prefix, or the stream ending
+// anywhere at or after the prefix but before the announced payload is fully
+// delivered — is a mid-frame protocol violation, not a clean shutdown, and
+// is reported wrapped around io.ErrUnexpectedEOF (this includes the case
+// where zero payload bytes follow a fully-read prefix announcing a non-zero
+// length: io.ReadFull's own contract would otherwise surface that as a bare
+// io.EOF, which callers must not mistake for a clean stream close).
 func ReadFrame(r io.Reader, maxLen int) ([]byte, error) {
 	var lengthBytes [lengthPrefixSize]byte
 	if _, err := io.ReadFull(r, lengthBytes[:]); err != nil {
@@ -44,6 +49,14 @@ func ReadFrame(r io.Reader, maxLen int) ([]byte, error) {
 
 	payload := make([]byte, length)
 	if _, err := io.ReadFull(r, payload); err != nil {
+		if errors.Is(err, io.EOF) {
+			// The prefix already committed to `length` payload bytes (length
+			// is > 0 here: io.ReadFull never errors against a zero-length
+			// buffer). A bare io.EOF means the peer closed the stream before
+			// sending any of them — classify it as the mid-frame violation
+			// it is, not the clean-shutdown-between-frames case above.
+			return nil, fmt.Errorf("reading frame payload: %w", io.ErrUnexpectedEOF)
+		}
 		return nil, fmt.Errorf("reading frame payload: %w", err)
 	}
 

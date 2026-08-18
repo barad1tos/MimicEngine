@@ -2,6 +2,7 @@ package ops
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -110,8 +111,8 @@ func TestHandleFrame_PanicRecovered(t *testing.T) {
 	if envelope.ID != 9 {
 		t.Fatalf("envelope.ID = %d, want 9 (the original request's id)", envelope.ID)
 	}
-	if envelope.Error.Code != codeBadRequest {
-		t.Fatalf("envelope.Error.Code = %q, want %q", envelope.Error.Code, codeBadRequest)
+	if envelope.Error.Code != codeInternalError {
+		t.Fatalf("envelope.Error.Code = %q, want %q", envelope.Error.Code, codeInternalError)
 	}
 }
 
@@ -180,11 +181,39 @@ func TestServe_PanicEndsLoop(t *testing.T) {
 
 	var out bytes.Buffer
 	outWriter := protocol.NewWriter(&out)
-	t.Cleanup(func() { _ = outWriter.Close() })
 
 	err := Serve(&in, outWriter, "1.0.0-test", panickingSources{})
+	if closeErr := outWriter.Close(); closeErr != nil {
+		t.Fatalf("closing out writer: %v", closeErr)
+	}
 	if err == nil {
 		t.Fatal("Serve() = nil error, want a non-nil error after a recovered handler panic")
+	}
+
+	envelope := readErrorEnvelope(t, &out)
+	if envelope.Error.Code != codeInternalError {
+		t.Fatalf("envelope.Error.Code = %q, want %q", envelope.Error.Code, codeInternalError)
+	}
+}
+
+// TestServe_TruncatedFrameIsNotTreatedAsCleanShutdown covers the same
+// boundary as protocol.TestReadFrame_PeerDiesAfterPrefixBeforePayload, one
+// layer up: a length prefix arrives announcing payload bytes that never
+// follow. Serve must surface this as a real error, not the nil return it
+// gives for a clean EOF between frames.
+func TestServe_TruncatedFrameIsNotTreatedAsCleanShutdown(t *testing.T) {
+	var in bytes.Buffer
+	header := make([]byte, 4)
+	binary.LittleEndian.PutUint32(header, 5) // announces 5 payload bytes that never arrive
+	in.Write(header)
+
+	var out bytes.Buffer
+	outWriter := protocol.NewWriter(&out)
+	t.Cleanup(func() { _ = outWriter.Close() })
+
+	err := Serve(&in, outWriter, "1.0.0-test", fakeSources{})
+	if err == nil {
+		t.Fatal("Serve() = nil error, want non-nil for a mid-frame peer death (must not be treated as a clean shutdown)")
 	}
 }
 

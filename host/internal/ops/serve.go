@@ -9,14 +9,11 @@ import (
 	"github.com/barad1tos/MimicEngine/host/internal/protocol"
 )
 
-// Error codes used by this task's handlers. The protocol's full vocabulary
-// (path-denied, not-found, too-large, bad-request, unsupported-op) has no
-// dedicated "internal error" entry, so a recovered handler panic is also
-// reported as bad-request: from the caller's perspective the request could
-// not be fulfilled, which is the closest fit in the fixed vocabulary.
+// Error codes used by this task's handlers.
 const (
 	codeBadRequest    = "bad-request"
 	codeUnsupportedOp = "unsupported-op"
+	codeInternalError = "internal-error"
 )
 
 // errorEnvelope is the wire shape of a failed response.
@@ -66,7 +63,7 @@ func handleFrame(payload []byte, out *protocol.Writer, version string, sources s
 
 	defer func() {
 		if r := recover(); r != nil {
-			sendErr := out.Send(newErrorEnvelope(requestID, codeBadRequest, fmt.Sprintf("panic: %v", r)))
+			sendErr := out.Send(newErrorEnvelope(requestID, codeInternalError, fmt.Sprintf("panic: %v", r)))
 			err = fmt.Errorf("recovered panic in handler: %v (error frame send: %w)", r, sendErr)
 		}
 	}()
