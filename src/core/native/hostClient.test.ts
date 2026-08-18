@@ -28,7 +28,7 @@ function pingReply(id: number, protocolVersion = PROTOCOL_VERSION, sourceIds = [
   return { id, ok: true, version: '0.1.0', protocolVersion, sourceIds };
 }
 
-function enumerateReply(id: number) {
+function enumerateReply(id: number, truncated = false) {
   return {
     id,
     ok: true,
@@ -40,6 +40,7 @@ function enumerateReply(id: number) {
         sourceId: 'jetbrains-ui',
       },
     ],
+    truncated,
   };
 }
 
@@ -187,6 +188,27 @@ describe('HostSession request correlation and timeouts', () => {
           sourceId: 'jetbrains-ui',
         },
       ],
+      truncated: false,
+    });
+  });
+
+  it('passes through truncated:true from the host unchanged', async () => {
+    const { session } = await connectSession();
+
+    const enumeratePromise = session.enumerate();
+    port.onMessage.emit(enumerateReply(2, true), port);
+
+    await expect(enumeratePromise).resolves.toEqual({
+      ok: true,
+      files: [
+        {
+          path: 'a.theme.json',
+          size: 42,
+          modifiedAt: '2026-01-01T00:00:00Z',
+          sourceId: 'jetbrains-ui',
+        },
+      ],
+      truncated: true,
     });
   });
 

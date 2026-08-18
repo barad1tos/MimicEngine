@@ -15,7 +15,7 @@ export type SourceCard = {
   pickerExtensions: readonly string[];
 };
 
-const FILE_CARD_ID = 'file';
+export const FILE_CARD_ID = 'file';
 
 const FILE_CARD: SourceCard = {
   id: FILE_CARD_ID,

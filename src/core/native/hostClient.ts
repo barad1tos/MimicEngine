@@ -19,7 +19,9 @@ const ENUMERATE_TIMEOUT_MS = 10_000;
 
 export type HostSession = {
   readonly sourceIds: readonly string[];
-  enumerate(): Promise<{ ok: true; files: readonly HostFile[] } | { ok: false; error: HostError }>;
+  enumerate(): Promise<
+    { ok: true; files: readonly HostFile[]; truncated: boolean } | { ok: false; error: HostError }
+  >;
   read(path: string): Promise<{ ok: true; content: string } | { ok: false; error: HostError }>;
 };
 
@@ -201,7 +203,7 @@ export async function connectHost(): Promise<HostConnectResult> {
       const outcome = await connection.send({ op: 'enumerate' }, ENUMERATE_TIMEOUT_MS);
       if (!outcome.ok) return { ok: false, error: outcome.error };
       if (!isHostEnumerateResponse(outcome)) return unexpectedShapeFailure('enumerate');
-      return { ok: true, files: outcome.files };
+      return { ok: true, files: outcome.files, truncated: outcome.truncated };
     },
     async read(path: string) {
       const outcome = await connection.send({ op: 'read', path }, READ_TIMEOUT_MS);
