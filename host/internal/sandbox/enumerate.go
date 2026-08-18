@@ -84,7 +84,17 @@ func (b *Box) Enumerate(budget, maxResults int) ([]FileInfo, error) {
 					return nil
 				}
 				rel, relErr := filepath.Rel(rule.root, walkPath)
-				if relErr != nil || !matchesAnyPattern(rule.patterns, filepath.ToSlash(rel)) {
+				if relErr != nil {
+					return nil
+				}
+				if rel == "." {
+					// The root entry itself is always a directory, so
+					// d.IsDir() above already skips it in practice — this
+					// mirrors match's identical guard for defense in depth
+					// if that invariant ever stops holding.
+					return nil
+				}
+				if !matchesAnyPattern(rule.patterns, filepath.ToSlash(rel)) {
 					return nil
 				}
 				info = fi

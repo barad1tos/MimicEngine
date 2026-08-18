@@ -1,10 +1,17 @@
 // Package sandbox is the native-messaging host's security core. It holds
 // the allowlist of (root, pattern) rules the host will ever read from, and
-// verifies every path against that allowlist twice: once before opening
-// (resolve, then prefix- and pattern-check) and once after (fstat the
-// descriptor and compare it against a fresh stat of the resolved path) so a
-// filesystem swap landing between those two steps is caught rather than
-// trusted.
+// verifies every path against it in two passes: once before opening
+// (resolve, then prefix- and pattern-check against the resolved root) and
+// once after (fstat the descriptor and compare it, via os.SameFile, against
+// a fresh stat of the resolved path).
+//
+// PRECISION on what that second pass actually buys: it closes the
+// open↔verify window — a swap landing there is caught rather than trusted.
+// A swap landing in the earlier resolve↔open window is NOT caught by this
+// package. Winning that earlier race requires write access to an
+// allow-listed directory, which already sits inside the accepted
+// local-attacker boundary — this is a known, stated limitation, not a
+// defended one.
 //
 // Bare directory roots are deliberately never enough on their own — a rule
 // always pairs a root with the file patterns permitted under it, so e.g. a
@@ -162,15 +169,20 @@ var toctouHook func(resolvedPath string)
 // Open verifies requestedPath against the allowlist and returns an opened,
 // verified *os.File. The caller owns the returned file and must Close it.
 //
-// Verification happens in two passes for TOCTOU safety. First,
-// requestedPath is symlink-resolved and checked against every rule's root
-// and patterns before anything is opened — a symlink planted inside an
-// allowed root that points outside it is rejected here, never opened.
-// Second, once the resolved path is open, the descriptor is fstat'd and the
-// resolved path is stat'd again; the two are compared with os.SameFile
-// (portable identity comparison — device+inode on Unix, file index on
-// Windows), and a mismatch means the filesystem entry changed between open
-// and verification, so the file is closed and denied rather than trusted.
+// Verification happens in two passes. First, requestedPath is
+// symlink-resolved and checked against every rule's root and patterns
+// before anything is opened — a symlink planted inside an allowed root that
+// points outside it is rejected here, never opened. Second, once the
+// resolved path is open, the descriptor is fstat'd and the resolved path is
+// stat'd again; the two are compared with os.SameFile (portable identity
+// comparison — device+inode on Unix, file index on Windows), and a
+// mismatch means the filesystem entry changed between open and
+// verification, so the file is closed and denied rather than trusted.
+//
+// Scope, precisely: that second pass closes the open↔verify window only. A
+// swap landing in the earlier resolve↔open window is NOT caught — winning
+// that race requires write access to an allow-listed directory, already
+// inside the accepted local-attacker boundary. See the package doc.
 func (b *Box) Open(requestedPath string) (*os.File, error) {
 	resolved, err := filepath.EvalSymlinks(requestedPath)
 	if err != nil {

@@ -109,6 +109,26 @@ func TestOpen_PatternMissDenied(t *testing.T) {
 	}
 }
 
+// TestOpen_RootItselfDenied pins the rel == "." edge in match: the root
+// directory of a rule resolves relative to itself as ".", which must never
+// be treated as a match — a root is a directory, never an allow-listed
+// file, regardless of what patterns the rule carries.
+func TestOpen_RootItselfDenied(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "root")
+	mustMkdirAll(t, root)
+
+	box := mustNewBox(t, []Rule{{SourceID: "test", Root: root, Patterns: []string{"*.toml"}}})
+
+	_, err := box.Open(root)
+	if err == nil {
+		t.Fatal("Open(root) = nil error, want denial: a root directory is never itself an allow-listed file")
+	}
+	if !errors.Is(err, ErrDenied) {
+		t.Fatalf("Open(root) error = %v, want errors.Is(err, ErrDenied)", err)
+	}
+}
+
 func TestOpen_SymlinkEscapesRootDenied(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "root")
