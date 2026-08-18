@@ -21,6 +21,11 @@ type InstallResult struct {
 // default extension id to fall back to (see ManifestOptions.ExtensionID),
 // so a partially-written install across several browsers is never a
 // possible outcome of a missing flag.
+//
+// A non-nil error from a write failure partway through candidates does not
+// invalidate the returned InstallResult: it still reports the targets
+// successfully written before the failure, so callers can show exactly
+// what was and wasn't touched.
 func Install(candidates []Target, opts ManifestOptions, reg RegistryWriter) (InstallResult, error) {
 	if opts.ExtensionID == "" && anyChromiumFamily(candidates) {
 		return InstallResult{}, errors.New(
