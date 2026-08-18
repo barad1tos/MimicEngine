@@ -144,6 +144,22 @@ describe('connectHost handshake', () => {
       error: { code: 'transport', message: 'no such native messaging host' },
     });
   });
+
+  // postMessage on an already-dead port throws synchronously (most commonly:
+  // the native host isn't installed at all) rather than routing through
+  // onDisconnect. Without send()'s try/catch guard this throw would escape
+  // the Promise executor as a rejection — connectHost() must still resolve,
+  // never reject, on the very first ping.
+  it('resolves ok:false with transport, not a rejection, when postMessage throws during the ping handshake', async () => {
+    port.postMessage.mockImplementationOnce(() => {
+      throw new Error('native host process exited');
+    });
+
+    await expect(connectHost()).resolves.toEqual({
+      ok: false,
+      error: { code: 'transport', message: 'native host process exited' },
+    });
+  });
 });
 
 describe('HostSession request correlation and timeouts', () => {
@@ -263,6 +279,21 @@ describe('HostSession request correlation and timeouts', () => {
     await expect(readPromise).resolves.toEqual({ ok: true, content: 'theme body' });
   });
 
+  it('resolves ok:false with transport, not a rejection, when postMessage throws mid-session', async () => {
+    const { session } = await connectSession();
+    // The host process can exit without the browser ever firing
+    // onDisconnect on this end before the next send is attempted; the very
+    // next postMessage throws synchronously in that window.
+    port.postMessage.mockImplementationOnce(() => {
+      throw new Error('native host disconnected');
+    });
+
+    await expect(session.read('a.theme.json')).resolves.toEqual({
+      ok: false,
+      error: { code: 'transport', message: 'native host disconnected' },
+    });
+  });
+
   it('rejects every pending request as transport when the host disconnects', async () => {
     const { session } = await connectSession();
 
@@ -328,5 +359,32 @@ describe('HostSession.close()', () => {
       error: { code: 'transport', message: 'native host connection is closed' },
     });
     expect(port.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the onMessage/onDisconnect listeners from the port', async () => {
+    const { close } = await connectSession();
+    expect(port.onMessage.hasListeners()).toBe(true);
+    expect(port.onDisconnect.hasListeners()).toBe(true);
+
+    close();
+
+    expect(port.onMessage.hasListeners()).toBe(false);
+    expect(port.onDisconnect.hasListeners()).toBe(false);
+  });
+
+  it('is safe to call twice at the call level — still disconnects the port each time without throwing', async () => {
+    const { session, close } = await connectSession();
+    const readPromise = session.read('a.theme.json');
+
+    expect(() => {
+      close();
+      close();
+    }).not.toThrow();
+
+    await expect(readPromise).resolves.toEqual({
+      ok: false,
+      error: { code: 'transport', message: 'native host connection closed' },
+    });
+    expect(port.disconnect).toHaveBeenCalledTimes(2);
   });
 });
