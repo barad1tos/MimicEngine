@@ -1,5 +1,8 @@
 import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
+import { connectHost, type HostSession } from '@/src/core/native/hostClient';
+import type { HostError, HostFile } from '@/src/core/native/protocol';
+import { splitScanPath } from '@/src/core/native/scanPath';
 import {
   THEME_TOKEN_NAMES,
   type PaletteTheme,
@@ -81,7 +84,13 @@ function resolveNavigatorPlatform(nav: NavigatorWithUserAgentData): string {
 const supportsFilePicker = 'showOpenFilePicker' in window;
 
 type QueueSource =
-  { kind: 'file'; file: File; cardId: string } | { kind: 'paste'; content: string; cardId: string };
+  | { kind: 'file'; file: File; cardId: string }
+  | { kind: 'paste'; content: string; cardId: string }
+  // Read over the native host during a disk scan. `fileName` is the scanned
+  // path's basename (see splitScanPath) -- the scan-flow analogue of a
+  // `File` object's own `.name`, used the same way for nameless-theme seeding
+  // below. Pasted content has no comparable source, hence no `fileName` there.
+  | { kind: 'scan'; content: string; cardId: string; fileName: string };
 
 type QueueEntry = { key: string; source: QueueSource };
 
@@ -97,6 +106,73 @@ type ImportOutcome =
   | { kind: 'error'; message: string };
 
 const EMPTY_BATCH: ImportBatch = { items: [], index: 0 };
+
+// One `connectHost()` port for the page's whole lifetime once established --
+// never reconnected per scan, never closed on queue completion (cheaper than
+// reconnect-per-scan; see the pagehide effect below for the one place it's
+// torn down). `error` keeps the failure reason around for the install-hint
+// banner but is otherwise treated like `idle`: every card's button reverts
+// to its unconnected label, so a retry after installing the host just works.
+type HostConnectionState =
+  | { kind: 'idle' }
+  | { kind: 'connecting' }
+  | { kind: 'connected'; session: HostSession; close: () => void }
+  | { kind: 'error'; error: HostError };
+
+// Per-card scan-results state -- at most one card's scan is open at a time
+// (opening a new one implicitly replaces the last), keyed by `cardId` so the
+// panel renders under the right card.
+type ScanState =
+  | { cardId: string; phase: 'loading' }
+  | { cardId: string; phase: 'ready'; files: readonly HostFile[]; selected: ReadonlySet<string> }
+  | {
+      cardId: string;
+      phase: 'importing';
+      files: readonly HostFile[];
+      selected: ReadonlySet<string>;
+    }
+  | { cardId: string; phase: 'error'; message: string };
+
+// What a source card's host-scan affordance should render, derived from the
+// page-wide connection state plus that one card's id -- keeps SourceCardView
+// itself free of connection-state branching (it just renders a status).
+type CardHostStatus =
+  | { kind: 'unconnected'; label: string }
+  | { kind: 'connecting' }
+  | { kind: 'scannable' }
+  | { kind: 'unsupported' };
+
+function deriveCardHostStatus(
+  card: SourceCard,
+  hostConnection: HostConnectionState,
+  hasNativeMessagingPermission: boolean,
+): CardHostStatus {
+  if (hostConnection.kind === 'connecting') return { kind: 'connecting' };
+  if (hostConnection.kind === 'connected') {
+    return hostConnection.session.sourceIds.includes(card.id)
+      ? { kind: 'scannable' }
+      : { kind: 'unsupported' };
+  }
+  return {
+    kind: 'unconnected',
+    label: hasNativeMessagingPermission ? 'Connect' : 'Enable disk scan',
+  };
+}
+
+/** The `file`/`scan` source basename FORMAT_DEFAULT_THEME_NAMES-seeding below
+ * needs, or `null` for a source with no filename to seed from (pasted text). */
+function queueSourceFileName(source: QueueSource): string | null {
+  if (source.kind === 'file') return source.file.name;
+  if (source.kind === 'scan') return source.fileName;
+  return null;
+}
+
+function describeScanImportOutcome(importedCount: number, failedNames: readonly string[]): string {
+  const parts: string[] = [];
+  if (importedCount > 0) parts.push(`Imported ${String(importedCount)} file(s)`);
+  if (failedNames.length > 0) parts.push(`failed: ${failedNames.join(', ')}`);
+  return parts.join('; ');
+}
 
 /**
  * Strips a file name's final extension only -- `ayu-mirage.json` becomes
@@ -177,16 +253,176 @@ function SourceCardPaths({
   );
 }
 
+function SourceCardHostRow({
+  hostStatus,
+  onEnableDiskScan,
+  onScan,
+}: Readonly<{
+  hostStatus: CardHostStatus;
+  onEnableDiskScan: () => Promise<void>;
+  onScan: () => Promise<void>;
+}>) {
+  if (hostStatus.kind === 'connecting') {
+    return <p className="source-card-hint">Connecting…</p>;
+  }
+  if (hostStatus.kind === 'unsupported') {
+    return <p className="source-card-hint">Not scannable by this host version.</p>;
+  }
+  if (hostStatus.kind === 'scannable') {
+    return (
+      <button type="button" className="secondary" onClick={() => onScan()}>
+        Scan
+      </button>
+    );
+  }
+  return (
+    <button type="button" className="secondary" onClick={() => onEnableDiskScan()}>
+      {hostStatus.label}
+    </button>
+  );
+}
+
+function ScanFileRow({
+  file,
+  checked,
+  disabled,
+  onToggle,
+}: Readonly<{
+  file: HostFile;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: (path: string) => void;
+}>) {
+  const { baseName, dirTail } = splitScanPath(file.path);
+  const sizeLabel = `${(file.size / 1024).toFixed(1)} KB`;
+  const modifiedLabel = new Date(file.modifiedAt).toLocaleDateString();
+
+  return (
+    <li className="scan-file-row">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={() => {
+          onToggle(file.path);
+        }}
+      />
+      <div className="scan-file-meta">
+        <span className="scan-file-name">{baseName}</span>
+        {dirTail.length > 0 && <span className="scan-file-dir">{dirTail}</span>}
+      </div>
+      <span className="scan-file-size">{sizeLabel}</span>
+      <span className="scan-file-date">{modifiedLabel}</span>
+    </li>
+  );
+}
+
+function ScanPanel({
+  state,
+  onToggleFile,
+  onToggleSelectAll,
+  onImportSelected,
+  onCancel,
+}: Readonly<{
+  state: ScanState;
+  onToggleFile: (path: string) => void;
+  onToggleSelectAll: () => void;
+  onImportSelected: () => Promise<void>;
+  onCancel: () => void;
+}>) {
+  if (state.phase === 'loading') {
+    return <p className="source-card-hint">Scanning…</p>;
+  }
+
+  if (state.phase === 'error') {
+    return (
+      <div className="scan-panel">
+        <p className="import-error">{state.message}</p>
+        <button type="button" className="secondary" onClick={onCancel}>
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  if (state.files.length === 0) {
+    return (
+      <div className="scan-panel">
+        <p className="empty-hint">No files found.</p>
+        <button type="button" className="secondary" onClick={onCancel}>
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  const isImporting = state.phase === 'importing';
+  const allSelected = state.selected.size === state.files.length;
+
+  return (
+    <div className="scan-panel">
+      <label className="row">
+        <span>Select all ({state.files.length.toString()})</span>
+        <input
+          type="checkbox"
+          checked={allSelected}
+          disabled={isImporting}
+          onChange={onToggleSelectAll}
+        />
+      </label>
+      <ul className="scan-file-list">
+        {state.files.map((file) => (
+          <ScanFileRow
+            key={file.path}
+            file={file}
+            checked={state.selected.has(file.path)}
+            disabled={isImporting}
+            onToggle={onToggleFile}
+          />
+        ))}
+      </ul>
+      <div className="scan-panel-actions">
+        <button
+          type="button"
+          disabled={isImporting || state.selected.size === 0}
+          onClick={() => onImportSelected()}
+        >
+          {isImporting ? 'Importing…' : `Import selected (${state.selected.size.toString()})`}
+        </button>
+        <button type="button" className="secondary" disabled={isImporting} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SourceCardView({
   card,
   platform,
   onPick,
   onInputFiles,
+  hostStatus,
+  scanState,
+  onEnableDiskScan,
+  onScan,
+  onToggleScanFile,
+  onToggleSelectAllScanFiles,
+  onImportSelectedScanFiles,
+  onCancelScan,
 }: Readonly<{
   card: SourceCard;
   platform: ReturnType<typeof detectPlatform>;
   onPick: (card: SourceCard) => Promise<void>;
   onInputFiles: (event: ChangeEvent<HTMLInputElement>, cardId: string) => void;
+  hostStatus: CardHostStatus;
+  scanState: ScanState | null;
+  onEnableDiskScan: () => Promise<void>;
+  onScan: (card: SourceCard) => Promise<void>;
+  onToggleScanFile: (path: string) => void;
+  onToggleSelectAllScanFiles: () => void;
+  onImportSelectedScanFiles: () => Promise<void>;
+  onCancelScan: () => void;
 }>) {
   const paths = card.paths[platform] ?? [];
   const acceptAttribute =
@@ -223,6 +459,22 @@ function SourceCardView({
       </div>
       <SourceCardPaths card={card} paths={paths} platform={platform} onCopy={handleCopy} />
       {card.instructions && <p className="source-card-instructions">{card.instructions}</p>}
+      <div className="source-card-host-row">
+        <SourceCardHostRow
+          hostStatus={hostStatus}
+          onEnableDiskScan={onEnableDiskScan}
+          onScan={() => onScan(card)}
+        />
+      </div>
+      {scanState?.cardId === card.id && (
+        <ScanPanel
+          state={scanState}
+          onToggleFile={onToggleScanFile}
+          onToggleSelectAll={onToggleSelectAllScanFiles}
+          onImportSelected={onImportSelectedScanFiles}
+          onCancel={onCancelScan}
+        />
+      )}
     </div>
   );
 }
@@ -342,7 +594,14 @@ export function App() {
   const [editedName, setEditedName] = useState<string>('');
   const [setAsGlobal, setSetAsGlobal] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [hasNativeMessagingPermission, setHasNativeMessagingPermission] = useState<boolean>(false);
+  const [hostConnection, setHostConnectionState] = useState<HostConnectionState>({ kind: 'idle' });
+  const [scanState, setScanState] = useState<ScanState | null>(null);
   const queueKeySeq = useRef(0);
+  // Mirrors `hostConnection` for the pagehide handler below, which is
+  // registered once on mount and would otherwise close over the 'idle'
+  // state from that first render forever.
+  const hostConnectionRef = useRef<HostConnectionState>({ kind: 'idle' });
   // Same last-write-wins discipline as the popup's T12 pattern: the mount-time
   // load races the local-area onChanged listener below, and a stale slow load
   // must not clobber a fresher onChanged refresh.
@@ -350,6 +609,48 @@ export function App() {
 
   const platform = detectPlatform(resolveNavigatorPlatform(navigator));
   const orderedCards = orderSourceCards(recentSources, platform);
+
+  const setHostConnection = (next: HostConnectionState): void => {
+    hostConnectionRef.current = next;
+    setHostConnectionState(next);
+  };
+
+  // Mount-time behavior is deliberately passive: `permissions.contains`
+  // never prompts (unlike `permissions.request`), so this only decides the
+  // unconnected button's label ('Connect' vs 'Enable disk scan'). It does
+  // NOT connect to the host even when permission is already granted --
+  // that only happens lazily, on the first Enable/Scan click, so a page
+  // visit that never touches disk scan spawns zero host processes.
+  useEffect(() => {
+    let isMounted = true;
+    browser.permissions
+      .contains({ permissions: ['nativeMessaging'] })
+      .then((granted) => {
+        if (isMounted) setHasNativeMessagingPermission(granted);
+      })
+      .catch((error: unknown) => {
+        console.error('[Palette Mimicry] failed to check nativeMessaging permission', error);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // The host session outlives any single scan -- reused across every card a
+  // visit scans -- and is torn down only here, on pagehide, never on queue
+  // completion (cheaper than reconnecting per scan). Registered once; reads
+  // the live connection through the ref so a session opened well after mount
+  // still gets closed.
+  useEffect(() => {
+    const handlePageHide = (): void => {
+      const current = hostConnectionRef.current;
+      if (current.kind === 'connected') current.close();
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -412,15 +713,17 @@ export function App() {
           sourceFormat: result.sourceFormat,
           derivedTokens: result.derivedTokens,
         });
-        // A picked/dropped file whose adapter produced a format-default name
-        // (no name of its own) seeds a stronger name from the file's
-        // basename instead, so two nameless imports don't collide on the
-        // same slug and silently replace one another. Pasted content has no
-        // filename, so it keeps the format default (the Replace-labeled
-        // save button still makes a same-name collision explicit there).
+        // A picked/dropped/scanned file whose adapter produced a
+        // format-default name (no name of its own) seeds a stronger name
+        // from the file's basename instead, so two nameless imports don't
+        // collide on the same slug and silently replace one another. Pasted
+        // content has no filename, so it keeps the format default (the
+        // Replace-labeled save button still makes a same-name collision
+        // explicit there).
+        const fileBaseName = queueSourceFileName(currentEntry.source);
         const seedName =
-          currentEntry.source.kind === 'file' && FORMAT_DEFAULT_THEME_NAMES.has(result.theme.name)
-            ? basenameWithoutExtension(currentEntry.source.file.name)
+          fileBaseName !== null && FORMAT_DEFAULT_THEME_NAMES.has(result.theme.name)
+            ? basenameWithoutExtension(fileBaseName)
             : result.theme.name;
         setEditedName(seedName);
         setSetAsGlobal(batch.items.length === 1);
@@ -463,6 +766,125 @@ export function App() {
         source: { kind: 'file', file, cardId },
       })),
     );
+  };
+
+  const handleEnableDiskScan = async (): Promise<void> => {
+    // Re-entrancy guard: a second click on any card's button while the
+    // first click's request/connect is still in flight must not start a
+    // second permission prompt or a second connectHost() race.
+    if (hostConnectionRef.current.kind === 'connecting') return;
+    setHostConnection({ kind: 'connecting' });
+
+    if (!hasNativeMessagingPermission) {
+      let granted: boolean;
+      try {
+        granted = await browser.permissions.request({ permissions: ['nativeMessaging'] });
+      } catch (error) {
+        console.error('[Palette Mimicry] failed to request nativeMessaging permission', error);
+        setHostConnection({ kind: 'idle' });
+        return;
+      }
+      // The user declining the browser's own permission dialog is not a
+      // host-absent failure -- no install hint, just revert to idle so
+      // every card's button is clickable again.
+      if (!granted) {
+        setHostConnection({ kind: 'idle' });
+        return;
+      }
+      setHasNativeMessagingPermission(true);
+    }
+
+    const result = await connectHost();
+    setHostConnection(
+      result.ok
+        ? { kind: 'connected', session: result.session, close: result.close }
+        : { kind: 'error', error: result.error },
+    );
+  };
+
+  const handleScanCard = async (card: SourceCard): Promise<void> => {
+    if (hostConnection.kind !== 'connected') return;
+    setScanState({ cardId: card.id, phase: 'loading' });
+
+    const result = await hostConnection.session.enumerate();
+    if (!result.ok) {
+      setScanState({ cardId: card.id, phase: 'error', message: result.error.message });
+      return;
+    }
+
+    const files = result.files.filter((file) => file.sourceId === card.id);
+    setScanState({
+      cardId: card.id,
+      phase: 'ready',
+      files,
+      selected: new Set(files.map((file) => file.path)),
+    });
+  };
+
+  const handleToggleScanFile = (path: string): void => {
+    setScanState((previous) => {
+      if (previous?.phase !== 'ready') return previous;
+      const selected = new Set(previous.selected);
+      if (selected.has(path)) {
+        selected.delete(path);
+      } else {
+        selected.add(path);
+      }
+      return { ...previous, selected };
+    });
+  };
+
+  const handleToggleSelectAllScanFiles = (): void => {
+    setScanState((previous) => {
+      if (previous?.phase !== 'ready') return previous;
+      const selected =
+        previous.selected.size === previous.files.length
+          ? new Set<string>()
+          : new Set(previous.files.map((file) => file.path));
+      return { ...previous, selected };
+    });
+  };
+
+  const handleCancelScan = (): void => {
+    setScanState(null);
+  };
+
+  const handleImportSelectedScanFiles = async (): Promise<void> => {
+    const current = scanState;
+    if (current?.phase !== 'ready') return;
+    if (hostConnectionRef.current.kind !== 'connected') return;
+    const session = hostConnectionRef.current.session;
+    const filesToImport = current.files.filter((file) => current.selected.has(file.path));
+
+    setScanState({ ...current, phase: 'importing' });
+
+    // Sequential, not parallel: each read() is a full native-messaging
+    // round trip, and a failing file (deleted since enumerate, permission
+    // change) must not abort the rest of the selection -- it's reported
+    // inline and the loop continues.
+    const entries: QueueEntry[] = [];
+    const failedNames: string[] = [];
+    for (const file of filesToImport) {
+      const { baseName } = splitScanPath(file.path);
+      const result = await session.read(file.path);
+      if (result.ok) {
+        entries.push({
+          key: `scan:${current.cardId}:${file.path}:${nextQueueKey()}`,
+          source: {
+            kind: 'scan',
+            content: result.content,
+            cardId: current.cardId,
+            fileName: baseName,
+          },
+        });
+      } else {
+        failedNames.push(`${baseName} (${result.error.message})`);
+      }
+    }
+
+    enqueue(entries);
+    setScanState(null);
+    setStatusMessage(describeScanImportOutcome(entries.length, failedNames));
   };
 
   const advanceQueue = (): void => {
@@ -641,9 +1063,32 @@ export function App() {
                   platform={platform}
                   onPick={handlePickForCard}
                   onInputFiles={handleInputFiles}
+                  hostStatus={deriveCardHostStatus(
+                    card,
+                    hostConnection,
+                    hasNativeMessagingPermission,
+                  )}
+                  scanState={scanState}
+                  onEnableDiskScan={handleEnableDiskScan}
+                  onScan={handleScanCard}
+                  onToggleScanFile={handleToggleScanFile}
+                  onToggleSelectAllScanFiles={handleToggleSelectAllScanFiles}
+                  onImportSelectedScanFiles={handleImportSelectedScanFiles}
+                  onCancelScan={handleCancelScan}
                 />
               ))}
             </div>
+
+            {hostConnection.kind === 'error' && (
+              <div className="host-install-hint">
+                <p>Disk scan needs the MimicEngine host: {hostConnection.error.message}</p>
+                <code>brew install barad1tos/tap/mimicengine-host</code>
+                <code>mimicengine-host install</code>
+                <p className="source-card-hint">
+                  Already installed? Run <code>mimicengine-host doctor</code> to check the setup.
+                </p>
+              </div>
+            )}
 
             <p className="drop-hint">Drop a theme file anywhere in this panel to import it.</p>
 
