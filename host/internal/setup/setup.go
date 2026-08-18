@@ -23,6 +23,15 @@ const HostName = "com.barad1tos.mimicengine"
 // not detected: the extension side aligns its own manifest key to match.
 const DefaultGeckoID = "palette-mimicry@barad1tos.github.io"
 
+// DefaultExtensionID is the Chromium extension id manifests pin via
+// allowed_origins when --extension-id is not given. It is the production
+// MimicEngine extension's stable id, derived from wxt.config.ts's
+// manifest.key (that file documents the derivation: SHA256 of the pinned
+// public key's DER bytes, truncated and mapped through Chrome's own
+// id alphabet) — not detected, since Chrome assigns this id from the key
+// once and it never changes across reinstalls/rebuilds.
+const DefaultExtensionID = "blngbjjcheifbhcdiennaldcmlfkhgfb"
+
 // manifestFileName is the filename written under every Target's Dir.
 var manifestFileName = HostName + ".json"
 
@@ -73,8 +82,22 @@ type Target struct {
 	// (e.g. `Software\Google\Chrome\NativeMessagingHosts\`+HostName), whose
 	// DEFAULT (unnamed) value must hold the manifest's absolute path.
 	// Empty on every POSIX target — Windows is the only platform using the
-	// registry at all.
+	// registry at all. This is OUR HOST's own presence signal — Uninstall
+	// and Doctor act on it because they care about installed state — never
+	// the browser's presence signal Install's candidate detection needs
+	// (see BrowserMarkerKey).
 	RegistryPath string
+	// BrowserMarkerKey is a Windows target's proof that the BROWSER ITSELF
+	// is present, independent of whether this host has ever been installed
+	// into it: e.g. Chrome's own per-user "App Paths" registry entry under
+	// HKEY_CURRENT_USER. Install's candidate detection keys on this rather
+	// than RegistryPath, which is empty before this host's very first
+	// install and would otherwise make plain `install` permanently unable
+	// to detect any browser on a fresh machine — see targets_windows.go for
+	// the exact keys and their verification caveats. Empty on every POSIX
+	// target, where Dir already carries the browser-presence signal (see
+	// targets_darwin.go / targets_linux.go).
+	BrowserMarkerKey string
 }
 
 // ManifestOptions parameterizes the manifest body buildManifest writes:

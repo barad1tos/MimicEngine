@@ -155,7 +155,7 @@ func runInstall(args []string, stdin io.Reader, stdout io.Writer, home string) e
 	targets := setup.PlatformTargets(home)
 	reg := setup.NewRegistryWriter()
 
-	candidates, err := setup.ResolveCandidates(targets, *browsers, reg)
+	candidates, err := setup.ResolveInstallCandidates(targets, *browsers, reg)
 	if err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func runUninstall(args []string, stdin io.Reader, stdout io.Writer, home string)
 		}
 	}
 
-	result, err := setup.Uninstall(candidates, reg)
+	result, err := setup.Uninstall(candidates, targets, reg)
 	if err != nil {
 		return err
 	}

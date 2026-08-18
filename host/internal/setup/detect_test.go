@@ -79,6 +79,119 @@ func TestDetected_RegistryErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestDetectedBrowsers_WindowsMarkerKeyPresence pins task report finding
+// W1's fix: install-candidate detection must key on the BROWSER's own
+// marker key, not our host's RegistryPath (which is absent before the very
+// first install and would otherwise make bootstrap impossible). Only the
+// marker key is present here — RegistryPath is empty, simulating a browser
+// that exists but has never had this host installed into it.
+func TestDetectedBrowsers_WindowsMarkerKeyPresence(t *testing.T) {
+	markerKey := `Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe`
+	reg := newFakeRegistry()
+	if err := reg.setValue(markerKey, `C:\Program Files\Google\Chrome\Application\chrome.exe`); err != nil {
+		t.Fatalf("setValue: %v", err)
+	}
+
+	all := []Target{
+		{ID: "chrome", Name: "Chrome", Family: Chromium, BrowserMarkerKey: markerKey},
+		{ID: "firefox", Name: "Firefox", Family: Firefox, BrowserMarkerKey: `Software\Microsoft\Windows\CurrentVersion\App Paths\firefox.exe`},
+	}
+
+	detected, err := DetectedBrowsers(all, reg)
+	if err != nil {
+		t.Fatalf("DetectedBrowsers: %v", err)
+	}
+	if len(detected) != 1 || detected[0].ID != "chrome" {
+		t.Fatalf("DetectedBrowsers() = %v, want exactly [chrome] (its marker key exists even though RegistryPath does not)", detected)
+	}
+}
+
+// TestDetectedBrowsers_NoMarkerKeyNotDetected is the negative case: an empty
+// fake registry (no marker key ever set) must report nothing detected, not
+// silently succeed.
+func TestDetectedBrowsers_NoMarkerKeyNotDetected(t *testing.T) {
+	all := []Target{
+		{ID: "chrome", Name: "Chrome", Family: Chromium, BrowserMarkerKey: `Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe`},
+	}
+
+	detected, err := DetectedBrowsers(all, newFakeRegistry())
+	if err != nil {
+		t.Fatalf("DetectedBrowsers: %v", err)
+	}
+	if len(detected) != 0 {
+		t.Fatalf("DetectedBrowsers() = %v, want none (marker key never set)", detected)
+	}
+}
+
+// TestDetected_IgnoresBrowserMarkerKey proves the separation W1 introduced
+// holds in the other direction too: Detected (Uninstall/Doctor's installed-
+// state signal) must NOT treat a present BrowserMarkerKey as "installed"
+// when RegistryPath — our own host's key — is absent. Conflating the two
+// would make uninstall target a browser this host was never actually
+// registered with.
+func TestDetected_IgnoresBrowserMarkerKey(t *testing.T) {
+	markerKey := `Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe`
+	reg := newFakeRegistry()
+	if err := reg.setValue(markerKey, `C:\chrome.exe`); err != nil {
+		t.Fatalf("setValue: %v", err)
+	}
+
+	all := []Target{
+		{ID: "chrome", Name: "Chrome", Family: Chromium, BrowserMarkerKey: markerKey},
+	}
+
+	detected, err := Detected(all, reg)
+	if err != nil {
+		t.Fatalf("Detected: %v", err)
+	}
+	if len(detected) != 0 {
+		t.Fatalf("Detected() = %v, want none — RegistryPath (our host's own key) is empty, BrowserMarkerKey must not substitute for it", detected)
+	}
+}
+
+// TestResolveInstallCandidates_EmptyFallsBackToDetectedBrowsers is
+// ResolveInstallCandidates' analogue of
+// TestResolveCandidates_EmptyFallsBackToDetected: an empty --browsers value
+// falls back to DetectedBrowsers, not Detected.
+func TestResolveInstallCandidates_EmptyFallsBackToDetectedBrowsers(t *testing.T) {
+	markerKey := `Software\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe`
+	reg := newFakeRegistry()
+	if err := reg.setValue(markerKey, `C:\chrome.exe`); err != nil {
+		t.Fatalf("setValue: %v", err)
+	}
+
+	all := []Target{
+		{ID: "chrome", Name: "Chrome", Family: Chromium, BrowserMarkerKey: markerKey},
+		{ID: "firefox", Name: "Firefox", Family: Firefox, BrowserMarkerKey: `Software\Microsoft\Windows\CurrentVersion\App Paths\firefox.exe`},
+	}
+
+	got, err := ResolveInstallCandidates(all, "", reg)
+	if err != nil {
+		t.Fatalf("ResolveInstallCandidates: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "chrome" {
+		t.Fatalf("ResolveInstallCandidates(\"\") = %v, want exactly [chrome] (the browser with a marker key)", got)
+	}
+}
+
+// TestResolveInstallCandidates_BrowsersFlagBypassesDetection mirrors
+// TestResolveCandidates_BrowsersFlagBypassesDetection for the install
+// variant: an explicit --browsers value wins regardless of detection.
+func TestResolveInstallCandidates_BrowsersFlagBypassesDetection(t *testing.T) {
+	all := []Target{
+		{ID: "chrome", Name: "Chrome", Family: Chromium},
+		{ID: "firefox", Name: "Firefox", Family: Firefox},
+	}
+
+	got, err := ResolveInstallCandidates(all, "chrome", newFakeRegistry())
+	if err != nil {
+		t.Fatalf("ResolveInstallCandidates: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "chrome" {
+		t.Fatalf("ResolveInstallCandidates() = %v, want [chrome] even though nothing is detected", got)
+	}
+}
+
 func TestResolveTargets_Filters(t *testing.T) {
 	all := []Target{
 		{ID: "chrome", Name: "Chrome"},

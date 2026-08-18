@@ -43,6 +43,45 @@ func TestPlatformTargets_Windows_RegistryPathsMatchBrowserContract(t *testing.T)
 	}
 }
 
+// TestPlatformTargets_Windows_BrowserMarkerKeysAreAppPaths pins task report
+// finding W1's fix: every Chromium-family target but "chromium" (which has
+// no verified installer marker — see platformTargets' doc) carries a
+// BrowserMarkerKey under the standard Windows "App Paths" registration
+// convention, distinct from RegistryPath (our own host's key).
+func TestPlatformTargets_Windows_BrowserMarkerKeysAreAppPaths(t *testing.T) {
+	home := t.TempDir()
+	targets := platformTargets(home)
+
+	const appPaths = `Software\Microsoft\Windows\CurrentVersion\App Paths\`
+	want := map[string]string{
+		"chrome":   appPaths + "chrome.exe",
+		"brave":    appPaths + "brave.exe",
+		"edge":     appPaths + "msedge.exe",
+		"vivaldi":  appPaths + "vivaldi.exe",
+		"firefox":  appPaths + "firefox.exe",
+		"chromium": "", // no verified App Paths entry; documented gap
+	}
+
+	got := make(map[string]Target, len(targets))
+	for _, tg := range targets {
+		got[tg.ID] = tg
+	}
+
+	for id, wantKey := range want {
+		tg, ok := got[id]
+		if !ok {
+			t.Errorf("platformTargets(home) is missing id %q", id)
+			continue
+		}
+		if tg.BrowserMarkerKey != wantKey {
+			t.Errorf("%s.BrowserMarkerKey = %q, want %q", id, tg.BrowserMarkerKey, wantKey)
+		}
+		if tg.BrowserMarkerKey == tg.RegistryPath {
+			t.Errorf("%s.BrowserMarkerKey must not equal RegistryPath — they answer different questions (browser presence vs our host's own installed state)", id)
+		}
+	}
+}
+
 // TestPlatformTargets_Windows_ExportedWrapperMatchesInternal mirrors the
 // darwin/POSIX equivalent (targets_darwin_test.go): proves the exported
 // PlatformTargets wrapper actually delegates to platformTargets rather

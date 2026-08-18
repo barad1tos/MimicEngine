@@ -29,7 +29,7 @@ func TestInstallUninstall_RoundTripLeavesNoResidue(t *testing.T) {
 		t.Fatal("registry value not written for the windows-style target")
 	}
 
-	result, err := Uninstall(targets, reg)
+	result, err := Uninstall(targets, targets, reg)
 	if err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestUninstall_IdempotentOnMissingManifest(t *testing.T) {
 	target := Target{ID: "chrome", Family: Chromium, Dir: filepath.Join(home, "chrome-nmh")}
 
 	// Never installed: the manifest file and its directory do not exist.
-	result, err := Uninstall([]Target{target}, newFakeRegistry())
+	result, err := Uninstall([]Target{target}, []Target{target}, newFakeRegistry())
 	if err != nil {
 		t.Fatalf("Uninstall on a never-installed target: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestUninstall_RemoveManifestErrorPropagates(t *testing.T) {
 	}
 
 	target := Target{ID: "chrome", Family: Chromium, Dir: dir}
-	_, err := Uninstall([]Target{target}, newFakeRegistry())
+	_, err := Uninstall([]Target{target}, []Target{target}, newFakeRegistry())
 	if err == nil {
 		t.Fatal("Uninstall() = nil error, want an error when the manifest path is a non-empty directory")
 	}
@@ -88,7 +88,7 @@ func TestUninstall_DeleteValueErrorPropagates(t *testing.T) {
 		RegistryPath: `Software\Google\Chrome\NativeMessagingHosts`,
 	}
 
-	result, err := Uninstall([]Target{first, second}, erroringRegistry{})
+	result, err := Uninstall([]Target{first, second}, []Target{first, second}, erroringRegistry{})
 	if err == nil {
 		t.Fatal("Uninstall() = nil error, want an error when the registry delete fails")
 	}
@@ -100,13 +100,63 @@ func TestUninstall_DeleteValueErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestUninstall_SharedManifestSurvivesUntilLastSibling pins task report
+// finding W4: several Windows Chromium-family targets write to the same
+// Dir (and therefore the same manifest file — see targets_windows.go).
+// Uninstalling one of them must not delete a file a sibling's own registry
+// key still points at; only removing the LAST sibling's key may delete it.
+func TestUninstall_SharedManifestSurvivesUntilLastSibling(t *testing.T) {
+	sharedDir := t.TempDir()
+	chrome := Target{
+		ID: "chrome", Family: Chromium, Dir: sharedDir,
+		RegistryPath: `Software\Google\Chrome\NativeMessagingHosts\` + HostName,
+	}
+	brave := Target{
+		ID: "brave", Family: Chromium, Dir: sharedDir,
+		RegistryPath: `Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\` + HostName,
+	}
+	all := []Target{chrome, brave}
+	reg := newFakeRegistry()
+
+	if _, err := Install(all, ManifestOptions{ExtensionID: "x", BinaryPath: "/opt/host"}, reg); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	sharedManifest := manifestPath(chrome)
+	if sharedManifest != manifestPath(brave) {
+		t.Fatalf("test setup invalid: chrome and brave must share one manifest path, got %q and %q", sharedManifest, manifestPath(brave))
+	}
+	if _, err := os.Stat(sharedManifest); err != nil {
+		t.Fatalf("setup precondition failed, shared manifest missing: %v", err)
+	}
+
+	if _, err := Uninstall([]Target{chrome}, all, reg); err != nil {
+		t.Fatalf("Uninstall(chrome): %v", err)
+	}
+	if _, err := os.Stat(sharedManifest); err != nil {
+		t.Fatalf("shared manifest removed after uninstalling chrome alone, want it to survive while brave's key remains: %v", err)
+	}
+	if _, present, _ := reg.value(chrome.RegistryPath); present {
+		t.Fatal("chrome's own registry key still present after its uninstall")
+	}
+	if _, present, _ := reg.value(brave.RegistryPath); !present {
+		t.Fatal("brave's registry key was removed by uninstalling chrome — reference counting must only touch the requested target's key")
+	}
+
+	if _, err := Uninstall([]Target{brave}, all, reg); err != nil {
+		t.Fatalf("Uninstall(brave): %v", err)
+	}
+	if _, err := os.Stat(sharedManifest); !os.IsNotExist(err) {
+		t.Fatalf("shared manifest still present after uninstalling the last sibling (brave): err=%v", err)
+	}
+}
+
 func TestUninstall_IdempotentOnMissingRegistryValue(t *testing.T) {
 	target := Target{
 		ID: "chrome", Family: Chromium, Dir: t.TempDir(),
 		RegistryPath: `Software\Google\Chrome\NativeMessagingHosts`,
 	}
 	// Empty fakeRegistry: no value was ever set for this target.
-	if _, err := Uninstall([]Target{target}, newFakeRegistry()); err != nil {
+	if _, err := Uninstall([]Target{target}, []Target{target}, newFakeRegistry()); err != nil {
 		t.Fatalf("Uninstall on a target with no registry value: %v", err)
 	}
 }
