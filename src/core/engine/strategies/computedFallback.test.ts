@@ -253,7 +253,46 @@ describe('computedFallback strategy', () => {
     );
 
     expect(css).toContain('html[data-pm-active="true"] :where(div.divider) {');
-    expect(css).toContain('border-bottom-color:');
+    expect(css).toContain('border-color:');
+  });
+
+  it('collapses uniform border sides into one border-color sample (weight 1)', () => {
+    // A four-sided currentColor border shares the text's RGB. Four per-side
+    // samples would outvote the single text sample 4:1 in the palette's
+    // bucket majority, reclassifying the text hex as `border` and skipping
+    // the contrast guard. Uniform sides must collapse to ONE sample.
+    document.head.innerHTML = `
+      <style>
+        .btn { color: rgb(10, 20, 30); border: 1px solid rgb(10, 20, 30); }
+      </style>
+    `;
+    document.body.innerHTML = '<button class="btn">go</button>';
+
+    const samples = collectComputedColorsModule.collectComputedColors(document);
+    const borderSamples = samples.filter((sample) => sample.property.startsWith('border'));
+
+    expect(borderSamples).toHaveLength(1);
+    expect(borderSamples[0]?.property).toBe('borderColor');
+  });
+
+  it('keeps per-side samples when border sides differ in color', () => {
+    document.head.innerHTML = `
+      <style>
+        .split {
+          border-top: 1px solid rgb(200, 0, 0);
+          border-bottom: 1px solid rgb(0, 0, 200);
+        }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="split"></div>';
+
+    const samples = collectComputedColorsModule.collectComputedColors(document);
+    const borderProperties = samples
+      .filter((sample) => sample.property.startsWith('border'))
+      .map((sample) => sample.property)
+      .sort((left, right) => left.localeCompare(right));
+
+    expect(borderProperties).toEqual(['borderBottomColor', 'borderTopColor']);
   });
 
   it('skips border sides that are not drawn (zero width)', () => {

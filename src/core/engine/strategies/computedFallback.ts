@@ -24,6 +24,7 @@ type NovelDeclaration = AuthoredColorDeclaration & {
 const SAMPLE_PROPERTY_TO_CSS: Record<ComputedColorSample['property'], string> = {
   color: 'color',
   backgroundColor: 'background-color',
+  borderColor: 'border-color',
   borderTopColor: 'border-top-color',
   borderRightColor: 'border-right-color',
   borderBottomColor: 'border-bottom-color',
@@ -36,6 +37,7 @@ const SAMPLE_PROPERTY_TO_BUCKET: Record<
 > = {
   color: 'text',
   backgroundColor: 'background',
+  borderColor: 'border',
   borderTopColor: 'border',
   borderRightColor: 'border',
   borderBottomColor: 'border',
