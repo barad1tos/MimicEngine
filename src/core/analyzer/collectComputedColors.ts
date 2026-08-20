@@ -5,7 +5,10 @@ export type ComputedBorderColorProperty =
 
 export type ComputedColorSample = {
   selectorHint: string;
-  property: 'color' | 'backgroundColor' | ComputedBorderColorProperty;
+  // `borderColor` is the collapsed form: every drawn side shares one color,
+  // so the element contributes a single border sample (weight 1 in the
+  // palette's bucket majority) emitted as the `border-color` shorthand.
+  property: 'color' | 'backgroundColor' | 'borderColor' | ComputedBorderColorProperty;
   value: string;
   tagName: string;
   textLength: number;
@@ -49,8 +52,7 @@ export function collectComputedColors(
     const style = getComputedStyle(element);
     const selectorHint = buildSelectorHint(element);
 
-    for (const property of sampledPropertiesFor(style)) {
-      const value = style[property];
+    for (const { property, value } of sampledDeclarationsFor(style)) {
       if (!value || value === 'transparent' || value === 'rgba(0, 0, 0, 0)') continue;
 
       samples.push({
@@ -66,12 +68,30 @@ export function collectComputedColors(
   return samples;
 }
 
-function sampledPropertiesFor(style: CSSStyleDeclaration): ComputedColorSample['property'][] {
-  const properties: ComputedColorSample['property'][] = ['color', 'backgroundColor'];
-  for (const side of BORDER_SIDES) {
-    if (Number.parseFloat(style[side.width]) > 0) properties.push(side.color);
+type SampledDeclaration = { property: ComputedColorSample['property']; value: string };
+
+// Border sides collapse by value: when every drawn side shares one color the
+// element yields a single `borderColor` declaration, so a four-sided
+// currentColor border weighs 1 (not 4) against the element's text sample in
+// the palette's bucket majority. Sides with differing colors stay per-side.
+function sampledDeclarationsFor(style: CSSStyleDeclaration): SampledDeclaration[] {
+  const declarations: SampledDeclaration[] = [
+    { property: 'color', value: style.color },
+    { property: 'backgroundColor', value: style.backgroundColor },
+  ];
+
+  const drawnSides = BORDER_SIDES.filter((side) => Number.parseFloat(style[side.width]) > 0);
+  const distinctValues = new Set(drawnSides.map((side) => style[side.color]));
+
+  if (distinctValues.size === 1 && drawnSides[0]) {
+    declarations.push({ property: 'borderColor', value: style[drawnSides[0].color] });
+  } else {
+    for (const side of drawnSides) {
+      declarations.push({ property: side.color, value: style[side.color] });
+    }
   }
-  return properties;
+
+  return declarations;
 }
 
 function isProbablyVisible(element: HTMLElement): boolean {
