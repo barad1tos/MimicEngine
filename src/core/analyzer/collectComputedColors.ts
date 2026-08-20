@@ -1,12 +1,27 @@
 import { buildSelectorHint } from '../engine/selectorHint';
 
+export type ComputedBorderColorProperty =
+  'borderTopColor' | 'borderRightColor' | 'borderBottomColor' | 'borderLeftColor';
+
 export type ComputedColorSample = {
   selectorHint: string;
-  property: 'color' | 'backgroundColor' | 'borderTopColor';
+  property: 'color' | 'backgroundColor' | ComputedBorderColorProperty;
   value: string;
   tagName: string;
   textLength: number;
 };
+
+// A border side only renders when its computed width is positive; sampling
+// an undrawn side would pollute the palette with the default currentColor.
+const BORDER_SIDES: readonly {
+  width: 'borderTopWidth' | 'borderRightWidth' | 'borderBottomWidth' | 'borderLeftWidth';
+  color: ComputedBorderColorProperty;
+}[] = [
+  { width: 'borderTopWidth', color: 'borderTopColor' },
+  { width: 'borderRightWidth', color: 'borderRightColor' },
+  { width: 'borderBottomWidth', color: 'borderBottomColor' },
+  { width: 'borderLeftWidth', color: 'borderLeftColor' },
+];
 
 export type CollectComputedColorsOptions = {
   maxElements: number;
@@ -34,7 +49,7 @@ export function collectComputedColors(
     const style = getComputedStyle(element);
     const selectorHint = buildSelectorHint(element);
 
-    for (const property of ['color', 'backgroundColor', 'borderTopColor'] as const) {
+    for (const property of sampledPropertiesFor(style)) {
       const value = style[property];
       if (!value || value === 'transparent' || value === 'rgba(0, 0, 0, 0)') continue;
 
@@ -49,6 +64,14 @@ export function collectComputedColors(
   }
 
   return samples;
+}
+
+function sampledPropertiesFor(style: CSSStyleDeclaration): ComputedColorSample['property'][] {
+  const properties: ComputedColorSample['property'][] = ['color', 'backgroundColor'];
+  for (const side of BORDER_SIDES) {
+    if (Number.parseFloat(style[side.width]) > 0) properties.push(side.color);
+  }
+  return properties;
 }
 
 function isProbablyVisible(element: HTMLElement): boolean {

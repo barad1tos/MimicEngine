@@ -25,6 +25,9 @@ const SAMPLE_PROPERTY_TO_CSS: Record<ComputedColorSample['property'], string> = 
   color: 'color',
   backgroundColor: 'background-color',
   borderTopColor: 'border-top-color',
+  borderRightColor: 'border-right-color',
+  borderBottomColor: 'border-bottom-color',
+  borderLeftColor: 'border-left-color',
 };
 
 const SAMPLE_PROPERTY_TO_BUCKET: Record<
@@ -34,6 +37,9 @@ const SAMPLE_PROPERTY_TO_BUCKET: Record<
   color: 'text',
   backgroundColor: 'background',
   borderTopColor: 'border',
+  borderRightColor: 'border',
+  borderBottomColor: 'border',
+  borderLeftColor: 'border',
 };
 
 // The one strategy that reads the live DOM at produce time (documented,
