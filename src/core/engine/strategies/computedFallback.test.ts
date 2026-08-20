@@ -237,6 +237,41 @@ describe('computedFallback strategy', () => {
     expect(css).toBe('');
   });
 
+  it('samples and remaps a border-bottom divider', () => {
+    document.head.innerHTML = `
+      <style>
+        .divider { border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: rgb(200, 200, 200); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="divider"></div>';
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).toContain('html[data-pm-active="true"] :where(div.divider) {');
+    expect(css).toContain('border-bottom-color:');
+  });
+
+  it('skips border sides that are not drawn (zero width)', () => {
+    // border-top-color is set but no width/style — the side never renders,
+    // so its color must not enter the palette or the emitted CSS.
+    document.head.innerHTML = '<style>.box { border-top-color: rgb(1, 2, 3); }</style>';
+    document.body.innerHTML = '<div class="box"></div>';
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).not.toContain('border-top-color');
+  });
+
   it('snapshot: emits a grouped stylesheet from novel sampled colors', () => {
     document.head.innerHTML = `
       <style>
