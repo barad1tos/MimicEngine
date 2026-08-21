@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // src/core/injector/styleElement.test.ts
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createSignatureCensus, installCensus } from '../analyzer/signatureCensus';
 import { composeStylesheet } from '../engine/composeStylesheet';
 import { decideStrategies } from '../engine/decisionTable';
 import { collectPageFacts } from '../engine/pageFacts';
@@ -104,7 +105,28 @@ describe('withStylesheetDisabled', () => {
   });
 });
 
+// happy-dom's layout engine always reports zero-size rects; stubbing
+// getBoundingClientRect (same fixture as computedFallback.test.ts) lets the
+// census' visibility filter admit our fixture elements, same as any real,
+// laid-out page element would be.
+const VISIBLE_RECT = {
+  x: 0,
+  y: 0,
+  width: 100,
+  height: 20,
+  top: 0,
+  left: 0,
+  right: 100,
+  bottom: 20,
+  toJSON: () => ({}),
+} as DOMRect;
+
 describe('apply(apply(page)) idempotency invariant', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    installCensus(null);
+  });
+
   // Shared M4 fixture: the calm-variables-rich custom properties from the
   // original fixture, plus an inline SVG carrying fill/stroke presentation
   // attributes and an element with a style="" attribute — the surface
@@ -137,6 +159,34 @@ describe('apply(apply(page)) idempotency invariant', () => {
         </svg>
       </div>
     `;
+  }
+
+  // Task 7 fixture: a DOM whose only color signal is invisible to authored
+  // analysis (no custom properties, no readable-sheet budget relevant here)
+  // and visible only to the census — the manual computedFallback pick below
+  // is the sole strategy in the plan, so this exercises the census-bootstrap
+  // path (Task 4/5) through the determinism/idempotency invariants.
+  function renderComputedFallbackFixturePage(): void {
+    document.head.innerHTML = `
+      <style>
+        .hero { color: rgb(20, 30, 40); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <p class="hero">census-sampled text</p>
+    `;
+  }
+
+  // Builds a census over the current document and installs it, the same way
+  // pageThemeController installs its live census before invoking the plan
+  // (Task 5) — mirrors computedFallback.test.ts's censusFromCurrentDom (Task 4).
+  function censusFromCurrentDom(): void {
+    const census = createSignatureCensus();
+    census.begin(document);
+    while (!census.advance(1000)) {
+      /* drain */
+    }
+    installCensus(census);
   }
 
   // collectPageFacts must exclude our own injected <style id=STYLE_ELEMENT_ID>
@@ -182,5 +232,25 @@ describe('apply(apply(page)) idempotency invariant', () => {
 
     expect(second.css).toBe(first.css);
     expect(second.metrics).toEqual(first.metrics);
+  });
+
+  it('produces byte-identical CSS and equal metrics on re-apply — manual computedFallback plan reading the installed census', () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    renderComputedFallbackFixturePage();
+    censusFromCurrentDom();
+
+    const theme = builtInThemes[0];
+    const siteSettings: SiteSettings = {
+      ...createDefaultSiteSettings(theme.id),
+      strategy: 'computedFallback',
+    };
+
+    const first = applyOnce(theme, siteSettings);
+    const second = applyOnce(theme, siteSettings);
+
+    expect(second.css).toBe(first.css);
+    expect(second.metrics).toEqual(first.metrics);
+    // Sanity: the census path actually fired a rule, not a trivial empty match.
+    expect(first.css).toContain('!important');
   });
 });
