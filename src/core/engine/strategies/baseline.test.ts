@@ -88,7 +88,7 @@ describe('baseline strategy', () => {
 
     expect(css).toContain('html[data-pm-active="true"]');
     expect(css).not.toContain(':root {');
-    expect(css).toContain('var(--pm-canvas)');
+    expect(css).toContain('var(--pm-elevation-0)');
   });
 
   it('keeps the interactive-surface background floor when the plan has no computedFallback', () => {
@@ -127,7 +127,7 @@ describe('baseline strategy', () => {
     expect(css).not.toContain(interactiveBackgroundBlock);
     expect(css).not.toContain(interactiveHoverBackgroundBlock);
     expect(css).toContain(interactiveUnconditionalBlock);
-    expect(css).toContain('var(--pm-canvas)');
+    expect(css).toContain('var(--pm-elevation-0)');
     expect(css).toContain('color: inherit;');
   });
 });

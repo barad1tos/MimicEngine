@@ -3,6 +3,7 @@ import { rgbaToOklch } from '../../color/oklch';
 import { isOpaque, type RgbaColor } from '../../color/parseColor';
 import type { ThemeTokenName } from '../../themes';
 import { BRAND_CHROMA_THRESHOLD } from '../colorMap';
+import { ELEVATION_LEVELS, elevationVariable } from '../elevationScale';
 import type { CustomPropertyFact } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
@@ -10,6 +11,12 @@ import { tokenToCssVariableSuffix } from '../tokenVariables';
 
 type DirectToken = Exclude<ThemeTokenName, 'canvas' | 'surface1' | 'surface2' | 'surface3'>;
 type Classification = DirectToken | 'surface-group';
+// The final value recorded for one custom property: a direct theme token, or
+// an elevation LEVEL (0..ELEVATION_LEVELS - 1) for a surface-group entry —
+// Amendment 3 routes the surface ladder through the universal elevation ramp,
+// never the theme's own surface1-3 tokens (colorMap.ts's background ladder
+// does the same; see assignLadder there).
+type Assignment = DirectToken | number;
 type ColoredProperty = CustomPropertyFact & { color: RgbaColor };
 type UsageKey = keyof CustomPropertyFact['usage'];
 type NameTableEntry = { pattern: RegExp; token: Classification };
@@ -56,8 +63,6 @@ const USAGE_TOKEN_MAP: Record<'background' | 'text' | 'border', Classification> 
   border: 'border',
 };
 
-const SURFACE_LADDER: readonly ThemeTokenName[] = ['canvas', 'surface1', 'surface2', 'surface3'];
-
 export const variableRemap: PaletteEngine = {
   id: 'variableRemap',
   label: 'Site variables',
@@ -75,8 +80,8 @@ export function assignTokens(
   properties: CustomPropertyFact[],
   mode: 'dark' | 'light',
   preserveBrandColors: boolean,
-): Map<string, ThemeTokenName> {
-  const assignments = new Map<string, ThemeTokenName>();
+): Map<string, Assignment> {
+  const assignments = new Map<string, Assignment>();
   const surfaceGroup: SurfaceCandidate[] = [];
 
   for (const property of properties.filter(hasOpaqueColor)) {
@@ -144,17 +149,18 @@ function classifyUsage(usage: CustomPropertyFact['usage']): Classification | nul
   return key === 'other' ? null : USAGE_TOKEN_MAP[key];
 }
 
-// The single `canvas` slot goes to the top (by luminance) candidate from
-// the highest-priority non-empty tier: STRONG_CANVAS_PATTERN names first
-// (--page-bg over a --panel-bg/--card-bg sibling, even though all three
-// are canvas-family by the broader pattern), then any other canvas-family
-// name, then no name-based winner at all. Every other candidate (runners-up
-// from the winning tier, plus everyone else) fills surface1..3 by the
-// existing luminance order.
+// The single ground slot (elevation 0) goes to the top (by luminance)
+// candidate from the highest-priority non-empty tier: STRONG_CANVAS_PATTERN
+// names first (--page-bg over a --panel-bg/--card-bg sibling, even though all
+// three are canvas-family by the broader pattern), then any other
+// canvas-family name, then no name-based winner at all. Every other candidate
+// (runners-up from the winning tier, plus everyone else) fills elevation
+// levels 1..3 (Amendment 3: the universal ramp, not the theme's own
+// surface1-3 tokens) by the existing luminance order.
 function assignSurfaceLadder(
   surfaceGroup: readonly SurfaceCandidate[],
   mode: 'dark' | 'light',
-  assignments: Map<string, ThemeTokenName>,
+  assignments: Map<string, Assignment>,
 ): void {
   const canvasWinner = pickCanvasWinner(surfaceGroup, mode);
 
@@ -164,7 +170,7 @@ function assignSurfaceLadder(
 
   const ordered = canvasWinner ? [canvasWinner, ...remaining] : remaining;
   ordered.forEach(({ property }, index) => {
-    assignments.set(property.name, surfaceTokenAt(index));
+    assignments.set(property.name, clampSurfaceLevel(index));
   });
 }
 
@@ -189,15 +195,23 @@ function luminanceOrder(a: ColoredProperty, b: ColoredProperty, mode: 'dark' | '
   return luminanceDelta !== 0 ? luminanceDelta : compareStrings(a.name, b.name);
 }
 
-function surfaceTokenAt(index: number): ThemeTokenName {
-  const clampedIndex = Math.min(index, SURFACE_LADDER.length - 1);
-  return SURFACE_LADDER[clampedIndex] ?? 'surface3';
+// The elevation ramp's rung index for a surface-group ladder position,
+// clamped to the ramp's own top level — same clamp semantics colorMap.ts's
+// clampLadderLevel applies to a census-sourced elevation.
+function clampSurfaceLevel(index: number): number {
+  return Math.min(index, ELEVATION_LEVELS - 1);
 }
 
-function emitCss(assignments: Map<string, ThemeTokenName>): string {
+function cssVariableFor(assignment: Assignment): string {
+  return typeof assignment === 'number'
+    ? elevationVariable(assignment)
+    : `--pm-${tokenToCssVariableSuffix(assignment)}`;
+}
+
+function emitCss(assignments: Map<string, Assignment>): string {
   const declarations = [...assignments.entries()]
     .sort(([nameA], [nameB]) => compareStrings(nameA, nameB))
-    .map(([name, token]) => `  ${name}: var(--pm-${tokenToCssVariableSuffix(token)}) !important;`)
+    .map(([name, assignment]) => `  ${name}: var(${cssVariableFor(assignment)}) !important;`)
     .join('\n');
 
   return `html[data-pm-active="true"] {\n${declarations}\n}`;

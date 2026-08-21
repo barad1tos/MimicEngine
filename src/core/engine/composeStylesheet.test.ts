@@ -224,7 +224,7 @@ describe('composeStylesheet', () => {
     );
 
     const baselineMarker = css.indexOf('::selection');
-    const variableRemapMarker = css.indexOf('--page-bg: var(--pm-canvas)');
+    const variableRemapMarker = css.indexOf('--page-bg: var(--pm-elevation-0)');
     const deepRemapMarker = css.indexOf(':is(svg, svg *)[fill=');
 
     expect(baselineMarker).toBeGreaterThanOrEqual(0);

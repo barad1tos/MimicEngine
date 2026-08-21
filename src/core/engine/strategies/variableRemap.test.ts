@@ -72,7 +72,7 @@ describe('assignTokens', () => {
 
     const assignments = assignTokens(properties, 'dark', false);
 
-    expect(assignments.get('--x1')).toBe('canvas');
+    expect(assignments.get('--x1')).toBe(0);
   });
 
   it('skips usage-fallback ties', () => {
@@ -130,9 +130,9 @@ describe('assignTokens', () => {
 
     const assignments = assignTokens(properties, 'dark', false);
 
-    expect(assignments.get('--bg-low')).toBe('canvas');
-    expect(assignments.get('--bg-mid')).toBe('surface1');
-    expect(assignments.get('--bg-high')).toBe('surface2');
+    expect(assignments.get('--bg-low')).toBe(0);
+    expect(assignments.get('--bg-mid')).toBe(1);
+    expect(assignments.get('--bg-high')).toBe(2);
   });
 
   it('orders the surface ladder by luminance descending for light mode', () => {
@@ -144,9 +144,9 @@ describe('assignTokens', () => {
 
     const assignments = assignTokens(properties, 'light', false);
 
-    expect(assignments.get('--bg-high')).toBe('canvas');
-    expect(assignments.get('--bg-mid')).toBe('surface1');
-    expect(assignments.get('--bg-low')).toBe('surface2');
+    expect(assignments.get('--bg-high')).toBe(0);
+    expect(assignments.get('--bg-mid')).toBe(1);
+    expect(assignments.get('--bg-low')).toBe(2);
   });
 
   it('tie-breaks equal luminance in the ladder by property name', () => {
@@ -157,27 +157,28 @@ describe('assignTokens', () => {
 
     const assignments = assignTokens(properties, 'dark', false);
 
-    expect(assignments.get('--bg-alpha')).toBe('canvas');
-    expect(assignments.get('--bg-zebra')).toBe('surface1');
+    expect(assignments.get('--bg-alpha')).toBe(0);
+    expect(assignments.get('--bg-zebra')).toBe(1);
   });
 
-  it('clamps ladder assignments beyond surface3 to surface3', () => {
+  it('clamps ladder assignments beyond elevation level 3 to level 3', () => {
     const properties = [0, 1, 2, 3, 4].map((index) =>
       colorProperty(`--bg-${index.toString()}`, GRAY(index * 40 + 10)),
     );
 
     const assignments = assignTokens(properties, 'dark', false);
 
-    expect(assignments.get('--bg-3')).toBe('surface3');
-    expect(assignments.get('--bg-4')).toBe('surface3');
+    expect(assignments.get('--bg-3')).toBe(3);
+    expect(assignments.get('--bg-4')).toBe(3);
   });
 
   it('gives a canvas-family name priority for the canvas slot over a lighter surface-family entry', () => {
-    // Light mode alone would hand `canvas` to whichever entry has the
-    // highest luminance — here that's --card-panel (surface-family
+    // Light mode alone would hand the canvas slot to whichever entry has
+    // the highest luminance — here that's --card-panel (surface-family
     // pattern). The name-priority rule overrides that: --page-bg is both
-    // canvas-family and (via "page") strong-canvas-named, so it wins
-    // canvas regardless, and --card-panel is demoted to surface1.
+    // canvas-family and (via "page") strong-canvas-named, so it wins the
+    // canvas slot (elevation 0) regardless, and --card-panel is demoted to
+    // elevation 1.
     const properties = [
       colorProperty('--card-panel', GRAY(200)),
       colorProperty('--page-bg', GRAY(120)),
@@ -185,18 +186,18 @@ describe('assignTokens', () => {
 
     const assignments = assignTokens(properties, 'light', false);
 
-    expect(assignments.get('--page-bg')).toBe('canvas');
-    expect(assignments.get('--card-panel')).toBe('surface1');
+    expect(assignments.get('--page-bg')).toBe(0);
+    expect(assignments.get('--card-panel')).toBe(1);
   });
 
   it('gives strong-named entries (page/body/canvas) priority over other *-bg siblings', () => {
     // Real pages: --page-bg, --panel-bg, --card-bg all end in "-bg", so all
     // three match the broad canvas-family pattern and, before this rule,
     // pure luminance decided among them — the darkest (--panel-bg) would
-    // win canvas even though --page-bg is the one actually named as the
-    // page. --page-bg's name contains "page" as a whole word (strong
-    // canvas pattern), so it wins canvas here despite NOT being the
-    // darkest entry in dark mode, where darkest normally wins.
+    // win the canvas slot even though --page-bg is the one actually named
+    // as the page. --page-bg's name contains "page" as a whole word (strong
+    // canvas pattern), so it wins the canvas slot (elevation 0) here despite
+    // NOT being the darkest entry in dark mode, where darkest normally wins.
     const properties = [
       colorProperty('--page-bg', GRAY(200)), // lightest
       colorProperty('--card-bg', GRAY(120)), // mid
@@ -205,9 +206,9 @@ describe('assignTokens', () => {
 
     const assignments = assignTokens(properties, 'dark', false);
 
-    expect(assignments.get('--page-bg')).toBe('canvas');
-    expect(assignments.get('--panel-bg')).toBe('surface1');
-    expect(assignments.get('--card-bg')).toBe('surface2');
+    expect(assignments.get('--page-bg')).toBe(0);
+    expect(assignments.get('--panel-bg')).toBe(1);
+    expect(assignments.get('--card-bg')).toBe(2);
   });
 
   it('excludes a vivid custom property from token assignment entirely when preserveBrandColors is on', () => {
@@ -265,7 +266,7 @@ describe('variableRemap strategy', () => {
     expect(css).toMatchInlineSnapshot(`
       "html[data-pm-active="true"] {
         --body-text: var(--pm-text) !important;
-        --page-bg: var(--pm-canvas) !important;
+        --page-bg: var(--pm-elevation-0) !important;
       }"
     `);
   });

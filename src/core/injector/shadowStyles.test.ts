@@ -97,6 +97,20 @@ describe('buildShadowStylesheet', () => {
   it('never carries the document activation gate (stripped, not merely hidden)', () => {
     expect(buildShadowStylesheet(theme)).not.toContain('html[data-pm-active');
   });
+
+  it('declares the elevation and shadow ramp on :host, alongside the theme tokens', () => {
+    // Amendment 3: buildUngatedBaseRules' ground rule now targets
+    // var(--pm-elevation-0) (buildBaseStylesheet.ts); the :host preamble
+    // must define that variable locally, not merely rely on :root
+    // inheritance across the shadow boundary — same self-containment
+    // contract the 14 theme tokens already get here.
+    const css = buildShadowStylesheet(theme);
+
+    expect(css).toContain(`--pm-elevation-0: ${theme.tokens.canvas};`);
+    expect(css).toMatch(/--pm-elevation-3: #[0-9a-f]{6};/);
+    expect(css).toMatch(/--pm-shadow-1: 0 2px 6px rgba\(/);
+    expect(css).toContain('background-color: var(--pm-elevation-0) !important;');
+  });
 });
 
 describe('syncShadowStylesheets', () => {

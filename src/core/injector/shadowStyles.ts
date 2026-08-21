@@ -1,4 +1,4 @@
-import { tokenToCssVariableSuffix } from '../engine/tokenVariables';
+import { elevationRampCss, tokenToCssVariableSuffix } from '../engine/tokenVariables';
 import { THEME_TOKEN_NAMES, type PaletteTheme } from '../themes';
 import { buildUngatedBaseRules } from './buildBaseStylesheet';
 import { STYLE_ELEMENT_ID } from './styleElement';
@@ -70,10 +70,18 @@ export function collectOpenShadowRoots(root: Document, maxRoots = MAX_SHADOW_ROO
   return collected;
 }
 
+// The shadow tree's own token block: the 14 theme tokens plus the elevation
+// + shadow ramp (Amendment 3) -- buildUngatedBaseRules' ground rule targets
+// var(--pm-elevation-0), so the ramp must be declared here too, not left to
+// inherit across the shadow boundary from :root. Reuses tokenVariables.ts's
+// elevationRampCss rather than re-deriving the ramp, so the document
+// preamble and this :host block can never drift apart.
 function hostTokenDeclarations(theme: PaletteTheme): string {
-  return THEME_TOKEN_NAMES.map(
+  const themeTokens = THEME_TOKEN_NAMES.map(
     (tokenName) => `  --pm-${tokenToCssVariableSuffix(tokenName)}: ${theme.tokens[tokenName]};`,
   ).join('\n');
+
+  return [themeTokens, elevationRampCss(theme)].join('\n');
 }
 
 // The shadow-root reversibility carve-out: the document-level baseline gates
