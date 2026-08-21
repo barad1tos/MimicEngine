@@ -1,4 +1,6 @@
 // src/core/analyzer/styleSignature.ts
+import { compareStrings } from '../engine/sort';
+
 const KEY_SEPARATOR = '|';
 const REFINEMENT_SEPARATOR = ' > ';
 
@@ -6,17 +8,8 @@ const REFINEMENT_SEPARATOR = ' > ';
 // (not `className`) so SVG elements — whose className is an
 // SVGAnimatedString — key identically to HTML ones.
 export function computeSignature(element: Element): string {
-  const classes = [...new Set(Array.from(element.classList))].sort(compareOrdinal);
+  const classes = [...new Set(Array.from(element.classList))].sort(compareStrings);
   return [element.tagName.toLowerCase(), ...classes].join(KEY_SEPARATOR);
-}
-
-// Explicit binary comparator (not `localeCompare`) keeps the sort order
-// locale-independent — determinism across machines. Guard clauses instead
-// of a nested ternary to satisfy sonarjs/no-nested-conditional.
-function compareOrdinal(left: string, right: string): number {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
 }
 
 // Depth-1 context refinement: the immediate Element parent's key prefixes
@@ -37,11 +30,19 @@ function partToSelector(part: string): string {
   return [tag, ...classes.map(escapeClass)].join('.');
 }
 
-// CSS.escape exists in every target browser; happy-dom lacks it, so tests
-// exercise the fallback. Escapes every character a Tailwind-style class can
-// smuggle into a selector (colons, slashes, brackets).
+// CSS.escape exists in every target browser (and in happy-dom, which our
+// tests run under) — the fallback below exists for defense-in-depth in
+// environments without it. It mirrors CSS.escape's own rules: a leading
+// digit is escaped as a code-point hex escape (trailing space required so a
+// following hex digit isn't read as part of it — e.g. `2xl:hidden` becomes
+// `\32 xl\:hidden`, never the invalid `2xl\:hidden`); every other character
+// a Tailwind-style class can smuggle into a selector (colons, slashes,
+// brackets) gets a plain backslash escape.
 function escapeClass(className: string): string {
   const cssEscape = (globalThis as { CSS?: { escape?: (value: string) => string } }).CSS?.escape;
   if (cssEscape) return cssEscape(className);
-  return className.replaceAll(/[^\w-]/g, (character) => `\\${character}`);
+  return className.replaceAll(/(?:^\d)|[^\w-]/g, (character: string, offset: number) => {
+    const isLeadingDigit = offset === 0 && /^\d$/.test(character);
+    return isLeadingDigit ? `\\${character.charCodeAt(0).toString(16)} ` : `\\${character}`;
+  });
 }
