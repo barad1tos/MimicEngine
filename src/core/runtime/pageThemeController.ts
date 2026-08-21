@@ -1,4 +1,9 @@
 import { browser } from 'wxt/browser';
+import {
+  createSignatureCensus,
+  installCensus,
+  type SignatureCensus,
+} from '../analyzer/signatureCensus';
 import { collectPageFacts } from '../engine/pageFacts';
 import { composeStylesheet } from '../engine/composeStylesheet';
 import { aggregateCoverage } from '../engine/coverage';
@@ -36,8 +41,66 @@ export type PageThemeController = {
 const MAX_REAPPLIES_PER_MINUTE = 12;
 const MUTATION_WINDOW_MS = 60_000;
 
+// Census chunk sizes: a synchronous first chunk before the very first apply()
+// so computedFallback's first produce() already sees real samples, then
+// idle-time chunks for the rest of the page. CENSUS_IDLE_TIMEOUT_MS bounds
+// how long a chunk can wait for an idle slot before running anyway.
+const CENSUS_FIRST_CHUNK = 800;
+const CENSUS_IDLE_CHUNK = 1000;
+const CENSUS_IDLE_TIMEOUT_MS = 500;
+// Mirrors observeDomChanges' own debounce default (250ms) — kept as an
+// independent constant/timer here (censusReapplyTimer) because census
+// re-applies are our own work, never page activity, and must never pass
+// through registerMutationCallback/capTripped.
+const CENSUS_REAPPLY_DEBOUNCE_MS = 250;
+
 function needsLiveObserver(siteSettings: SiteSettings, plan: StrategyPlan): boolean {
   return siteSettings.strategy === 'auto' || planStrategies(plan).some((id) => id !== 'baseline');
+}
+
+// requestIdleCallback/cancelIdleCallback are absent in some exotic embeds
+// (and in happy-dom, which our tests run under, unless stubbed) even though
+// lib.dom declares them unconditionally — the cast below models that actual
+// runtime optionality, matching the same feature-detection idiom already
+// used for CSS.escape in styleSignature.ts. Re-read from globalThis on every
+// call, rather than binding once at module load, so a test's
+// vi.stubGlobal(...) — applied per-test, after this module has already been
+// imported — still takes effect. The fallback mimics an always-timed-out
+// idle deadline via a fixed-delay setTimeout.
+type IdleWindow = {
+  requestIdleCallback?: typeof requestIdleCallback;
+  cancelIdleCallback?: typeof cancelIdleCallback;
+};
+
+function scheduleIdleWork(callback: IdleRequestCallback, options: IdleRequestOptions): number {
+  const idleCallback = (globalThis as IdleWindow).requestIdleCallback;
+  if (idleCallback) return idleCallback(callback, options);
+  return window.setTimeout(() => {
+    callback({ didTimeout: true, timeRemaining: () => 0 });
+  }, options.timeout ?? CENSUS_IDLE_TIMEOUT_MS);
+}
+
+function cancelIdleWork(handle: number): void {
+  const cancelCallback = (globalThis as IdleWindow).cancelIdleCallback;
+  if (cancelCallback) {
+    cancelCallback(handle);
+  } else {
+    window.clearTimeout(handle);
+  }
+}
+
+// Flattens the direct top-level element additions out of a mutation batch.
+// A module-level function (rather than a closure nested inside the
+// MutationObserver callback) so the census mutation observer below stays
+// within sonarjs' nesting-depth limit.
+function addedElementsFrom(records: readonly MutationRecord[]): Element[] {
+  const elements: Element[] = [];
+  for (const record of records) {
+    for (const node of record.addedNodes) {
+      if (node instanceof Element) elements.push(node);
+    }
+  }
+  return elements;
 }
 
 export function createPageThemeController(): PageThemeController {
@@ -83,10 +146,94 @@ export function createPageThemeController(): PageThemeController {
   // settings read) stops start() from registering onSettingsChanged
   // afterward and leaking a listener on an already-stopped controller.
   let stopped = false;
+  // The live census this controller instance owns. installedCensus() (read by
+  // computedFallback.produce at apply() time) mirrors this exactly: installed
+  // on start(), cleared on stop() — never left dangling for a dead instance.
+  let census: SignatureCensus | null = null;
+  // Handle for the next scheduleCensusChunk() idle callback, so stop() can
+  // cancel it — a stale idle callback from a previous generation must never
+  // resume census work after teardown.
+  let censusIdleHandle: number | null = null;
+  // Own debounce timer for census-driven re-applies (scheduleCensusReapply),
+  // distinct from observeDomChanges' internal debounce: this one must never
+  // touch registerMutationCallback/capTripped, since census progress is our
+  // own work, not page activity.
+  let censusReapplyTimer: number | undefined;
+  // A MutationObserver dedicated to census learning, independent of
+  // domObserver: domObserver is only created (via ensureDomObserver) when the
+  // current plan needs live re-theming, and its re-applies are mutation-rate
+  // capped. Census progress must keep learning from page mutations for the
+  // controller's whole lifetime regardless of the current plan or cap state,
+  // so this observer is unconditional and its own reapply path is exempt
+  // from the rate recorder.
+  let censusObserver: MutationObserver | null = null;
 
   const stopDomObserver = (): void => {
     domObserver?.stop();
     domObserver = null;
+  };
+
+  const stopCensusObserver = (): void => {
+    censusObserver?.disconnect();
+    censusObserver = null;
+  };
+
+  // Debounced re-apply for census progress alone. A dedicated timer (not
+  // observeDomChanges' internal one) so chunk completion never counts toward
+  // the per-minute mutation cap — the census converging is our own work, not
+  // page activity, and must never trip capTripped.
+  const scheduleCensusReapply = (): void => {
+    if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
+    censusReapplyTimer = window.setTimeout(() => {
+      censusReapplyTimer = undefined;
+      apply().catch((error: unknown) => {
+        console.error('[Palette Mimicry] census re-apply failed', error);
+      });
+    }, CENSUS_REAPPLY_DEBOUNCE_MS);
+  };
+
+  // Drives the census to completion one idle-time chunk at a time. The
+  // generation captured here is checked when the idle callback actually
+  // fires: stop() bumps applyGeneration as its very first action, so a chunk
+  // whose idle callback lands after stop() sees a mismatched generation and
+  // aborts instead of resuming census work on a torn-down controller.
+  const scheduleCensusChunk = (): void => {
+    if (!census) return;
+    const generation = applyGeneration;
+    censusIdleHandle = scheduleIdleWork(
+      () => {
+        censusIdleHandle = null;
+        if (generation !== applyGeneration || !census) return;
+        const done = census.advance(CENSUS_IDLE_CHUNK);
+        scheduleCensusReapply();
+        if (!done) scheduleCensusChunk();
+      },
+      { timeout: CENSUS_IDLE_TIMEOUT_MS },
+    );
+  };
+
+  // Routes newly added elements through the census so it keeps learning
+  // after its initial traversal (SPA-style DOM churn, lazy-rendered content).
+  // Deliberately separate from domObserver/observeDomChanges: that observer
+  // is gated on the current plan needing live re-theming and its callback
+  // carries no element data, while census learning must run unconditionally
+  // for the controller's whole lifetime. ingestAddedElements walks each
+  // added element's own subtree, so only the direct top-level additions are
+  // passed through here.
+  const observeCensusMutations = (): MutationObserver => {
+    const observer = new MutationObserver((records) => {
+      if (!census) return;
+      const addedElements = addedElementsFrom(records);
+      if (addedElements.length === 0) return;
+      // The return value only says whether this batch taught the census
+      // something new — recompose is scheduled unconditionally on any batch
+      // of added elements so page structure changes never get silently
+      // ignored even when it wasn't the color mapping that advanced.
+      census.ingestAddedElements(addedElements);
+      scheduleCensusReapply();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    return observer;
   };
 
   const deactivateShadowStyles = (): void => {
@@ -235,6 +382,18 @@ export function createPageThemeController(): PageThemeController {
 
   return {
     async start() {
+      // Synchronous setup, before the initial apply(): begin the census and
+      // advance its first chunk synchronously so that first apply()'s
+      // computedFallback.produce() (reading installedCensus()) already sees
+      // real samples, not an empty snapshot. The census mutation observer
+      // starts here too, before any await, so no page mutation during the
+      // settings read below can slip past it.
+      census = createSignatureCensus();
+      census.begin(document);
+      const firstChunkComplete = census.advance(CENSUS_FIRST_CHUNK);
+      installCensus(census);
+      censusObserver = observeCensusMutations();
+
       // A throwing initial apply() must not stop start() itself from
       // completing: the settings-changed listener below still needs to be
       // registered, and (in the real content-script entry point) so does the
@@ -249,7 +408,8 @@ export function createPageThemeController(): PageThemeController {
       // generation guard already aborts that apply()'s own side effects, but
       // without this check start() would still register the
       // settings-changed listener afterward, leaking it on an
-      // already-stopped controller.
+      // already-stopped controller. The same guard covers scheduling the
+      // first census idle chunk below.
       if (stopped) return;
       stopSettingsListener = onSettingsChanged(() => {
         capTripped = false;
@@ -260,6 +420,7 @@ export function createPageThemeController(): PageThemeController {
           console.error('[Palette Mimicry] apply failed', error);
         });
       });
+      if (!firstChunkComplete) scheduleCensusChunk();
     },
 
     stop() {
@@ -267,6 +428,9 @@ export function createPageThemeController(): PageThemeController {
       // read) before tearing anything else down — its post-await generation
       // re-check then fails and it aborts before re-injecting the
       // stylesheet, re-setting data-pm-active, or re-syncing shadow styles.
+      // A pending census idle callback relies on the same bump: its own
+      // generation check (in scheduleCensusChunk) fails right after this,
+      // so no chunk survives stop().
       applyGeneration += 1;
       // Set before start() can observe it — see the LISTENER-AFTER-STOP note
       // on start() above.
@@ -274,6 +438,13 @@ export function createPageThemeController(): PageThemeController {
       stopSettingsListener?.();
       stopSettingsListener = null;
       stopDomObserver();
+      stopCensusObserver();
+      if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
+      censusIdleHandle = null;
+      if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
+      censusReapplyTimer = undefined;
+      installCensus(null);
+      census = null;
       // BFCACHE SYMMETRY RULING: stop() deliberately leaves shadow styles in
       // place, same as it already leaves the document stylesheet and the
       // data-pm-active gate untouched. A bfcache-restored page shows a fully
