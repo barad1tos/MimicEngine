@@ -3,11 +3,19 @@ import type { CoverageReport } from './coverage';
 import type { StrategyPlan } from './decisionTable';
 import type { PageMetrics } from './pageMetrics';
 
+export type CensusDiagnostics = {
+  complete: boolean;
+  signatureCount: number;
+  elementsVisited: number;
+  droppedProperties: number;
+};
+
 export type PlanDiagnostics = {
   siteKey: string;
   plan: StrategyPlan;
   metrics: PageMetrics;
   coverage?: CoverageReport;
+  census?: CensusDiagnostics;
   updatedAt: string;
 };
 
@@ -21,10 +29,11 @@ export function planStorageKey(siteKey: string): string {
 // PlanDiagnostics: readPlanDiagnostics' storage read, and the popup's
 // storage.onChanged listener (which receives the raw newValue from a
 // browser API, not something this module controls). Deliberately shallow —
-// object-ness, provenance.kind, and array-ness of an 'auto' provenance's
-// strategies list — not a full deep validator; a value that passes this but
-// is otherwise malformed is a display bug, not a theming or storage-safety
-// one. Invalid input is the caller's job to turn into null/ignore.
+// object-ness, provenance.kind, array-ness of an 'auto' provenance's
+// strategies list, and object-ness of the optional census block when
+// present — not a full deep validator; a value that passes this but is
+// otherwise malformed is a display bug, not a theming or storage-safety one.
+// Invalid input is the caller's job to turn into null/ignore.
 export function isPlanDiagnostics(value: unknown): value is PlanDiagnostics {
   if (typeof value !== 'object' || value === null) return false;
 
@@ -39,6 +48,9 @@ export function isPlanDiagnostics(value: unknown): value is PlanDiagnostics {
   if (kind === 'auto' && !Array.isArray((provenance as { strategies?: unknown }).strategies)) {
     return false;
   }
+
+  const census = (value as { census?: unknown }).census;
+  if (census !== undefined && (typeof census !== 'object' || census === null)) return false;
 
   return true;
 }

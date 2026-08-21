@@ -142,4 +142,14 @@ describe('isPlanDiagnostics', () => {
 
     expect(isPlanDiagnostics(malformed)).toBe(false);
   });
+
+  it('accepts records with and without the census block', () => {
+    expect(isPlanDiagnostics(validAuto)).toBe(true);
+    expect(
+      isPlanDiagnostics({
+        ...validAuto,
+        census: { complete: false, signatureCount: 12, elementsVisited: 340, droppedProperties: 1 },
+      }),
+    ).toBe(true);
+  });
 });

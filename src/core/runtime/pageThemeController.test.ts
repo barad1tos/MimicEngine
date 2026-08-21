@@ -720,6 +720,34 @@ describe('createPageThemeController — census lifecycle', () => {
     expect(installedCensus()).toBeNull();
   });
 
+  it('writes the live census snapshot into the diagnostics record and keeps it current across re-applies', async () => {
+    document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800)
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const snapshotAfterInitialApply = installedCensus()?.snapshot();
+    expect(lastWrittenDiagnostics(siteKey).census).toEqual({
+      complete: snapshotAfterInitialApply?.complete,
+      signatureCount: snapshotAfterInitialApply?.signatureCount,
+      elementsVisited: snapshotAfterInitialApply?.elementsVisited,
+      droppedProperties: snapshotAfterInitialApply?.droppedProperties,
+    });
+    expect(lastWrittenDiagnostics(siteKey).census?.complete).toBe(false);
+
+    await vi.runAllTimersAsync(); // drains idle callbacks + the census debounce
+
+    const finalSnapshot = installedCensus()?.snapshot();
+    expect(finalSnapshot?.complete).toBe(true);
+    expect(lastWrittenDiagnostics(siteKey).census).toEqual({
+      complete: finalSnapshot?.complete,
+      signatureCount: finalSnapshot?.signatureCount,
+      elementsVisited: finalSnapshot?.elementsVisited,
+      droppedProperties: finalSnapshot?.droppedProperties,
+    });
+
+    controller.stop();
+  });
+
   it('continues the census through idle callbacks until it completes, then re-applies', async () => {
     document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800)
     const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
