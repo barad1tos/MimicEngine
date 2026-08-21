@@ -1,4 +1,5 @@
-import { oklchToRgba, rgbaToOklch } from '../color/oklch';
+import { contrastRatio } from '../color/contrast';
+import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
 import { parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import type { PaletteTheme } from '../themes';
 
@@ -6,6 +7,9 @@ import type { PaletteTheme } from '../themes';
 // topmost island); the shadow ramp only 3 (shadow-1..shadow-3) -- the ground
 // rung casts no shadow.
 export const ELEVATION_LEVELS = 4;
+// Ceiling candidate for the per-theme step -- see resolveElevationStep: the
+// actual step used by elevationBackgroundHex can shrink under this (or hit
+// 0) when a theme's text tokens can't keep up with it.
 export const ELEVATION_LIGHTNESS_STEP = 0.045;
 
 const MIN_ELEVATION_LEVEL = 0;
@@ -16,6 +20,26 @@ const SHADOW_LIGHTNESS_FACTOR = 0.4;
 const SHADOW_ALPHA = 0.5;
 const SHADOW_OFFSET_STEP = 2;
 const SHADOW_BLUR_STEP = 6;
+
+// Readability constrains depth (product priority #1): a fixed 0.045 step can
+// make elevated rungs unreadable for a theme's own text tokens (measured on
+// everforest-dark, ayu-mirage, and a valid imported light-theme shape). The
+// per-theme step walks this descending ladder and keeps the first candidate
+// that clears both floors below on every rung -- readability never
+// sacrificed for depth.
+const ELEVATION_STEP_CANDIDATES: readonly number[] = [
+  ELEVATION_LIGHTNESS_STEP,
+  0.04,
+  0.035,
+  0.03,
+  0.025,
+  0.02,
+  0.015,
+  0.01,
+  0.005,
+];
+const TEXT_CONTRAST_FLOOR = 4.5;
+const MUTED_CONTRAST_FLOOR = 3;
 
 function clampElevationLevel(level: number): number {
   return Math.max(MIN_ELEVATION_LEVEL, Math.min(MAX_ELEVATION_LEVEL, level));
@@ -42,13 +66,62 @@ function canvasColor(theme: PaletteTheme): RgbaColor {
   return color;
 }
 
+function elevatedRungHex(
+  canvasOklch: Oklch,
+  direction: number,
+  step: number,
+  level: number,
+): HexColor {
+  const lightness = clampLightness(canvasOklch.l + direction * step * level);
+  return toHex(oklchToRgba({ l: lightness, c: canvasOklch.c, h: canvasOklch.h }));
+}
+
+function stepKeepsTextReadable(
+  theme: PaletteTheme,
+  canvasOklch: Oklch,
+  direction: number,
+  step: number,
+): boolean {
+  for (let level = 1; level <= MAX_ELEVATION_LEVEL; level += 1) {
+    const rungHex = elevatedRungHex(canvasOklch, direction, step, level);
+    const textRatio = contrastRatio(theme.tokens.text, rungHex);
+    const mutedRatio = contrastRatio(theme.tokens.textMuted, rungHex);
+    if (textRatio === null || textRatio < TEXT_CONTRAST_FLOOR) return false;
+    if (mutedRatio === null || mutedRatio < MUTED_CONTRAST_FLOOR) return false;
+  }
+  return true;
+}
+
+/**
+ * The per-theme lightness step for the tonal ramp: the largest candidate in
+ * a fixed descending ladder (ceiling `ELEVATION_LIGHTNESS_STEP`) for which
+ * every rung 1..3 keeps the theme's `text` token at >= 4.5:1 contrast and
+ * `textMuted` at >= 3:1 against that rung. Readability constrains depth --
+ * if no candidate satisfies both floors on every rung, returns 0: the tonal
+ * ramp flattens to the canvas and depth is carried by the shadow ramp alone.
+ * Pure and deterministic (fixed ladder, pure inputs); not memoized -- cheap
+ * enough that a cache would only add an invalidation story for no benefit.
+ */
+export function resolveElevationStep(theme: PaletteTheme): number {
+  const canvasOklch = rgbaToOklch(canvasColor(theme));
+  const direction = theme.mode === 'dark' ? 1 : -1;
+
+  const step = ELEVATION_STEP_CANDIDATES.find((candidate) =>
+    stepKeepsTextReadable(theme, canvasOklch, direction, candidate),
+  );
+
+  return step ?? 0;
+}
+
 /**
  * The tonal-ramp background for one elevation level, derived purely from the
  * theme's canvas token -- no per-theme surface tokens involved. Level 0 is
  * the canvas verbatim; each level above it shifts OKLCH lightness by
- * `ELEVATION_LIGHTNESS_STEP`, direction by theme mode (dark themes lighten as
- * elevation rises, light themes darken), hue and chroma preserved, lightness
- * clamped to [0, 1]. `level` clamps into 0..`ELEVATION_LEVELS - 1`.
+ * `resolveElevationStep(theme)` (up to `ELEVATION_LIGHTNESS_STEP`, shrinking
+ * or flattening to keep the theme's text readable), direction by theme mode
+ * (dark themes lighten as elevation rises, light themes darken), hue and
+ * chroma preserved, lightness clamped to [0, 1]. `level` clamps into
+ * 0..`ELEVATION_LEVELS - 1`.
  *
  * @example elevationBackgroundHex(darkTheme, 2) // canvas lightened two steps
  */
@@ -59,11 +132,9 @@ export function elevationBackgroundHex(theme: PaletteTheme, level: number): HexC
 
   const canvasOklch = rgbaToOklch(canvas);
   const direction = theme.mode === 'dark' ? 1 : -1;
-  const lightness = clampLightness(
-    canvasOklch.l + direction * ELEVATION_LIGHTNESS_STEP * clampedLevel,
-  );
+  const step = resolveElevationStep(theme);
 
-  return toHex(oklchToRgba({ l: lightness, c: canvasOklch.c, h: canvasOklch.h }));
+  return elevatedRungHex(canvasOklch, direction, step, clampedLevel);
 }
 
 /**
