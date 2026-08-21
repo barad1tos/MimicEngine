@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // src/core/analyzer/styleSignature.test.ts
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeRefinedSignature, computeSignature, signatureToSelector } from './styleSignature';
 
 function elementFromHtml(html: string): Element {
@@ -51,5 +51,27 @@ describe('signatureToSelector', () => {
 
   it('joins refined signatures with a child combinator', () => {
     expect(signatureToSelector('div|card > button|btn')).toBe('div.card > button.btn');
+  });
+});
+
+describe('signatureToSelector without CSS.escape (fallback branch)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('escapes a leading-digit class exactly like native CSS.escape', () => {
+    // happy-dom implements CSS.escape, so this reads the real algorithm's
+    // output as the expectation before removing CSS to force our fallback.
+    const expected = `div.${CSS.escape('2xl:hidden')}`;
+    vi.stubGlobal('CSS', undefined);
+
+    expect(signatureToSelector('div|2xl:hidden')).toBe(expected);
+  });
+
+  it('still escapes non-digit-leading utility classes without CSS.escape', () => {
+    const expected = `a.${CSS.escape('focus:top-0')}.b`;
+    vi.stubGlobal('CSS', undefined);
+
+    expect(signatureToSelector('a|focus:top-0|b')).toBe(expected);
   });
 });
