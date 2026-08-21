@@ -292,6 +292,59 @@ describe('divergence refinement', () => {
       cssProperty: 'background-color',
       bucket: 'background',
       value: 'rgb(9, 9, 9)',
+      elevation: 0,
     });
+  });
+});
+
+describe('background elevation', () => {
+  it('records background elevation as the count of opaque-background ancestors', () => {
+    document.head.innerHTML = `
+      <style>
+        .page { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); }
+        .chip { background-color: rgb(240, 240, 240); }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="page"><section class="card"><span class="chip">x</span></section></div>';
+
+    const entries = fullCensus().snapshot().entries;
+    const elevationOf = (selector: string): number | undefined =>
+      entries
+        .find((entry) => entry.selector === selector)
+        ?.colors.find((color) => color.bucket === 'background')?.elevation;
+
+    expect(elevationOf('div.page')).toBe(0);
+    expect(elevationOf('section.card')).toBe(1);
+    expect(elevationOf('span.chip')).toBe(2);
+  });
+
+  it('transparent ancestors do not count toward elevation', () => {
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(250, 250, 250); }
+        .island { background-color: rgb(250, 250, 250); }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="ground"><div class="wrapper"><div class="island">x</div></div></div>';
+
+    const entries = fullCensus().snapshot().entries;
+    const island = entries.find((entry) => entry.selector === 'div.island');
+    expect(island?.colors.find((color) => color.bucket === 'background')?.elevation).toBe(1);
+  });
+
+  it('text and border colors never carry elevation', () => {
+    document.head.innerHTML =
+      '<style>.t { color: rgb(1, 2, 3); border: 1px solid rgb(1, 2, 3); }</style>';
+    document.body.innerHTML = '<p class="t">x</p>';
+
+    const entry = fullCensus()
+      .snapshot()
+      .entries.find((candidate) => candidate.selector === 'p.t');
+    for (const color of entry?.colors ?? []) {
+      if (color.bucket !== 'background') expect(color.elevation).toBeUndefined();
+    }
   });
 });
