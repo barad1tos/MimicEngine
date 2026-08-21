@@ -543,4 +543,85 @@ describe('computedFallback strategy', () => {
     expect(controlText).toBeDefined();
     expect(withBackgroundText).toBe(controlText);
   });
+
+  it('produces byte-identical css across repeated runs, with the fired override still passing on the second run', () => {
+    // Same accent-pair fixture as the override test above, called twice from
+    // the SAME installed census. Pins the fired-override path against a
+    // Map/iteration-order regression: an implementation that built
+    // mappedBackgroundBySelector (or any of the resolved-declaration bookkeeping)
+    // without stable ordering could pass once and diverge on a second call
+    // with identical inputs — this would slip through a single-run assertion.
+    document.head.innerHTML = `
+      <style>
+        .pill { background-color: rgb(1, 117, 79); color: rgb(244, 244, 244); }
+      </style>
+    `;
+    document.body.innerHTML = '<span class="pill">All</span>';
+    censusFromCurrentDom();
+
+    const first = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    ).css;
+    const second = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    ).css;
+
+    expect(second).toBe(first);
+
+    const block = /:where\(span\.pill\) \{[^}]*\}/.exec(second)?.[0] ?? '';
+    const bg = /background-color: (#\w{6})/.exec(block)?.[1];
+    const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
+    expect(bg).toBeDefined();
+    expect(text).toBeDefined();
+    if (bg === undefined || text === undefined) throw new Error('expected both bg and text');
+    expect(contrastRatio(text, bg)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("overrides only the selector whose own pair fails contrast, leaving a sibling selector's mapping untouched", () => {
+    // Two selectors on the SAME page/census: .pill's own pair fails 4.5:1
+    // (override must fire) and .plain's own pair already clears it (no
+    // override needed). Proves mappedBackgroundBySelector is genuinely keyed
+    // per-selector: if .plain's lookup ever leaked .pill's mapped background
+    // instead of its own, .plain's plain text-bucket mapping (the theme's own
+    // `text` token, #c6d0f5 for catppuccinFrappe) would itself fail contrast
+    // against .pill's mapped background (that exact pair — text token vs
+    // .pill's accent-mapped background — is the same failing pair the
+    // override test above measures at ~1.14:1) and get overridden away from
+    // the theme's raw text token.
+    document.head.innerHTML = `
+      <style>
+        .pill { background-color: rgb(1, 117, 79); color: rgb(244, 244, 244); }
+        .plain { background-color: rgb(255, 255, 255); color: rgb(20, 20, 20); }
+      </style>
+    `;
+    document.body.innerHTML = '<span class="pill">All</span><div class="plain">text</div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const pillBlock = /:where\(span\.pill\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const pillBg = /background-color: (#\w{6})/.exec(pillBlock)?.[1];
+    const pillText = /(?<!background-)color: (#\w{6})/.exec(pillBlock)?.[1];
+    expect(pillBg).toBeDefined();
+    expect(pillText).toBeDefined();
+    if (pillBg === undefined || pillText === undefined)
+      throw new Error('expected both bg and text for .pill');
+    expect(contrastRatio(pillText, pillBg)).toBeGreaterThanOrEqual(4.5);
+
+    const plainBlock = /:where\(div\.plain\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const plainText = /(?<!background-)color: (#\w{6})/.exec(plainBlock)?.[1];
+    expect(plainText).toBeDefined();
+    expect(plainText).toBe(catppuccinFrappe.tokens.text);
+  });
 });
