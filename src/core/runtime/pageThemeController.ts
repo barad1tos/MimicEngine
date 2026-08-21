@@ -17,7 +17,11 @@ import {
   syncShadowStylesheets,
 } from '../injector/shadowStyles';
 import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
-import { observeDomChanges, type DomChangeObserver } from '../live/observeDomChanges';
+import {
+  observeDomChanges,
+  SIGNIFICANT_ATTRIBUTES,
+  type DomChangeObserver,
+} from '../live/observeDomChanges';
 import {
   IMPORTED_THEMES_KEY,
   normalizeImportedThemes,
@@ -176,6 +180,16 @@ export function createPageThemeController(): PageThemeController {
   // so this observer is unconditional and its own reapply path is exempt
   // from the rate recorder.
   let censusObserver: MutationObserver | null = null;
+  // Set by observeCensusMutations on any significant attribute mutation
+  // (class/style/data-theme/aria-hidden — SIGNIFICANT_ATTRIBUTES, the same
+  // list domObserver reacts to): an SPA-style class/theme flip can change a
+  // descendant's COMPUTED color without adding or removing any node, and the
+  // census's grow-only value Sets have no way to represent "this color
+  // changed" — re-sampling in place would just look like divergence.
+  // scheduleCensusReapply's debounced callback is the only place this is
+  // read; it discards and re-bootstraps the census (a fresh full walk)
+  // instead of resuming the stale one, then clears the flag.
+  let censusStale = false;
   // The most recent plan any apply() call decided — read only to gate
   // whether a census-driven reapply is worth scheduling at all: recomposing
   // when the plan doesn't include computedFallback is a guaranteed no-op,
@@ -203,6 +217,18 @@ export function createPageThemeController(): PageThemeController {
     if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
     censusReapplyTimer = window.setTimeout(() => {
       censusReapplyTimer = undefined;
+      if (censusStale) {
+        // A significant attribute mutation invalidated the census's grow-only
+        // value Sets (see censusStale's declaration above) — the only correct
+        // recovery is to discard and re-bootstrap rather than resume the
+        // stale one.
+        if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
+        censusIdleHandle = null;
+        installCensus(null);
+        census = null;
+        bootstrapCensus();
+        censusStale = false;
+      }
       apply().catch((error: unknown) => {
         console.error('[Palette Mimicry] census re-apply failed', error);
       });
@@ -272,6 +298,22 @@ export function createPageThemeController(): PageThemeController {
   const observeCensusMutations = (): MutationObserver => {
     const observer = new MutationObserver((records) => {
       if (!census) return;
+
+      // A significant attribute mutation (class/style/data-theme/aria-hidden
+      // — mirrors domObserver's own SIGNIFICANT_ATTRIBUTES) can change a
+      // descendant's COMPUTED color without adding or removing any node.
+      // The census cannot re-sample in place (its grow-only value Sets have
+      // no way to represent "this color changed"), so mark it stale instead
+      // of walking/ingesting the mutated targets — scheduleCensusReapply's
+      // debounced callback resets to a fresh full walk once it actually
+      // fires. Gated the same as the ingest-learned path below: only worth
+      // scheduling when the cap isn't silencing reapplies and the current
+      // plan would actually read the census.
+      if (records.some((record) => record.type === 'attributes')) {
+        censusStale = true;
+        if (!capTripped && planIncludesComputedFallback()) scheduleCensusReapply();
+      }
+
       const addedElements = addedElementsFrom(records);
       if (addedElements.length === 0) return;
       // Ingest always runs, tripped cap or not: learning only ever updates
@@ -293,7 +335,12 @@ export function createPageThemeController(): PageThemeController {
       // strategy that does — see planIncludesComputedFallback above).
       if (learned && !capTripped && planIncludesComputedFallback()) scheduleCensusReapply();
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [...SIGNIFICANT_ATTRIBUTES],
+    });
     return observer;
   };
 

@@ -9,7 +9,7 @@ const REFINEMENT_SEPARATOR = ' > ';
 // SVGAnimatedString — key identically to HTML ones.
 export function computeSignature(element: Element): string {
   const classes = [...new Set(Array.from(element.classList))].sort(compareStrings);
-  return [element.tagName.toLowerCase(), ...classes].join(KEY_SEPARATOR);
+  return [element.tagName.toLowerCase(), ...classes.map(escapeKeyToken)].join(KEY_SEPARATOR);
 }
 
 // Depth-1 context refinement: the immediate Element parent's key prefixes
@@ -26,8 +26,49 @@ export function signatureToSelector(signature: string): string {
 }
 
 function partToSelector(part: string): string {
-  const [tag, ...classes] = part.split(KEY_SEPARATOR);
+  const [tag, ...classes] = splitKeyParts(part);
   return [tag, ...classes.map(escapeClass)].join('.');
+}
+
+// `|` is a legal class-name character (`class="foo|bar"` is one class token,
+// not two), so a raw class containing it must not alias with the
+// KEY_SEPARATOR that joins tag/classes together — without escaping,
+// `class="foo|bar"` and `class="foo bar"` key identically, and
+// signatureToSelector decodes the pipe class as two compound class
+// selectors that never match the sampled element. Backslash-escape first so
+// an already-escaped separator round-trips unambiguously.
+function escapeKeyToken(token: string): string {
+  return token.replaceAll('\\', '\\\\').replaceAll(KEY_SEPARATOR, `\\${KEY_SEPARATOR}`);
+}
+
+// Reverses escapeKeyToken while splitting on KEY_SEPARATOR: an escaped
+// character (`\\` or `\|`) is unescaped and kept inside the current token
+// rather than treated as a split point, so this single pass both splits and
+// unescapes in one another's terms — one loop, no double-processing.
+function splitKeyParts(value: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let index = 0;
+
+  while (index < value.length) {
+    const character = value.charAt(index);
+    if (character === '\\' && index + 1 < value.length) {
+      current += value.charAt(index + 1);
+      index += 2;
+      continue;
+    }
+    if (character === KEY_SEPARATOR) {
+      tokens.push(current);
+      current = '';
+      index += 1;
+      continue;
+    }
+    current += character;
+    index += 1;
+  }
+
+  tokens.push(current);
+  return tokens;
 }
 
 // CSS.escape exists in every target browser (and in happy-dom, which our
