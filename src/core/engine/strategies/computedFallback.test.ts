@@ -386,13 +386,18 @@ describe('computedFallback strategy', () => {
     expect(groundRule).not.toBe(cardRule);
   });
 
-  it('counts both same-hex, different-elevation backgrounds as mapped in coverage', () => {
+  it('counts a same-hex, different-elevation background pair as ONE mapped color', () => {
     // Same fixture as the elevation-surface-token test above: .ground and
     // .card share a raw hex but occupy different elevation-keyed mapping
-    // entries. mappedCount must resolve each via mappingKeyOf, not the plain
-    // hex — otherwise the second entry's lookup silently misses and coverage
-    // undercounts an elevation-bearing background that the CSS output above
-    // proves was actually mapped and emitted.
+    // entries, so they emit two distinct rules. Coverage measures COLORS,
+    // not rules — the census only ever saw one distinct raw hex (both
+    // declarations share the literal string "rgb(255, 255, 255)"), so
+    // `discovered` must stay 1, and `mapped` must also collapse back to 1
+    // (the raw-hex-deduped count of entries with at least one composite key
+    // present in the mapping), not 2 (the composite-key count). Asserting
+    // the full object, not just `mapped`, is deliberate: `discovered: 1,
+    // mapped: 2` would still satisfy `mapped === 2` while producing a
+    // nonsensical >100% ratio in the popup.
     document.head.innerHTML = `
       <style>
         .ground { background-color: rgb(255, 255, 255); }
@@ -409,7 +414,31 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    expect(coverage?.mapped).toBe(2);
+    expect(coverage).toEqual({ discovered: 1, mapped: 1, ratio: 1 });
+  });
+
+  it('counts two different mapped backgrounds as two mapped colors', () => {
+    // Control case for the same-hex collapse above: two genuinely distinct
+    // hexes, each mapped, must still count as two — the raw-hex dedupe in
+    // mappedHexCount must not under-count when there is no collision to
+    // collapse.
+    document.head.innerHTML = `
+      <style>
+        .a { background-color: rgb(20, 30, 40); }
+        .b { background-color: rgb(90, 100, 110); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="a">x</div><div class="b">y</div>';
+    censusFromCurrentDom();
+
+    const { coverage } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(coverage).toEqual({ discovered: 2, mapped: 2, ratio: 1 });
   });
 
   it('snapshot: emits a grouped stylesheet from novel sampled colors', () => {
