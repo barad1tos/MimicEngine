@@ -366,10 +366,14 @@ describe('computedFallback strategy', () => {
   });
 
   it('emits different surface tokens for the same hex at different elevations', () => {
+    // .card's box-shadow is the real elevation boundary here: same hex as
+    // .ground alone would now fold onto one visual surface (elevation 0
+    // for both) — the shadow is what makes .card a genuinely distinct
+    // surface at elevation 1.
     document.head.innerHTML = `
       <style>
         .ground { background-color: rgb(255, 255, 255); }
-        .card { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
       </style>
     `;
     document.body.innerHTML = '<div class="ground"><div class="card">x</div></div>';
@@ -401,10 +405,14 @@ describe('computedFallback strategy', () => {
     // the full object, not just `mapped`, is deliberate: `discovered: 1,
     // mapped: 2` would still satisfy `mapped === 2` while producing a
     // nonsensical >100% ratio in the popup.
+    // .card's box-shadow is the real elevation boundary here: same hex as
+    // .ground alone would now fold onto one visual surface (elevation 0
+    // for both) — the shadow is what makes .card a genuinely distinct
+    // surface at elevation 1.
     document.head.innerHTML = `
       <style>
         .ground { background-color: rgb(255, 255, 255); }
-        .card { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
       </style>
     `;
     document.body.innerHTML = '<div class="ground"><div class="card">x</div></div>';
