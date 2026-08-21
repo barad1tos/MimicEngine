@@ -9,6 +9,7 @@ import {
   mapAccent,
   type SitePaletteEntry,
 } from './colorMap';
+import { elevationBackgroundHex } from './elevationScale';
 import type { AuthoredColorDeclaration, PageFacts } from './pageFacts';
 
 const catppuccinFrappe = builtInThemes[0];
@@ -187,16 +188,16 @@ describe('buildColorMapping — background ladder', () => {
     entry('#f0f0f0', 'background'),
   ];
 
-  it('walks canvas, surface1, surface2, surface3, surface3... ascending by l in dark mode', () => {
+  it('walks elevation-0, -1, -2, -3, -3... ascending by l in dark mode', () => {
     const mapping = buildColorMapping(ladderPalette, catppuccinFrappe, {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(hex('#101010'))).toBe(catppuccinFrappe.tokens.canvas);
-    expect(mapping.get(hex('#404040'))).toBe(catppuccinFrappe.tokens.surface1);
-    expect(mapping.get(hex('#808080'))).toBe(catppuccinFrappe.tokens.surface2);
-    expect(mapping.get(hex('#c0c0c0'))).toBe(catppuccinFrappe.tokens.surface3);
-    expect(mapping.get(hex('#f0f0f0'))).toBe(catppuccinFrappe.tokens.surface3);
+    expect(mapping.get(hex('#101010'))).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
+    expect(mapping.get(hex('#404040'))).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
+    expect(mapping.get(hex('#808080'))).toBe(elevationBackgroundHex(catppuccinFrappe, 2));
+    expect(mapping.get(hex('#c0c0c0'))).toBe(elevationBackgroundHex(catppuccinFrappe, 3));
+    expect(mapping.get(hex('#f0f0f0'))).toBe(elevationBackgroundHex(catppuccinFrappe, 3));
   });
 
   it('walks the ladder descending by l in light mode', () => {
@@ -208,8 +209,8 @@ describe('buildColorMapping — background ladder', () => {
       { preserveBrandColors: false },
     );
 
-    expect(mapping.get(hex('#f0f0f0'))).toBe(lightTheme.tokens.canvas);
-    expect(mapping.get(hex('#101010'))).toBe(lightTheme.tokens.surface1);
+    expect(mapping.get(hex('#f0f0f0'))).toBe(elevationBackgroundHex(lightTheme, 0));
+    expect(mapping.get(hex('#101010'))).toBe(elevationBackgroundHex(lightTheme, 1));
   });
 
   it('breaks equal-l ties by ascending hex', () => {
@@ -224,8 +225,8 @@ describe('buildColorMapping — background ladder', () => {
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: false });
 
-    expect(mapping.get(hex('#aaaaaa'))).toBe(catppuccinFrappe.tokens.canvas);
-    expect(mapping.get(hex('#bbbbbb'))).toBe(catppuccinFrappe.tokens.surface1);
+    expect(mapping.get(hex('#aaaaaa'))).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
+    expect(mapping.get(hex('#bbbbbb'))).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
   });
 });
 
@@ -235,22 +236,29 @@ describe('buildColorMapping — elevation-aware background ladder', () => {
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
 
-    expect(mapping.get('#ffffff@0')).toBe(catppuccinFrappe.tokens.canvas);
-    expect(mapping.get('#ffffff@1')).toBe(catppuccinFrappe.tokens.surface1);
+    expect(mapping.get('#ffffff@0')).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
+    expect(mapping.get('#ffffff@1')).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
   });
 
-  it('elevation orders before luminance in the ladder', () => {
+  it('elevation IS the level directly: entries sharing an elevation collapse onto the same rung regardless of luminance or raw hex', () => {
+    // Amendment 3: a census entry's elevation is already an engine-owned
+    // stacking LEVEL, not a relative position among this page's sampled
+    // colors -- so two entries at elevation 0 (one darker, one lighter) must
+    // land on the exact SAME rung as each other, not two different ones the
+    // way a pure luminance-ordered walk would place them.
     const palette = [
       entry('#f4f2ee', 'background', 10, 0), // darker, ground
-      entry('#ffffff', 'background', 8, 0), // lighter, ground band
-      entry('#ffffff', 'background', 5, 1), // card
+      entry('#ffffff', 'background', 8, 0), // lighter, same ground level
+      entry('#ffffff', 'background', 5, 1), // raised: distinct level
     ];
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
 
-    expect(mapping.get('#f4f2ee@0')).toBe(catppuccinFrappe.tokens.canvas);
-    expect(mapping.get('#ffffff@0')).toBe(catppuccinFrappe.tokens.surface1);
-    expect(mapping.get('#ffffff@1')).toBe(catppuccinFrappe.tokens.surface2);
+    expect(mapping.get('#f4f2ee@0')).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
+    expect(mapping.get('#ffffff@0')).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
+    expect(mapping.get('#f4f2ee@0')).toBe(mapping.get('#ffffff@0'));
+    expect(mapping.get('#ffffff@1')).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
+    expect(mapping.get('#ffffff@1')).not.toBe(mapping.get('#ffffff@0'));
   });
 
   it('entries without elevation keep plain-hex keys end to end', () => {
@@ -430,12 +438,12 @@ describe('buildColorMapping — golden palette', () => {
     expect(JSON.stringify(Object.fromEntries(mapping), null, 2)).toMatchInlineSnapshot(`
       "{
         "#101014": "#303446",
-        "#1c1c22": "#414559",
-        "#26262e": "#51576d",
+        "#1c1c22": "#3b4052",
+        "#26262e": "#474c5f",
         "#f5f5f7": "#c6d0f5",
         "#c9c9d1": "#a5adce",
         "#3a3a44": "#626880",
-        "#7a7a82": "#51576d",
+        "#7a7a82": "#474c5f",
         "#4287f5": "#8caaee",
         "#27ae60": "#a6d189",
         "#c0392b": "#e78284"

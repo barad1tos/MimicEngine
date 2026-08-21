@@ -8,6 +8,7 @@ import { toHex } from '../../color/parseColor';
 import type { SiteSettings } from '../../storage/settingsStore';
 import { builtInThemes, type PaletteTheme } from '../../themes';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
+import { elevationBackgroundHex } from '../elevationScale';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { StrategyId } from '../strategyId';
 import { computedFallback } from './computedFallback';
@@ -365,11 +366,15 @@ describe('computedFallback strategy', () => {
     expect(coverage).toEqual({ discovered: 0, mapped: 0, ratio: 0 });
   });
 
-  it('emits different surface tokens for the same hex at different elevations', () => {
+  it('emits distinct elevation-variable backgrounds for the same hex at different elevations, and casts a shadow only on the raised island', () => {
     // .card's box-shadow is the real elevation boundary here: same hex as
     // .ground alone would now fold onto one visual surface (elevation 0
     // for both) — the shadow is what makes .card a genuinely distinct
-    // surface at elevation 1.
+    // surface at elevation 1. Both backgrounds render as `var(--pm-elevation-N)`
+    // (the "render-time" substitution — ColorMapping itself still stored real
+    // hexes, contrast math already ran against them); only .card, the
+    // elevation >= 1 island, additionally gets `box-shadow: var(--pm-shadow-1)`
+    // in the SAME rule block — the ground rung stays flat.
     document.head.innerHTML = `
       <style>
         .ground { background-color: rgb(255, 255, 255); }
@@ -386,11 +391,64 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    const groundRule = /:where\(div\.ground\) \{[^}]*background-color: (#\w{6})/.exec(css)?.[1];
-    const cardRule = /:where\(div\.card\) \{[^}]*background-color: (#\w{6})/.exec(css)?.[1];
-    expect(groundRule).toBeDefined();
-    expect(cardRule).toBeDefined();
-    expect(groundRule).not.toBe(cardRule);
+    const groundBlock = /:where\(div\.ground\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const groundBackground = /background-color: (var\(--pm-elevation-\d\))/.exec(groundBlock)?.[1];
+    const cardBackground = /background-color: (var\(--pm-elevation-\d\))/.exec(cardBlock)?.[1];
+
+    expect(groundBackground).toBe('var(--pm-elevation-0)');
+    expect(cardBackground).toBe('var(--pm-elevation-1)');
+    expect(groundBlock).not.toContain('box-shadow');
+    expect(cardBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
+  });
+
+  it('keeps the paired guard operating on real hexes when the paired background is elevation-ramped (var-substituted only at render time)', () => {
+    // .card's own background is low-chroma (not accent-classified), so it
+    // goes through the ladder and renders as `var(--pm-elevation-N)` in the
+    // final CSS -- but guardContrast/pairedTextOverride ran their contrast
+    // math against the underlying HEX before that substitution happened. If
+    // either ever compared against the literal string "var(--pm-elevation-N)"
+    // instead, contrastRatio would fail to parse it and silently skip the
+    // repair, and this assertion would fail.
+    const cardBackgroundHex = toHex(oklchToRgba({ l: 0.5, c: 0.02, h: 250 }));
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(48, 52, 70); }
+        .card {
+          background-color: ${cardBackgroundHex};
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+          color: rgb(60, 60, 70);
+        }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="ground"><div class="card">x</div></div>';
+    censusFromCurrentDom();
+
+    const first = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    ).css;
+    const second = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    ).css;
+    expect(second).toBe(first);
+
+    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(first)?.[0] ?? '';
+    const background = /background-color: (var\(--pm-elevation-\d\))/.exec(cardBlock)?.[1];
+    const text = /(?<!background-)color: (#\w{6})/.exec(cardBlock)?.[1];
+    expect(background).toBeDefined();
+    expect(text).toBeDefined();
+    if (background === undefined || text === undefined)
+      throw new Error('expected both a var() background and a hex text color');
+
+    const level = Number(/--pm-elevation-(\d)/.exec(background)?.[1]);
+    const resolvedBackgroundHex = elevationBackgroundHex(catppuccinFrappe, level);
+    expect(contrastRatio(text, resolvedBackgroundHex)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('counts a same-hex, different-elevation background pair as ONE mapped color', () => {
@@ -475,7 +533,7 @@ describe('computedFallback strategy', () => {
       }
 
       html[data-pm-active="true"] :where(div.panel) {
-        background-color: #303446 !important;
+        background-color: var(--pm-elevation-0) !important;
       }"
     `);
   });
