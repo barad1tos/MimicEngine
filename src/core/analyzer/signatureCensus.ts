@@ -1,7 +1,7 @@
 // src/core/analyzer/signatureCensus.ts
 import { isOpaque, parseCssColor } from '../color/parseColor';
 import { withStylesheetDisabled } from '../injector/styleElement';
-import { computeSignature, signatureToSelector } from './styleSignature';
+import { computeRefinedSignature, computeSignature, signatureToSelector } from './styleSignature';
 
 export const REPRESENTATIVES_PER_SIGNATURE = 3;
 
@@ -101,12 +101,50 @@ export function createSignatureCensus(): SignatureCensus {
     return true;
   }
 
+  // Depth-1 refinement, run once per census at traversal completion (and
+  // after each ingestAddedElements batch that learned something): a
+  // signature whose representatives disagreed on any property is re-keyed
+  // by parent context. Occurrences are re-found with a fresh DOM query — no
+  // element references are ever retained. If a refined record still
+  // disagrees, the property is dropped and counted; refined records are
+  // never refined again (depth cap).
   function refineDivergentSignatures(): void {
+    for (const [signature, record] of [...records.entries()]) {
+      if (record.refined) continue;
+      const divergent = [...record.properties.values()].some((slot) => slot.values.size > 1);
+      if (!divergent) continue;
+
+      records.delete(signature);
+      const occurrences = findOccurrences(signature);
+      withStylesheetDisabled(() => {
+        for (const element of occurrences) {
+          const refinedKey = computeRefinedSignature(element);
+          const refinedRecord = records.get(refinedKey) ?? {
+            representativeCount: 0,
+            refined: true,
+            properties: new Map(),
+          };
+          records.set(refinedKey, refinedRecord);
+          if (refinedRecord.representativeCount < REPRESENTATIVES_PER_SIGNATURE) {
+            sampleInto(refinedRecord, element);
+          }
+        }
+      });
+    }
+
     for (const record of records.values()) {
-      for (const slot of record.properties.values()) {
-        if (slot.values.size > 1) droppedProperties += 1;
+      for (const [cssProperty, slot] of record.properties) {
+        if (slot.values.size > 1) {
+          record.properties.delete(cssProperty);
+          droppedProperties += 1;
+        }
       }
     }
+  }
+
+  function findOccurrences(signature: string): Element[] {
+    const candidates = document.querySelectorAll(signatureToSelector(signature));
+    return [...candidates].filter((element) => computeSignature(element) === signature);
   }
 
   function soleValue(values: Set<string>): string | null {
@@ -141,15 +179,17 @@ export function createSignatureCensus(): SignatureCensus {
     },
 
     ingestAddedElements(elements: readonly Element[]): boolean {
-      let learned = false;
-      withStylesheetDisabled(() => {
+      const learned = withStylesheetDisabled((): boolean => {
+        let learnedAny = false;
         for (const element of elements) {
-          if (visit(element)) learned = true;
+          if (visit(element)) learnedAny = true;
           for (const descendant of element.querySelectorAll('*')) {
-            if (visit(descendant)) learned = true;
+            if (visit(descendant)) learnedAny = true;
           }
         }
+        return learnedAny;
       });
+      if (learned && complete) refineDivergentSignatures();
       return learned;
     },
 

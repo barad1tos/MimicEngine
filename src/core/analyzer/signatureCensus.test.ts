@@ -109,6 +109,23 @@ describe('signatureCensus traversal', () => {
     expect(census.snapshot().entries.some((entry) => entry.selector === 'div.fresh')).toBe(true);
   });
 
+  it('ingestAddedElements returns false when a twin samples only already-known colors', () => {
+    // Pins the Set.has de-dup direction with real color values — the
+    // existing 'ignores known ones' test above is vacuous under happy-dom's
+    // empty computed styles for unstyled elements.
+    document.body.innerHTML =
+      '<div class="pair" style="color: rgb(1, 1, 1);">a</div>' +
+      '<div class="pair" style="color: rgb(1, 1, 1);">b</div>';
+    const census = fullCensus();
+
+    const twin = document.createElement('div');
+    twin.className = 'pair';
+    twin.style.color = 'rgb(1, 1, 1)';
+    document.body.append(twin);
+
+    expect(census.ingestAddedElements([twin])).toBe(false);
+  });
+
   it('ingestAddedElements returns true when a same-cap twin samples a new distinct color', () => {
     // Two representatives already sampled (2 of the REPRESENTATIVES_PER_SIGNATURE
     // cap of 3), both rgb(1, 1, 1) — the signature is "known", but a third
@@ -141,5 +158,66 @@ describe('signatureCensus traversal', () => {
 
     expect(census.ingestAddedElements([container])).toBe(true);
     expect(census.snapshot().entries.some((entry) => entry.selector === 'span.child')).toBe(true);
+  });
+});
+
+describe('divergence refinement', () => {
+  it('splits a context-dependent signature by one level of parent', () => {
+    document.head.innerHTML = `
+      <style>
+        .light .btn { color: rgb(0, 0, 0); }
+        .dark .btn { color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <div class="light"><button class="btn">a</button></div>
+      <div class="dark"><button class="btn">b</button></div>
+    `;
+
+    const snapshot = fullCensus().snapshot();
+    const selectors = snapshot.entries.map((entry) => entry.selector);
+
+    expect(selectors).toContain('div.light > button.btn');
+    expect(selectors).toContain('div.dark > button.btn');
+    expect(selectors).not.toContain('button.btn');
+    expect(snapshot.droppedProperties).toBe(0);
+  });
+
+  it('drops (and counts) a property still divergent after refinement', () => {
+    // Same parent signature, different colors via nth-child — depth-1
+    // context cannot separate these, so the census must retreat honestly.
+    document.head.innerHTML = `
+      <style>
+        .row:nth-child(1) .cell { color: rgb(1, 1, 1); }
+        .row:nth-child(2) .cell { color: rgb(2, 2, 2); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <div class="row"><span class="cell">a</span></div>
+      <div class="row"><span class="cell">b</span></div>
+    `;
+
+    const snapshot = fullCensus().snapshot();
+    const cellEntries = snapshot.entries.filter((entry) => entry.selector.includes('span.cell'));
+
+    expect(cellEntries.every((entry) => entry.colors.every((c) => c.cssProperty !== 'color'))).toBe(
+      true,
+    );
+    expect(snapshot.droppedProperties).toBeGreaterThanOrEqual(1);
+  });
+
+  it('both censuses of a divergent DOM still produce equal snapshots', () => {
+    document.head.innerHTML = `
+      <style>
+        .light .btn { color: rgb(0, 0, 0); }
+        .dark .btn { color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <div class="light"><button class="btn">a</button></div>
+      <div class="dark"><button class="btn">b</button></div>
+    `;
+
+    expect(fullCensus().snapshot()).toEqual(fullCensus().snapshot());
   });
 });
