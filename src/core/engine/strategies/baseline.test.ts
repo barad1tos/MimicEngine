@@ -62,11 +62,11 @@ function emptyFacts(): PageFacts {
 // pins the right thing regardless of how many rules share that selector.
 const interactiveBackgroundBlock =
   'html[data-pm-active="true"] :where(button, [role="button"], input, select, textarea) {\n' +
-  '  background-color: var(--pm-surface1) !important;\n' +
+  '  background-color: var(--pm-elevation-1) !important;\n' +
   '}';
 const interactiveHoverBackgroundBlock =
   'html[data-pm-active="true"] :where(button:hover, [role="button"]:hover, input:hover, select:hover, textarea:hover) {\n' +
-  '  background-color: var(--pm-surface2) !important;\n' +
+  '  background-color: var(--pm-elevation-2) !important;\n' +
   '}';
 const interactiveUnconditionalBlock =
   'html[data-pm-active="true"] :where(button, [role="button"], input, select, textarea) {\n' +
