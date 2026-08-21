@@ -49,9 +49,15 @@ export function createSignatureCensus(): SignatureCensus {
   let walker: TreeWalker | null = null;
   let complete = false;
 
-  function sampleInto(record: SignatureRecord, element: Element): void {
-    if (!(element instanceof HTMLElement) && !(element instanceof SVGElement)) return;
+  // Returns true when this pass added at least one distinct value to any
+  // property's values Set — i.e. genuinely new information, not just another
+  // representative confirming what was already known. A signature already at
+  // the representative cap, or a twin whose colors all match prior samples,
+  // must not be reported as "learned" by callers keying off this.
+  function sampleInto(record: SignatureRecord, element: Element): boolean {
+    if (!(element instanceof HTMLElement) && !(element instanceof SVGElement)) return false;
     const style = getComputedStyle(element);
+    let sampledNewValue = false;
 
     for (const declaration of sampledDeclarationsFor(style)) {
       if (!isRelevantValue(declaration.value)) continue;
@@ -60,10 +66,14 @@ export function createSignatureCensus(): SignatureCensus {
         bucket: declaration.bucket,
         values: new Set<string>(),
       };
-      slot.values.add(declaration.value);
+      if (!slot.values.has(declaration.value)) {
+        slot.values.add(declaration.value);
+        sampledNewValue = true;
+      }
       record.properties.set(declaration.cssProperty, slot);
     }
     record.representativeCount += 1;
+    return sampledNewValue;
   }
 
   function trackOpaque(value: string): void {
@@ -78,9 +88,8 @@ export function createSignatureCensus(): SignatureCensus {
     const signature = computeSignature(element);
     const existing = records.get(signature);
     if (existing) {
-      if (existing.representativeCount < REPRESENTATIVES_PER_SIGNATURE)
-        sampleInto(existing, element);
-      return false;
+      if (existing.representativeCount >= REPRESENTATIVES_PER_SIGNATURE) return false;
+      return sampleInto(existing, element);
     }
     const record: SignatureRecord = {
       representativeCount: 0,
