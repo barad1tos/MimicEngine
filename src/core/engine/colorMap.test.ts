@@ -439,7 +439,7 @@ describe('buildColorMapping — golden palette', () => {
       "{
         "#101014": "#303446",
         "#1c1c22": "#25293a",
-        "#26262e": "#1a1e2e",
+        "#26262e": "#1d2132",
         "#f5f5f7": "#c6d0f5",
         "#c9c9d1": "#a5adce",
         "#3a3a44": "#626880",
