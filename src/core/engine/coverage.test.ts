@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { toHex, type HexColor } from '../color/parseColor';
 import type { ColorMapping, SitePaletteEntry } from './colorMap';
-import { aggregateCoverage, computeCoverage } from './coverage';
+import { aggregateCoverage, computeCoverage, coverageFromCounts } from './coverage';
 
 function hex(r: number, g: number, b: number): HexColor {
   return toHex({ r, g, b, a: 1 });
@@ -67,5 +67,15 @@ describe('aggregateCoverage', () => {
     const result = aggregateCoverage([{ discovered: 0, mapped: 0, ratio: 0 }]);
 
     expect(result).toEqual({ discovered: 0, mapped: 0, ratio: 0 });
+  });
+});
+
+describe('coverageFromCounts', () => {
+  it('returns {0, 0, 0} when nothing was discovered', () => {
+    expect(coverageFromCounts(0, 0)).toEqual({ discovered: 0, mapped: 0, ratio: 0 });
+  });
+
+  it('computes ratio from raw discovered/mapped counts', () => {
+    expect(coverageFromCounts(4, 3)).toEqual({ discovered: 4, mapped: 3, ratio: 0.75 });
   });
 });

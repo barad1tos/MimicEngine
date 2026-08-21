@@ -49,3 +49,14 @@ export function aggregateCoverage(reports: readonly CoverageReport[]): CoverageR
 
   return { discovered, mapped, ratio };
 }
+
+/**
+ * CoverageReport from raw counts — the census path's honest form, where the
+ * denominator (colors seen on the page) is wider than the mapped palette.
+ * Same discovered===0 -> ratio 0 rule as computeCoverage.
+ *
+ * @example coverageFromCounts(0, 0) // { discovered: 0, mapped: 0, ratio: 0 }
+ */
+export function coverageFromCounts(discovered: number, mapped: number): CoverageReport {
+  return { discovered, mapped, ratio: discovered === 0 ? 0 : mapped / discovered };
+}

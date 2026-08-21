@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // src/core/analyzer/signatureCensus.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSignatureCensus } from './signatureCensus';
+import { createSignatureCensus, installCensus, installedCensus } from './signatureCensus';
 
 const VISIBLE_RECT = {
   x: 0,
@@ -24,6 +24,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  installCensus(null);
   document.head.innerHTML = '';
   document.body.innerHTML = '';
 });
@@ -158,6 +159,16 @@ describe('signatureCensus traversal', () => {
 
     expect(census.ingestAddedElements([container])).toBe(true);
     expect(census.snapshot().entries.some((entry) => entry.selector === 'span.child')).toBe(true);
+  });
+});
+
+describe('installCensus / installedCensus', () => {
+  it('accessor round-trips and clears', () => {
+    const census = createSignatureCensus();
+    installCensus(census);
+    expect(installedCensus()).toBe(census);
+    installCensus(null);
+    expect(installedCensus()).toBeNull();
   });
 });
 
