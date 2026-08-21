@@ -48,10 +48,22 @@ type SignatureRecord = {
   // divergence exactly like disagreeing on `values`: refineDivergentSignatures
   // re-keys by parent context so each stacking depth gets its own record
   // instead of silently collapsing onto whichever depth was sampled first.
-  properties: Map<
-    string,
-    { bucket: CensusColor['bucket']; values: Set<string>; elevations: Set<number> }
-  >;
+  // `hasOpaqueValue`/`hasTransparentRepresentative` are background-only
+  // (Amendment 3.3): a representative whose OWN background is explicitly
+  // `transparent`/`rgba(0, 0, 0, 0)` never enters `values` (that would
+  // corrupt color logic downstream), but its presence must still be visible
+  // to divergence — otherwise state-differing siblings sharing one signature
+  // (an active vs. inactive filter pill) collapse onto whichever
+  // representative happened to be opaque, flakily across loads (K-rep order).
+  properties: Map<string, PropertySlot>;
+};
+
+type PropertySlot = {
+  bucket: CensusColor['bucket'];
+  values: Set<string>;
+  elevations: Set<number>;
+  hasOpaqueValue: boolean;
+  hasTransparentRepresentative: boolean;
 };
 
 const BORDER_SIDES = [
@@ -83,6 +95,66 @@ export function createSignatureCensus(): SignatureCensus {
     if (color && isOpaque(color)) opaqueValuesSeen.add(value);
   };
 
+  // A background declaration that is EXPLICITLY transparent (the literal
+  // keyword or the zero-alpha rgba form) never joins `values` — that would
+  // hand a transparent slot a "color" to paint, corrupting every downstream
+  // color-mapping step. But its presence must still register:
+  // `hasTransparentRepresentative` is the only signal the divergence check
+  // has that this signature isn't uniformly opaque (Amendment 3.3). Returns
+  // whether this is the first transparent representative this slot has seen.
+  const recordTransparentBackground = (record: SignatureRecord, cssProperty: string): boolean => {
+    const existingSlot = record.properties.get(cssProperty);
+    const slot = existingSlot ?? emptyPropertySlot('background');
+    const isNewSignal = !slot.hasTransparentRepresentative;
+    slot.hasTransparentRepresentative = true;
+    record.properties.set(cssProperty, slot);
+    return isNewSignal;
+  };
+
+  // Elevation is expensive (walks the ancestor chain), so it's computed
+  // lazily, only for a background declaration that just survived the
+  // relevance filter — but on EVERY representative, not just the first: two
+  // representatives can share the same background hex while sitting at
+  // different stacking depths (C-3), and that disagreement is only visible
+  // if every representative's own elevation gets recorded. `hasOpaqueValue`
+  // is the other half of the Amendment 3.3 divergence signal, alongside
+  // `hasTransparentRepresentative` above. Returns whether either reading was
+  // genuinely new information.
+  const recordBackgroundExtras = (slot: PropertySlot, value: string, element: Element): boolean => {
+    const elevation = elevationOf(element);
+    const learnedElevation = !slot.elevations.has(elevation);
+    if (learnedElevation) slot.elevations.add(elevation);
+
+    const color = parseCssColor(value);
+    if (color && isOpaque(color)) slot.hasOpaqueValue = true;
+
+    return learnedElevation;
+  };
+
+  const recordRelevantValue = (
+    record: SignatureRecord,
+    declaration: SampledDeclaration,
+    element: Element,
+  ): boolean => {
+    trackOpaque(declaration.value);
+    const existingSlot = record.properties.get(declaration.cssProperty);
+    const slot = existingSlot ?? emptyPropertySlot(declaration.bucket);
+    let learnedSomething = false;
+
+    if (!slot.values.has(declaration.value)) {
+      slot.values.add(declaration.value);
+      learnedSomething = true;
+    }
+    if (
+      declaration.bucket === 'background' &&
+      recordBackgroundExtras(slot, declaration.value, element)
+    ) {
+      learnedSomething = true;
+    }
+    record.properties.set(declaration.cssProperty, slot);
+    return learnedSomething;
+  };
+
   // Returns true when this pass added at least one distinct value to any
   // property's values Set — i.e. genuinely new information, not just another
   // representative confirming what was already known. A signature already at
@@ -94,33 +166,12 @@ export function createSignatureCensus(): SignatureCensus {
     let sampledNewValue = false;
 
     for (const declaration of sampledDeclarationsFor(style)) {
+      if (declaration.bucket === 'background' && isTransparentValue(declaration.value)) {
+        if (recordTransparentBackground(record, declaration.cssProperty)) sampledNewValue = true;
+        continue;
+      }
       if (!isRelevantValue(declaration.value)) continue;
-      trackOpaque(declaration.value);
-      const existingSlot = record.properties.get(declaration.cssProperty);
-      const slot = existingSlot ?? {
-        bucket: declaration.bucket,
-        values: new Set<string>(),
-        elevations: new Set<number>(),
-      };
-      if (!slot.values.has(declaration.value)) {
-        slot.values.add(declaration.value);
-        sampledNewValue = true;
-      }
-      // Elevation is expensive (walks the ancestor chain), so it's computed
-      // lazily, right here, only for a background declaration that just
-      // survived the relevance filter above — but on EVERY representative,
-      // not just the first: two representatives can share the same
-      // background hex while sitting at different stacking depths (C-3), and
-      // that disagreement is only visible if every representative's own
-      // elevation gets recorded, not just the first one's.
-      if (declaration.bucket === 'background') {
-        const elevation = elevationOf(element);
-        if (!slot.elevations.has(elevation)) {
-          slot.elevations.add(elevation);
-          sampledNewValue = true;
-        }
-      }
-      record.properties.set(declaration.cssProperty, slot);
+      if (recordRelevantValue(record, declaration, element)) sampledNewValue = true;
     }
     record.representativeCount += 1;
     return sampledNewValue;
@@ -155,15 +206,17 @@ export function createSignatureCensus(): SignatureCensus {
 
   // Depth-1 refinement, run once per census at traversal completion (and
   // after each ingestAddedElements batch that learned something): a
-  // signature whose representatives disagreed on any property's VALUE, or
-  // (background slots only) on its ELEVATION, is re-keyed by parent context
-  // — same background hex at two different stacking depths is still a real
-  // split, just a gentler one than a color mismatch (C-3). Occurrences are
-  // re-found with a fresh DOM query — no element references are ever
-  // retained. If a refined record still disagrees on VALUE, the property is
-  // dropped and counted; elevation disagreement never drops the property
-  // (see the drop loop below) — it degrades to first-wins instead, since an
-  // approximate stacking depth is still useful signal, unlike a wrong color.
+  // signature whose representatives disagreed on any property's VALUE, on
+  // its ELEVATION (background slots only), or MIXED an opaque background
+  // with an explicitly transparent one (Amendment 3.3 — same-signature
+  // siblings differing only by state, e.g. active vs. inactive filter
+  // pills), is re-keyed by parent context. Occurrences are re-found with a
+  // fresh DOM query — no element references are ever retained. If a refined
+  // record still disagrees on VALUE, or is still an opaque/transparent mix,
+  // the property is dropped and counted; elevation disagreement alone never
+  // drops the property (see the drop loop below) — it degrades to
+  // first-wins instead, since an approximate stacking depth is still useful
+  // signal, unlike a wrong color or a guessed-opaque transparent element.
   // Refined records are never refined again (depth cap).
   const refineDivergentSignatures = (): void => {
     // Iterates the Map live (not a snapshot copy): deleting the entry the
@@ -174,7 +227,10 @@ export function createSignatureCensus(): SignatureCensus {
     for (const [signature, record] of records) {
       if (record.refined) continue;
       const divergent = [...record.properties.values()].some(
-        (slot) => slot.values.size > 1 || slot.elevations.size > 1,
+        (slot) =>
+          slot.values.size > 1 ||
+          slot.elevations.size > 1 ||
+          (slot.hasOpaqueValue && slot.hasTransparentRepresentative),
       );
       if (!divergent) continue;
 
@@ -199,7 +255,14 @@ export function createSignatureCensus(): SignatureCensus {
 
     for (const record of records.values()) {
       for (const [cssProperty, slot] of record.properties) {
-        if (slot.values.size > 1) {
+        // Value mismatch drops for any bucket; a background slot still
+        // mixing an opaque representative with a transparent one after
+        // refinement drops too (Amendment 3.3) — an honest retreat, never a
+        // guessed-opaque paint. Elevation-only disagreement is excluded here
+        // on purpose: it degrades to first-wins (see firstElevation below),
+        // not a drop.
+        const stillMixedTransparency = slot.hasOpaqueValue && slot.hasTransparentRepresentative;
+        if (slot.values.size > 1 || stillMixedTransparency) {
           record.properties.delete(cssProperty);
           droppedProperties += 1;
         }
@@ -320,8 +383,22 @@ function findOccurrences(signature: string): Element[] {
   return [...candidates].filter((element) => computeSignature(element) === signature);
 }
 
+function isTransparentValue(value: string): boolean {
+  return value === 'transparent' || value === 'rgba(0, 0, 0, 0)';
+}
+
 function isRelevantValue(value: string): boolean {
-  return Boolean(value) && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)';
+  return Boolean(value) && !isTransparentValue(value);
+}
+
+function emptyPropertySlot(bucket: CensusColor['bucket']): PropertySlot {
+  return {
+    bucket,
+    values: new Set<string>(),
+    elevations: new Set<number>(),
+    hasOpaqueValue: false,
+    hasTransparentRepresentative: false,
+  };
 }
 
 type SampledDeclaration = {

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // src/core/analyzer/signatureCensus.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CensusSnapshot } from './signatureCensus';
+import type { CensusColor, CensusSnapshot } from './signatureCensus';
 import { createSignatureCensus, installCensus, installedCensus } from './signatureCensus';
 
 const VISIBLE_RECT = {
@@ -485,6 +485,127 @@ describe('shadow boundary refinements (Codex P2s)', () => {
 
     const entries = fullCensus().snapshot().entries;
     expect(backgroundElevationOf(entries, 'section.card')).toBe(1);
+  });
+});
+
+describe('background transparency divergence (Amendment 3.3)', () => {
+  // Present-vs-absent divergence: a signature whose representatives mix a
+  // relevant (opaque) background with an explicitly transparent one — e.g.
+  // active vs. inactive filter pills sharing one signature — must never let
+  // the opaque representative paint every match. Before this fix,
+  // `isRelevantValue` dropped the transparent samples BEFORE they ever
+  // reached the record, so the signature silently read as "opaque, size 1"
+  // and painted flakily depending on K-representative order.
+  function backgroundColorOf(
+    entries: CensusSnapshot['entries'],
+    selector: string,
+  ): CensusColor | undefined {
+    return entries
+      .find((entry) => entry.selector === selector)
+      ?.colors.find((color) => color.bucket === 'background');
+  }
+
+  it('drops the background (and counts it) when opaque/transparent siblings share one signature with no distinguishing parent', () => {
+    document.body.innerHTML = `
+      <div class="group">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+        <span class="pill" style="background-color: transparent;">b</span>
+        <span class="pill" style="background-color: rgba(0, 0, 0, 0);">c</span>
+      </div>
+    `;
+
+    const snapshot = fullCensus().snapshot();
+    const selectors = snapshot.entries.map((entry) => entry.selector);
+
+    // Refinement re-keys by parent context, but all three siblings share the
+    // exact same parent (`.group`) — there is no split that separates the
+    // opaque one from the transparent ones, so the refined record is STILL
+    // mixed and must retreat honestly rather than guess.
+    expect(selectors).not.toContain('span.pill');
+    const refinedSelector = 'div.group > span.pill';
+    expect(selectors).toContain(refinedSelector);
+    expect(backgroundColorOf(snapshot.entries, refinedSelector)).toBeUndefined();
+    expect(snapshot.droppedProperties).toBeGreaterThanOrEqual(1);
+  });
+
+  it('splits opaque and transparent siblings by parent context when a real distinguishing context exists', () => {
+    document.head.innerHTML = `
+      <style>
+        .light .pill { color: rgb(1, 1, 1); }
+        .dark .pill { color: rgb(2, 2, 2); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <div class="light"><span class="pill" style="background-color: rgb(10, 20, 30);">a</span></div>
+      <div class="dark"><span class="pill" style="background-color: transparent;">b</span></div>
+    `;
+
+    const snapshot = fullCensus().snapshot();
+    const selectors = snapshot.entries.map((entry) => entry.selector);
+
+    expect(selectors).not.toContain('span.pill');
+    expect(selectors).toContain('div.light > span.pill');
+    expect(selectors).toContain('div.dark > span.pill');
+
+    // The opaque side keeps its own background intact once split away from
+    // the transparent side.
+    expect(backgroundColorOf(snapshot.entries, 'div.light > span.pill')).toEqual({
+      cssProperty: 'background-color',
+      bucket: 'background',
+      value: 'rgb(10, 20, 30)',
+      elevation: 0,
+    });
+    // The transparent side never gets an opaque color to paint.
+    expect(backgroundColorOf(snapshot.entries, 'div.dark > span.pill')).toBeUndefined();
+    expect(snapshot.droppedProperties).toBe(0);
+  });
+
+  it('leaves an all-transparent signature unchanged: no background entry, no drop counted', () => {
+    document.body.innerHTML = `
+      <span class="ghost" style="background-color: transparent;">a</span>
+      <span class="ghost" style="background-color: rgba(0, 0, 0, 0);">b</span>
+    `;
+
+    const snapshot = fullCensus().snapshot();
+    const entry = snapshot.entries.find((candidate) => candidate.selector === 'span.ghost');
+
+    expect(entry).toBeDefined();
+    expect(entry?.colors.some((color) => color.bucket === 'background')).toBe(false);
+    expect(snapshot.droppedProperties).toBe(0);
+  });
+
+  it('both censuses of a transparent-mixed DOM still produce equal snapshots (determinism)', () => {
+    document.body.innerHTML = `
+      <div class="group">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+        <span class="pill" style="background-color: transparent;">b</span>
+      </div>
+    `;
+
+    expect(fullCensus().snapshot()).toEqual(fullCensus().snapshot());
+  });
+
+  it('later snapshots stay a superset of earlier ones on a transparent-mixed DOM (monotonicity)', () => {
+    document.body.innerHTML = `
+      <div class="group">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+        <span class="pill" style="background-color: transparent;">b</span>
+        <span class="pill" style="background-color: rgba(0, 0, 0, 0);">c</span>
+      </div>
+    `;
+    const census = createSignatureCensus();
+    census.begin(document);
+
+    census.advance(2);
+    const early = census.snapshot();
+    while (!census.advance(2)) {
+      /* drain */
+    }
+    const late = census.snapshot();
+
+    for (const entry of early.entries) {
+      expect(late.entries.map((candidate) => candidate.selector)).toContain(entry.selector);
+    }
   });
 });
 
