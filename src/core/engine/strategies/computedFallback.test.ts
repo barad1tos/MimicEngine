@@ -2,6 +2,7 @@
 // src/core/engine/strategies/computedFallback.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSignatureCensus, installCensus } from '../../analyzer/signatureCensus';
+import { contrastRatio } from '../../color/contrast';
 import type { SiteSettings } from '../../storage/settingsStore';
 import { builtInThemes } from '../../themes';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
@@ -467,5 +468,79 @@ describe('computedFallback strategy', () => {
         background-color: #303446 !important;
       }"
     `);
+  });
+
+  it('overrides a signature text color that fails contrast against its own mapped background', () => {
+    // Accent-ish saturated background + near-white text: after remap the pair
+    // must be readable — the emitted color for .pill must NOT be the plain
+    // text mapping if it fails 4.5:1 against .pill's mapped background.
+    document.head.innerHTML = `
+      <style>
+        .pill { background-color: rgb(1, 117, 79); color: rgb(244, 244, 244); }
+      </style>
+    `;
+    document.body.innerHTML = '<span class="pill">All</span>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const block = /:where\(span\.pill\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const bg = /background-color: (#\w{6})/.exec(block)?.[1];
+    const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
+    expect(bg).toBeDefined();
+    expect(text).toBeDefined();
+    if (bg === undefined || text === undefined) throw new Error('expected both bg and text');
+    expect(contrastRatio(text, bg)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("leaves a readable pair's text color identical to the plain text-bucket mapping", () => {
+    // .card maps to theme surface+text which already clears 4.5:1 — no
+    // override should fire. Proven via a control comparison: the SAME text
+    // declaration, censused WITHOUT any background declaration at all (a
+    // separate DOM/census pair), has no background to pair against, so its
+    // emitted color is necessarily the plain text-bucket mapping. If the
+    // paired guard is truly a no-op here, the with-background run must emit
+    // that exact same hex for .card's text.
+    document.head.innerHTML = `
+      <style>
+        .card { background-color: rgb(255, 255, 255); color: rgb(20, 20, 20); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="card">text</div>';
+    censusFromCurrentDom();
+
+    const { css: withBackground } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    installCensus(null);
+    document.head.innerHTML = `
+      <style>
+        .card { color: rgb(20, 20, 20); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="card">text</div>';
+    censusFromCurrentDom();
+
+    const { css: control } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const withBackgroundText = /(?<!background-)color: (#\w{6})/.exec(withBackground)?.[1];
+    const controlText = /(?<!background-)color: (#\w{6})/.exec(control)?.[1];
+    expect(withBackgroundText).toBeDefined();
+    expect(controlText).toBeDefined();
+    expect(withBackgroundText).toBe(controlText);
   });
 });
