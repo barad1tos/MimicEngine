@@ -2,6 +2,7 @@
 // src/core/runtime/pageThemeController.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
+import { installedCensus } from '../analyzer/signatureCensus';
 import { planStorageKey, type PlanDiagnostics } from '../engine/diagnostics';
 import * as shadowStylesModule from '../injector/shadowStyles';
 import * as styleElementModule from '../injector/styleElement';
@@ -95,12 +96,33 @@ async function flushMicrotasks(): Promise<void> {
   }
 }
 
+// Shared by every describe block below that reads back the diagnostics the
+// controller wrote for a given site under `planStorageKey`.
+function lastWrittenDiagnostics(siteKey: string): PlanDiagnostics {
+  const key = planStorageKey(siteKey);
+  const diagnostics = fakeBrowser.storage.session.data.get(key) as PlanDiagnostics | undefined;
+  if (!diagnostics) throw new Error('expected diagnostics to have been written');
+  return diagnostics;
+}
+
 // Shared by every describe block below that needs an open shadow root to
 // assert shadow-stylesheet lifecycle behavior against.
 function attachOpenShadowHost(): ShadowRoot {
   const host = document.createElement('div');
   document.body.append(host);
   return host.attachShadow({ mode: 'open' });
+}
+
+// Builds `elementCount` <span> elements with a rotating 4-class list, used by
+// the census lifecycle describe block below to exercise a page large enough
+// to span the sync CENSUS_FIRST_CHUNK plus one or more idle CENSUS_IDLE_CHUNK
+// passes, with more than one distinct signature in play.
+function bigFixture(elementCount: number): string {
+  const classNames = ['a', 'b', 'c', 'd'];
+  return Array.from({ length: elementCount }, (_, index) => {
+    const className = classNames[index % classNames.length] ?? 'a';
+    return `<span class="rotating-${className}">x</span>`;
+  }).join('');
 }
 
 beforeEach(() => {
@@ -285,20 +307,13 @@ describe('createPageThemeController — coverage gating', () => {
     fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
   }
 
-  function lastWrittenDiagnostics(): PlanDiagnostics {
-    const key = planStorageKey(siteKey);
-    const diagnostics = fakeBrowser.storage.session.data.get(key) as PlanDiagnostics | undefined;
-    if (!diagnostics) throw new Error('expected diagnostics to have been written');
-    return diagnostics;
-  }
-
   it('writes a coverage report when the plan includes authoredRemap', async () => {
     seedSiteSettings('authoredRemap');
     const controller = createPageThemeController();
 
     await controller.start();
 
-    expect(lastWrittenDiagnostics().coverage).toBeDefined();
+    expect(lastWrittenDiagnostics(siteKey).coverage).toBeDefined();
 
     controller.stop();
   });
@@ -309,7 +324,7 @@ describe('createPageThemeController — coverage gating', () => {
 
     await controller.start();
 
-    const diagnostics = lastWrittenDiagnostics();
+    const diagnostics = lastWrittenDiagnostics(siteKey);
     expect(diagnostics.coverage).toBeUndefined();
     expect(Object.hasOwn(diagnostics, 'coverage')).toBe(false);
 
@@ -648,5 +663,98 @@ describe('createPageThemeController — orphan shadow self-heal', () => {
     expect(removeSpy).toHaveBeenCalledTimes(1);
 
     controller.stop();
+  });
+});
+
+describe('createPageThemeController — census lifecycle', () => {
+  const siteKey = normalizeHostname(window.location.hostname);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // requestIdleCallback/cancelIdleCallback don't exist in happy-dom;
+    // stubbed here (rather than at module scope) so the controller's
+    // per-call globalThis lookup picks these up. The 0ms delay lets a
+    // deadline callback fire on the very next fake-timer tick, same as a
+    // real idle slot opening up almost immediately on a quiet page.
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 0),
+    );
+    vi.stubGlobal('cancelIdleCallback', (handle: number) => {
+      window.clearTimeout(handle);
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+  });
+
+  it('installs a census on start and clears it on stop', async () => {
+    const controller = createPageThemeController();
+
+    await controller.start();
+    expect(installedCensus()).not.toBeNull();
+
+    controller.stop();
+    expect(installedCensus()).toBeNull();
+  });
+
+  it('continues the census through idle callbacks until it completes, then re-applies', async () => {
+    document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800)
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    // The synchronous first chunk (800) cannot have finished walking a
+    // 1200+-element document yet.
+    expect(installedCensus()?.snapshot().complete).toBe(false);
+    const injectCountAfterInitialApply = injectSpy.mock.calls.length;
+
+    await vi.runAllTimersAsync(); // drains idle callbacks + the census debounce
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    // The census-driven debounced re-apply must have fired at least once
+    // beyond the initial apply from start().
+    expect(injectSpy.mock.calls.length).toBeGreaterThan(injectCountAfterInitialApply);
+
+    controller.stop();
+  });
+
+  it('census progress never trips the mutation cap or counts toward the mutation rate', async () => {
+    document.body.innerHTML = bigFixture(5000); // several idle chunks
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    // capTripped only ever surfaces through this warning — never fired means
+    // the cap never tripped despite many census-driven re-applies.
+    expect(warnSpy).not.toHaveBeenCalled();
+    // mutationRate only advances via registerMutationCallback, which only
+    // the page-mutation path (ensureDomObserver's callback) touches — a
+    // census re-apply's own diagnostics write must still read it as 0.
+    expect(lastWrittenDiagnostics(siteKey).metrics.mutationRate).toBe(0);
+
+    controller.stop();
+  });
+
+  it('a stopped controller schedules no further census work', async () => {
+    document.body.innerHTML = bigFixture(1200);
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const injectCountAtStop = injectSpy.mock.calls.length;
+    controller.stop();
+
+    await vi.runAllTimersAsync(); // must not throw from an orphaned idle callback
+
+    expect(installedCensus()).toBeNull();
+    expect(injectSpy.mock.calls).toHaveLength(injectCountAtStop);
   });
 });
