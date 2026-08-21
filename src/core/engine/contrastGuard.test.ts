@@ -5,7 +5,7 @@ import { oklchToRgba, rgbaToOklch } from '../color/oklch';
 import { parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
 import { buildColorMapping, type ColorMapping, type SitePaletteEntry } from './colorMap';
-import { guardContrast, type GuardedMapping } from './contrastGuard';
+import { guardContrast, repairTextTarget, type GuardedMapping } from './contrastGuard';
 
 const catppuccinFrappe = builtInThemes[0];
 
@@ -233,6 +233,21 @@ describe('guardContrast', () => {
       '[Palette Mimicry] unparseable color in contrast repair',
       expect.objectContaining({ targetHex: 'not-a-color' }),
     );
+  });
+
+  it('exports repairTextTarget for direct reuse against an arbitrary paired background (C-2)', () => {
+    // computedFallback's per-selector paired guard reuses this exact
+    // stepping algorithm rather than duplicating it (see
+    // computedFallback.test.ts's own C-2 regression, which exercises this
+    // through the full produce() pipeline) -- this pins the export itself
+    // and its 3-arg contract directly.
+    const backgroundHex = '#969696';
+    const failingTarget = catppuccinFrappe.tokens.canvas;
+    expectFailingPair(failingTarget, backgroundHex);
+
+    const repaired = repairTextTarget(hex(failingTarget), hex(backgroundHex), hex(failingTarget));
+
+    expect(contrastRatio(repaired, backgroundHex)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('does not mutate the input mapping', () => {

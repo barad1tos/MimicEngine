@@ -10,7 +10,7 @@ import {
   type ColorMapping,
   type SitePaletteEntry,
 } from '../colorMap';
-import { guardContrast } from '../contrastGuard';
+import { guardContrast, repairTextTarget } from '../contrastGuard';
 import { coverageFromCounts } from '../coverage';
 import { planStrategies } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
@@ -197,6 +197,16 @@ type ResolvedNovelDeclaration = {
   isSelectorHint: false;
 };
 
+// The ColorMapping identity a raw census declaration occupies — same
+// composite hex@elevation rule mappingKeyOf documents, just applied to a
+// NovelDeclaration's own parsed color instead of a SitePaletteEntry.
+function declarationMappingKey(declaration: NovelDeclaration): string {
+  return mappingKeyOf({
+    hex: toHex(declaration.color),
+    ...(declaration.elevation === undefined ? {} : { elevation: declaration.elevation }),
+  });
+}
+
 // Groups by selector in first-appearance (census entry) order. Census
 // selectors are exact — signatureToSelector derives them from the element's
 // own tag/classes (or its refined parent-prefixed form), never a fabricated
@@ -210,16 +220,40 @@ function buildSelectorGroups(
   const resolved: ResolvedNovelDeclaration[] = [];
 
   for (const declaration of declarations) {
-    const key = mappingKeyOf({
-      hex: toHex(declaration.color),
-      ...(declaration.elevation === undefined ? {} : { elevation: declaration.elevation }),
-    });
-    const mappedValue = mapping.get(key);
+    const mappedValue = mapping.get(declarationMappingKey(declaration));
     if (mappedValue !== undefined)
       resolved.push({ declaration, mappedValue, isSelectorHint: false });
   }
 
-  return groupSelectors(applyPairedTextGuard(resolved, theme));
+  const backgroundBySelector = buildBackgroundBySelector(declarations, mapping);
+  return groupSelectors(applyPairedTextGuard(resolved, backgroundBySelector, theme));
+}
+
+// A selector's paired background for the guard below: the MAPPED value when
+// the declaration resolved through `mapping`, or the declaration's ORIGINAL
+// hex when it didn't. An unresolved background-bucket declaration is never
+// "missing" data — colorMap.ts's partitionAccents deliberately left it out of
+// `mapping` because preserveBrandColors preserves it untouched (C-1), so its
+// original color is exactly what ends up on the page and must be what the
+// paired guard below checks text against, not a silent skip. Walked over
+// ALL declarations, not just `resolved`, so a preserved background still
+// gets an entry here even though it never made it into `resolved` itself.
+// Source-order iteration means a selector with more than one background
+// declaration keeps the last one — same order semantics the prior
+// resolved-only map used.
+function buildBackgroundBySelector(
+  declarations: readonly NovelDeclaration[],
+  mapping: ColorMapping,
+): Map<string, string> {
+  const backgroundBySelector = new Map<string, string>();
+
+  for (const declaration of declarations) {
+    if (declaration.bucket !== 'background') continue;
+    const mappedValue = mapping.get(declarationMappingKey(declaration)) ?? toHex(declaration.color);
+    backgroundBySelector.set(declaration.selector, mappedValue);
+  }
+
+  return backgroundBySelector;
 }
 
 // guardContrast (contrastGuard.ts) already repairs each text-bucket mapping
@@ -228,24 +262,19 @@ function buildSelectorGroups(
 // OWN background can be a different, more saturated surface than that
 // approximation (an accent-colored pill, a badge), and the global repair
 // never sees that pairing. This is the per-selector second pass: when the
-// SAME census entry resolved both a background-bucket and a text-bucket
-// mapped value, replace the text mapping with pairedTextOverride's result
-// whenever the pair itself fails 4.5:1. Border declarations are untouched —
-// only 'text' entries are ever replaced. Pure: returns a new array, never
-// mutates `resolved`.
+// SAME census entry has a paired background (mapped or preserved-original,
+// see buildBackgroundBySelector) and a text-bucket mapped value, replace the
+// text mapping with pairedTextOverride's result whenever the pair itself
+// fails 4.5:1. Border declarations are untouched — only 'text' entries are
+// ever replaced. Pure: returns a new array, never mutates `resolved`.
 function applyPairedTextGuard(
   resolved: readonly ResolvedNovelDeclaration[],
+  backgroundBySelector: ReadonlyMap<string, string>,
   theme: PaletteTheme,
 ): ResolvedNovelDeclaration[] {
-  const mappedBackgroundBySelector = new Map<string, string>();
-  for (const entry of resolved) {
-    if (entry.declaration.bucket === 'background')
-      mappedBackgroundBySelector.set(entry.declaration.selector, entry.mappedValue);
-  }
-
   return resolved.map((entry) => {
     if (entry.declaration.bucket !== 'text') return entry;
-    const mappedBackground = mappedBackgroundBySelector.get(entry.declaration.selector);
+    const mappedBackground = backgroundBySelector.get(entry.declaration.selector);
     if (mappedBackground === undefined) return entry;
 
     const override = pairedTextOverride(entry.mappedValue, mappedBackground, theme);
@@ -256,8 +285,16 @@ function applyPairedTextGuard(
 // null when the pair already clears 4.5:1, or when contrastRatio can't parse
 // it (leave untouched — same "no ratio, no repair" contract as
 // guardContrast's own text repair). Otherwise the higher-contrast of the
-// theme's canvas/text tokens against `mappedBackground` wins; an exact tie
-// breaks deterministically on compareStrings of the two candidate hexes.
+// theme's canvas/text tokens against `mappedBackground` wins (an exact tie
+// breaks deterministically on compareStrings of the two candidate hexes) —
+// but an imported theme only ever validates its own canvas/text pair against
+// EACH OTHER, never against an arbitrary paired background a signature
+// happens to sit on, so that "better" candidate can still fail 4.5:1 (C-2).
+// When it does, repairTextTarget reruns the SAME lightness-only stepping
+// guardContrast's own text repair uses — never a second, drifting
+// implementation of it — against the actual paired background, falling back
+// to the picked candidate itself if no step clears 4.5 (best-achievable,
+// same contract as guardContrast's own fallback semantics).
 function pairedTextOverride(
   mappedText: string,
   mappedBackground: string,
@@ -270,7 +307,22 @@ function pairedTextOverride(
   const textHex = themeTokenHex(theme, 'text');
   const canvasRatio = contrastRatio(canvasHex, mappedBackground) ?? 0;
   const textRatio = contrastRatio(textHex, mappedBackground) ?? 0;
+  const picked = pickHigherRatioCandidate(canvasHex, canvasRatio, textHex, textRatio);
 
+  const backgroundColor = parseCssColor(mappedBackground);
+  if (!backgroundColor) return picked;
+
+  return repairTextTarget(picked, toHex(backgroundColor), picked);
+}
+
+// canvasHex wins on higher ratio; an exact tie breaks deterministically on
+// compareStrings of the two candidate hexes (never on iteration order).
+function pickHigherRatioCandidate(
+  canvasHex: HexColor,
+  canvasRatio: number,
+  textHex: HexColor,
+  textRatio: number,
+): HexColor {
   if (canvasRatio !== textRatio) return canvasRatio > textRatio ? canvasHex : textHex;
   return compareStrings(canvasHex, textHex) < 0 ? canvasHex : textHex;
 }

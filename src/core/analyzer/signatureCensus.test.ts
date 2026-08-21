@@ -348,3 +348,45 @@ describe('background elevation', () => {
     }
   });
 });
+
+describe('elevation divergence (C-3)', () => {
+  it('splits same-hex backgrounds at different elevations into separate refined records, without dropping', () => {
+    // Two `.card` elements share tag+class AND the exact same background
+    // hex -- the color itself never diverges -- but sit at different
+    // stacking depths: one nested inside an opaque-background ancestor, one
+    // not. Before the fix, elevation was only ever computed from the FIRST
+    // representative sampled into a signature record, so the second
+    // element's different elevation was silently discarded and both
+    // collapsed onto one broad rule at the wrong depth for one of them.
+    document.head.innerHTML = `
+      <style>
+        .wrap { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(240, 240, 240); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <div class="wrap"><section class="card">A</section></div>
+      <section class="card">B</section>
+    `;
+
+    const snapshot = fullCensus().snapshot();
+    const selectors = snapshot.entries.map((entry) => entry.selector);
+    const backgroundElevationOf = (selector: string): number | undefined =>
+      snapshot.entries
+        .find((entry) => entry.selector === selector)
+        ?.colors.find((color) => color.bucket === 'background')?.elevation;
+
+    // Refined into two parent-qualified selectors -- never one broad,
+    // elevation-blind `section.card` rule.
+    expect(selectors).not.toContain('section.card');
+    expect(selectors).toContain('div.wrap > section.card');
+    expect(selectors).toContain('body > section.card');
+
+    expect(backgroundElevationOf('div.wrap > section.card')).toBe(1);
+    expect(backgroundElevationOf('body > section.card')).toBe(0);
+
+    // A split, not a drop: elevation disagreement degrades gracefully --
+    // both refined records keep their background-color property intact.
+    expect(snapshot.droppedProperties).toBe(0);
+  });
+});
