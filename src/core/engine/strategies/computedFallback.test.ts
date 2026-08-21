@@ -1,8 +1,7 @@
 // @vitest-environment happy-dom
 // src/core/engine/strategies/computedFallback.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as collectComputedColorsModule from '../../analyzer/collectComputedColors';
-import { injectStylesheet, removeStylesheet, STYLE_ELEMENT_ID } from '../../injector/styleElement';
+import { createSignatureCensus, installCensus } from '../../analyzer/signatureCensus';
 import type { SiteSettings } from '../../storage/settingsStore';
 import { builtInThemes } from '../../themes';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
@@ -71,28 +70,50 @@ function planWith(strategies: StrategyId[]): StrategyPlan {
 const planWithAuthoredRemap = planWith(['baseline', 'authoredRemap', 'computedFallback']);
 const planWithoutAuthoredRemap = planWith(['baseline', 'computedFallback']);
 
-function requireStyleElement(): HTMLStyleElement {
-  const element = document.getElementById(STYLE_ELEMENT_ID);
-  if (!(element instanceof HTMLStyleElement)) throw new Error('expected style element to exist');
-  return element;
+// Builds a census over the current document and installs it, the same way
+// pageThemeController installs its live census before invoking the plan
+// (Task 5). Every test that needs computedFallback to see sampled colors
+// calls this after setting up its DOM fixture.
+function censusFromCurrentDom(): void {
+  const census = createSignatureCensus();
+  census.begin(document);
+  while (!census.advance(1000)) {
+    /* drain */
+  }
+  installCensus(census);
 }
 
 beforeEach(() => {
   // happy-dom's layout engine always reports zero-size rects; stub it so
-  // collectComputedColors' visibility filter lets our fixture elements
-  // through, same as any real, laid-out page element would be.
+  // the census' visibility filter lets our fixture elements through, same
+  // as any real, laid-out page element would be.
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  removeStylesheet();
+  installCensus(null);
   document.head.innerHTML = '';
   document.body.innerHTML = '';
 });
 
 describe('computedFallback strategy', () => {
-  it('returns an empty string when there is nothing to sample', () => {
+  it('emits nothing when no census is installed', () => {
+    document.body.innerHTML = '<p class="hero">text</p>';
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).toBe('');
+  });
+
+  it('returns an empty string when the installed census is empty', () => {
+    censusFromCurrentDom();
+
     const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
@@ -103,32 +124,10 @@ describe('computedFallback strategy', () => {
     expect(css).toBe('');
   });
 
-  it('samples with the injected stylesheet disabled and restores it after', () => {
-    injectStylesheet(':root { --pm-canvas: #000000; }');
-    const styleElement = requireStyleElement();
-    document.body.innerHTML = '<p>hello</p>';
-
-    const original = collectComputedColorsModule.collectComputedColors;
-    let disabledDuringSampling: boolean | undefined;
-    vi.spyOn(collectComputedColorsModule, 'collectComputedColors').mockImplementation((...args) => {
-      disabledDuringSampling = styleElement.disabled;
-      return original(...args);
-    });
-
-    computedFallback.produce(
-      catppuccinFrappe,
-      anySiteSettings(),
-      emptyFacts(),
-      planWithAuthoredRemap,
-    );
-
-    expect(disabledDuringSampling).toBe(true);
-    expect(styleElement.disabled).toBe(false);
-  });
-
   it('does not re-emit a sampled color already covered by authored facts', () => {
     document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
     document.body.innerHTML = '<p class="hero">text</p>';
+    censusFromCurrentDom();
 
     const facts = factsWithAuthoredRule({
       selector: '.hero',
@@ -157,6 +156,7 @@ describe('computedFallback strategy', () => {
     // so the red the page actually authored must still get remapped.
     document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
     document.body.innerHTML = '<p class="hero">text</p>';
+    censusFromCurrentDom();
 
     const facts = factsWithAuthoredRule({
       selector: '.hero',
@@ -182,10 +182,11 @@ describe('computedFallback strategy', () => {
     // The authored side has only a translucent (a: 0.5) red; the page's
     // actual computed color for .hero is fully opaque. The stoplist must not
     // treat the translucent authored entry as covering the opaque sample —
-    // isOpaque gates what enters collectAuthoredHexes, same as line 97 gates
-    // what enters the sample pipeline itself.
+    // isOpaque gates what enters collectAuthoredHexes, same as the pipeline
+    // gate that decides what enters toNovelDeclarations in the first place.
     document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
     document.body.innerHTML = '<p class="hero">text</p>';
+    censusFromCurrentDom();
 
     const facts = factsWithAuthoredRule({
       selector: '.scrim',
@@ -210,6 +211,7 @@ describe('computedFallback strategy', () => {
   it('maps and emits a novel color invisible to authored analysis, marked !important', () => {
     document.head.innerHTML = '<style>.hero { color: rgb(20, 30, 40); }</style>';
     document.body.innerHTML = '<p class="hero">text</p>';
+    censusFromCurrentDom();
 
     const { css } = computedFallback.produce(
       catppuccinFrappe,
@@ -226,6 +228,7 @@ describe('computedFallback strategy', () => {
   it('does not emit a translucent computed color, even though it is otherwise novel', () => {
     document.head.innerHTML = '<style>.scrim { color: rgba(20, 30, 40, 0.5); }</style>';
     document.body.innerHTML = '<p class="scrim">text</p>';
+    censusFromCurrentDom();
 
     const { css } = computedFallback.produce(
       catppuccinFrappe,
@@ -244,6 +247,7 @@ describe('computedFallback strategy', () => {
       </style>
     `;
     document.body.innerHTML = '<div class="divider"></div>';
+    censusFromCurrentDom();
 
     const { css } = computedFallback.produce(
       catppuccinFrappe,
@@ -256,59 +260,30 @@ describe('computedFallback strategy', () => {
     expect(css).toContain('border-color:');
   });
 
-  it('collapses uniform border sides into one border-color sample (weight 1)', () => {
-    // A four-sided currentColor border shares the text's RGB. Four per-side
-    // samples would outvote the single text sample 4:1 in the palette's
-    // bucket majority, reclassifying the text hex as `border` and skipping
-    // the contrast guard. Uniform sides must collapse to ONE sample.
+  it('coverage denominator counts census-seen colors, not just mapped ones', () => {
+    // .a maps; .b diverges (dropped) — discovered must still count b's colors.
     document.head.innerHTML = `
       <style>
-        .btn { color: rgb(10, 20, 30); border: 1px solid rgb(10, 20, 30); }
+        .a { color: rgb(20, 30, 40); }
+        .light .c { color: rgb(50, 60, 70); }
+        .dark .c { color: rgb(200, 210, 220); }
       </style>
     `;
-    document.body.innerHTML = '<button class="btn">go</button>';
-
-    const samples = collectComputedColorsModule.collectComputedColors(document);
-    const borderSamples = samples.filter((sample) => sample.property.startsWith('border'));
-
-    expect(borderSamples).toHaveLength(1);
-    expect(borderSamples[0]?.property).toBe('borderColor');
-  });
-
-  it('keeps per-side samples when border sides differ in color', () => {
-    document.head.innerHTML = `
-      <style>
-        .split {
-          border-top: 1px solid rgb(200, 0, 0);
-          border-bottom: 1px solid rgb(0, 0, 200);
-        }
-      </style>
+    document.body.innerHTML = `
+      <p class="a">x</p>
+      <div class="light"><i class="c">y</i></div>
+      <div class="dark"><i class="c">z</i></div>
     `;
-    document.body.innerHTML = '<div class="split"></div>';
+    censusFromCurrentDom();
 
-    const samples = collectComputedColorsModule.collectComputedColors(document);
-    const borderProperties = samples
-      .filter((sample) => sample.property.startsWith('border'))
-      .map((sample) => sample.property)
-      .sort((left, right) => left.localeCompare(right));
-
-    expect(borderProperties).toEqual(['borderBottomColor', 'borderTopColor']);
-  });
-
-  it('skips border sides that are not drawn (zero width)', () => {
-    // border-top-color is set but no width/style — the side never renders,
-    // so its color must not enter the palette or the emitted CSS.
-    document.head.innerHTML = '<style>.box { border-top-color: rgb(1, 2, 3); }</style>';
-    document.body.innerHTML = '<div class="box"></div>';
-
-    const { css } = computedFallback.produce(
+    const { coverage } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
       emptyFacts(),
       planWithoutAuthoredRemap,
     );
 
-    expect(css).not.toContain('border-top-color');
+    expect(coverage?.discovered).toBeGreaterThanOrEqual(3);
   });
 
   it('snapshot: emits a grouped stylesheet from novel sampled colors', () => {
@@ -319,6 +294,7 @@ describe('computedFallback strategy', () => {
       </style>
     `;
     document.body.innerHTML = '<p class="hero">text</p><div class="panel">panel text</div>';
+    censusFromCurrentDom();
 
     const { css } = computedFallback.produce(
       catppuccinFrappe,

@@ -1,64 +1,35 @@
-import {
-  collectComputedColors,
-  type ComputedColorSample,
-} from '../../analyzer/collectComputedColors';
+import { installedCensus, type CensusSnapshot } from '../../analyzer/signatureCensus';
 import { isOpaque, parseCssColor, toHex, type HexColor } from '../../color/parseColor';
-import { withStylesheetDisabled } from '../../injector/styleElement';
 import { buildColorMapping, extractSitePalette, type ColorMapping } from '../colorMap';
 import { guardContrast } from '../contrastGuard';
-import { computeCoverage } from '../coverage';
+import { coverageFromCounts } from '../coverage';
 import { planStrategies } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
 
-const MAX_SAMPLED_ELEMENTS = 600;
-
-// A sample only ever becomes a declaration once its value has parsed to a
-// color (see toNovelDeclarations), so `color` is narrowed non-null here —
-// same idiom variableRemap.ts uses for its own colored-property subtype.
+// A census color only ever becomes a declaration once its value has parsed
+// to a color (see toNovelDeclarations), so `color` is narrowed non-null here
+// — same idiom variableRemap.ts uses for its own colored-property subtype.
 type NovelDeclaration = AuthoredColorDeclaration & {
   color: NonNullable<AuthoredColorDeclaration['color']>;
 };
 
-const SAMPLE_PROPERTY_TO_CSS: Record<ComputedColorSample['property'], string> = {
-  color: 'color',
-  backgroundColor: 'background-color',
-  borderColor: 'border-color',
-  borderTopColor: 'border-top-color',
-  borderRightColor: 'border-right-color',
-  borderBottomColor: 'border-bottom-color',
-  borderLeftColor: 'border-left-color',
-};
-
-const SAMPLE_PROPERTY_TO_BUCKET: Record<
-  ComputedColorSample['property'],
-  AuthoredColorDeclaration['bucket']
-> = {
-  color: 'text',
-  backgroundColor: 'background',
-  borderColor: 'border',
-  borderTopColor: 'border',
-  borderRightColor: 'border',
-  borderBottomColor: 'border',
-  borderLeftColor: 'border',
-};
-
-// The one strategy that reads the live DOM at produce time (documented,
-// spec-sanctioned impurity): everything else in this engine works off the
-// pre-collected PageFacts snapshot. It samples getComputedStyle with our own
-// injected stylesheet disabled, so the samples reflect the page's genuine
-// styling, then keeps only colors invisible to the authored-CSS analysis
-// (e.g. computed from JS-driven inline styles, canvas-drawn text, or other
-// sources collectPageFacts can't see) — covering sites where authoredRemap
-// and variableRemap alone leave gaps.
+// The controller (Task 5) builds and installs a live SignatureCensus before
+// invoking the plan, so by the time this strategy runs the page has already
+// been walked once — no repeat DOM/CSSOM read here. `produce` reads whatever
+// census is installed, keeps only colors invisible to the authored-CSS
+// analysis (e.g. computed from JS-driven inline styles, canvas-drawn text,
+// or other sources collectPageFacts can't see), and reports coverage against
+// every distinct opaque color the census actually saw — not just the ones
+// this strategy went on to map.
 export const computedFallback: PaletteEngine = {
   id: 'computedFallback',
   label: 'Computed fallback',
   produce(theme, siteSettings, facts, plan) {
-    const samples = withStylesheetDisabled(() =>
-      collectComputedColors(document, { maxElements: MAX_SAMPLED_ELEMENTS }),
-    );
+    const census = installedCensus();
+    if (!census) return { css: '' };
+    const snapshot = census.snapshot();
 
     // The stoplist only makes sense when authoredRemap is also running on
     // this plan: it exists to keep the two strategies from double-emitting
@@ -69,7 +40,7 @@ export const computedFallback: PaletteEngine = {
     const authoredHexes = planStrategies(plan).includes('authoredRemap')
       ? collectAuthoredHexes(facts)
       : new Set<HexColor>();
-    const novelDeclarations = toNovelDeclarations(samples, authoredHexes);
+    const novelDeclarations = toNovelDeclarations(snapshot, authoredHexes);
     const syntheticFacts = buildSyntheticFacts(novelDeclarations);
 
     const palette = extractSitePalette(syntheticFacts);
@@ -80,7 +51,8 @@ export const computedFallback: PaletteEngine = {
 
     const groups = buildSelectorGroups(novelDeclarations, guardedMapping);
     const css = emitGroupedRules(groups);
-    const coverage = computeCoverage(palette, guardedMapping);
+    const mappedCount = palette.filter((entry) => guardedMapping.has(entry.hex)).length;
+    const coverage = coverageFromCounts(snapshot.distinctColorsSeen, mappedCount);
 
     return { css, coverage };
   },
@@ -104,43 +76,45 @@ function collectAuthoredHexes(facts: PageFacts): Set<HexColor> {
   return hexes;
 }
 
-// Parses each sample, drops unparseable values, then drops every sample
+// Parses each census color, drops unparseable values, then drops every color
 // whose hex is already covered by the authored-CSS analysis — what's left is
 // "novel": present in computed style but invisible to collectPageFacts.
-// Translucent samples (e.g. a computed `color: rgba(0,0,0,0.5)`) are dropped
-// too: toHex discards alpha, so keeping them would let a translucent sample
+// Translucent colors (e.g. a computed `color: rgba(0,0,0,0.5)`) are dropped
+// too: toHex discards alpha, so keeping them would let a translucent color
 // dedupe against — and later be remapped through — an unrelated opaque
 // occurrence of the same RGB.
 function toNovelDeclarations(
-  samples: readonly ComputedColorSample[],
+  snapshot: CensusSnapshot,
   authoredHexes: ReadonlySet<HexColor>,
 ): NovelDeclaration[] {
   const declarations: NovelDeclaration[] = [];
 
-  for (const sample of samples) {
-    const color = parseCssColor(sample.value);
-    if (!color) continue;
-    if (!isOpaque(color)) continue;
-    if (authoredHexes.has(toHex(color))) continue;
+  for (const entry of snapshot.entries) {
+    for (const censusColor of entry.colors) {
+      const color = parseCssColor(censusColor.value);
+      if (!color) continue;
+      if (!isOpaque(color)) continue;
+      if (authoredHexes.has(toHex(color))) continue;
 
-    declarations.push({
-      selector: sample.selectorHint,
-      property: SAMPLE_PROPERTY_TO_CSS[sample.property],
-      value: sample.value,
-      color,
-      bucket: SAMPLE_PROPERTY_TO_BUCKET[sample.property],
-      // Samples never carry @media/@supports context — getComputedStyle
-      // already resolves the current cascade, so there is no condition
-      // chain left to preserve.
-      conditions: [],
-    });
+      declarations.push({
+        selector: entry.selector,
+        property: censusColor.cssProperty,
+        value: censusColor.value,
+        color,
+        bucket: censusColor.bucket,
+        // Census colors never carry @media/@supports context —
+        // getComputedStyle already resolves the current cascade, so there is
+        // no condition chain left to preserve.
+        conditions: [],
+      });
+    }
   }
 
   return declarations;
 }
 
 // extractSitePalette expects a PageFacts-shaped bag of authored declarations;
-// the novel samples are synthesized into that shape so the same palette
+// the novel declarations are synthesized into that shape so the same palette
 // extraction, color mapping, and contrast guard authoredRemap uses apply here
 // unchanged — no parallel palette-building logic to keep in sync.
 function buildSyntheticFacts(authoredRules: NovelDeclaration[]): PageFacts {
@@ -156,23 +130,22 @@ function buildSyntheticFacts(authoredRules: NovelDeclaration[]): PageFacts {
   };
 }
 
-// Groups by selector in first-appearance order (document order, inherited
-// from the TreeWalker collectComputedColors used to sample). Every
-// declaration here carries a fabricated selectorHint rather than a real CSS
-// selector, so all of them are ambiguity-tracked — see groupSelectors' doc
-// comment: two different elements sharing one hint but sampling different
-// colors for the same property must not silently pick a winner.
+// Groups by selector in first-appearance (census entry) order. Census
+// selectors are exact — signatureToSelector derives them from the element's
+// own tag/classes (or its refined parent-prefixed form), never a fabricated
+// approximation — so the ambiguity-tracking machinery groupSelectors applies
+// to hint-based declarations does not apply here.
 function buildSelectorGroups(
   declarations: readonly NovelDeclaration[],
   mapping: ColorMapping,
 ): SelectorGroup[] {
-  const resolved: { declaration: NovelDeclaration; mappedValue: string; isSelectorHint: true }[] =
+  const resolved: { declaration: NovelDeclaration; mappedValue: string; isSelectorHint: false }[] =
     [];
 
   for (const declaration of declarations) {
     const mappedValue = mapping.get(toHex(declaration.color));
     if (mappedValue !== undefined)
-      resolved.push({ declaration, mappedValue, isSelectorHint: true });
+      resolved.push({ declaration, mappedValue, isSelectorHint: false });
   }
 
   return groupSelectors(resolved);

@@ -215,16 +215,30 @@ export function createSignatureCensus(): SignatureCensus {
   };
 }
 
+let installed: SignatureCensus | null = null;
+
+// The controller installs its live census on start() and clears it on
+// stop(); computedFallback.produce reads whatever is installed. No census
+// (unit tests, non-page contexts) reads as null — the strategy emits
+// nothing, same as an empty-sample page.
+export function installCensus(census: SignatureCensus | null): void {
+  installed = census;
+}
+
+export function installedCensus(): SignatureCensus | null {
+  return installed;
+}
+
 function isRelevantValue(value: string): boolean {
   return Boolean(value) && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)';
 }
 
 type SampledDeclaration = { cssProperty: string; bucket: CensusColor['bucket']; value: string };
 
-// Moved from collectComputedColors (deleted in Task 4): uniform drawn border
-// sides collapse to one border-color declaration (weight 1 in the palette's
-// bucket majority — the Codex P1 fix from PR #11); differing sides stay
-// per-side longhands. Sides gate on computed width > 0.
+// Moved from the legacy per-produce() DOM sampler (deleted in Task 4):
+// uniform drawn border sides collapse to one border-color declaration
+// (weight 1 in the palette's bucket majority — the Codex P1 fix from PR #11);
+// differing sides stay per-side longhands. Sides gate on computed width > 0.
 function sampledDeclarationsFor(style: CSSStyleDeclaration): SampledDeclaration[] {
   const declarations: SampledDeclaration[] = [
     { cssProperty: 'color', bucket: 'text', value: style.color },
