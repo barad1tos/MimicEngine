@@ -283,16 +283,21 @@ describe('apply(apply(page)) idempotency invariant', () => {
     // see computedFallback.ts), proving the composite hex@elevation mapping
     // key survives collectPageFacts -> decide -> compose end to end, not
     // just in computedFallback.produce called directly.
-    const groundBg =
-      /:where\(div\.ground\) \{[^}]*background-color: (var\(--pm-elevation-\d\))/.exec(
-        first.css,
-      )?.[1];
-    const cardBg = /:where\(div\.card\) \{[^}]*background-color: (var\(--pm-elevation-\d\))/.exec(
-      first.css,
-    )?.[1];
+    const groundBlock = /:where\(div\.ground\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
+    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
+    const groundBg = /background-color: (var\(--pm-elevation-\d\))/.exec(groundBlock)?.[1];
+    const cardBg = /background-color: (var\(--pm-elevation-\d\))/.exec(cardBlock)?.[1];
     expect(groundBg).toBeDefined();
     expect(cardBg).toBeDefined();
     expect(groundBg).not.toBe(cardBg);
+
+    // Island shadow: .card's own box-shadow is the elevation boundary that
+    // puts it at elevation >= 1, so the full pipeline (not just
+    // computedFallback.produce in isolation) must emit `box-shadow:
+    // var(--pm-shadow-1)` in the SAME rule block — the flat ground rung
+    // (elevation 0) casts none.
+    expect(groundBlock).not.toContain('box-shadow');
+    expect(cardBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
 
     // Paired-override guard: .pill's raw site pair is readable (~5.22:1) —
     // remapping is what breaks it: the raw background maps to the theme's
