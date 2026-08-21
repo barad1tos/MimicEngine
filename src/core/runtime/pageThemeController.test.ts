@@ -987,4 +987,54 @@ describe('createPageThemeController — census lifecycle', () => {
 
     controller.stop();
   });
+
+  it('re-bootstraps the census when a site disabled mid-session is re-enabled, recovering computedFallback coverage', async () => {
+    // Pre-branch, computedFallback sampled the live DOM at produce() time, so
+    // disable→re-enable recovered instantly. Since the census became the
+    // single sampling pass, a disabled site tears the census down entirely
+    // (Finding 4a) — without a lazy re-bootstrap, re-enabling would leave
+    // computedFallback reading a permanently null census for the rest of
+    // this page's lifetime. The per-site toggle is a primary dogfooding
+    // flow, so this must recover within the same page load, not require a
+    // reload.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.head.innerHTML = '<style>.hero { color: rgb(20, 30, 40); }</style>';
+    document.body.innerHTML = '<p class="hero">text</p>';
+
+    const enabledSettings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), strategy: 'computedFallback' } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, enabledSettings);
+    const controller = createPageThemeController();
+
+    await controller.start();
+    expect(installedCensus()).not.toBeNull();
+
+    // Disable — tears the census down (Finding 4a).
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, {
+      ...enabledSettings,
+      sites: {
+        [siteKey]: { ...createDefaultSiteSettings(), strategy: 'computedFallback', enabled: false },
+      },
+    });
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+    expect(installedCensus()).toBeNull();
+
+    // Re-enable, same page, no reload — this apply() must bootstrap a fresh
+    // census before composing, so computedFallback sees real samples again.
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, enabledSettings);
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()).not.toBeNull();
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    const styleText = document.getElementById(STYLE_ELEMENT_ID)?.textContent;
+    expect(styleText).toContain(':where(p.hero)');
+
+    controller.stop();
+  });
 });
