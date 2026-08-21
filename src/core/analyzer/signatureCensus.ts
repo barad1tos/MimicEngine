@@ -1,5 +1,5 @@
 // src/core/analyzer/signatureCensus.ts
-import { type HexColor, isOpaque, parseCssColor, toHex } from '../color/parseColor';
+import { type HexColor, isOpaque, parseCssColor, parseRgbColor, toHex } from '../color/parseColor';
 import { withStylesheetDisabled } from '../injector/styleElement';
 import { computeRefinedSignature, computeSignature, signatureToSelector } from './styleSignature';
 
@@ -375,13 +375,16 @@ function isProbablyVisible(element: Element): boolean {
 // real sites mark true elevation with a box-shadow, not by nesting depth
 // alone. Walks the opaque-background ancestor chain root-most first, then
 // folds the element's own node in last: the level bumps only when a node's
-// hex differs from the current surface's hex, or the node itself carries a
-// box-shadow; a same-hex, shadow-less node is folded into the surface
-// already established by its predecessor. Non-opaque nodes (transparent
-// wrappers) are skipped entirely — they can neither start nor bump a
-// surface. Called only from inside the withStylesheetDisabled window
-// sampleInto already runs in, so these getComputedStyle reads see the
-// page's authored colors, not ours.
+// hex differs from the current surface's hex, or a qualifying box-shadow is
+// in play; a same-hex, shadow-less node is folded into the surface already
+// established by its predecessor. A non-opaque node (a transparent wrapper)
+// never itself starts or bumps a surface, but its OWN qualifying shadow is
+// still a real boundary — carried forward as `pendingShadowBoundary` and
+// consumed by the next opaque node the fold reaches, even across further
+// transparent nodes in between. A pending shadow with no opaque descendant
+// at all simply dies unused. Called only from inside the
+// withStylesheetDisabled window sampleInto already runs in, so these
+// getComputedStyle reads see the page's authored colors, not ours.
 function elevationOf(element: Element): number {
   const ancestors: Element[] = [];
   for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
@@ -391,25 +394,78 @@ function elevationOf(element: Element): number {
 
   let level = 0;
   let currentSurfaceHex: HexColor | null = null;
+  let pendingShadowBoundary = false;
 
   for (const node of [...ancestors, element]) {
     const style = getComputedStyle(node);
     const background = parseCssColor(style.backgroundColor);
-    if (!background || !isOpaque(background)) continue;
 
-    const hex = toHex(background);
-    if (currentSurfaceHex === null) {
-      currentSurfaceHex = hex;
+    if (!background || !isOpaque(background)) {
+      if (hasElevationShadow(style.boxShadow)) pendingShadowBoundary = true;
       continue;
     }
 
-    const boxShadow = style.boxShadow;
-    const hasOwnShadow = boxShadow !== '' && boxShadow !== 'none';
-    if (hex !== currentSurfaceHex || hasOwnShadow) {
+    const hex = toHex(background);
+    if (currentSurfaceHex === null) {
+      // The first opaque node always seeds the base surface unconditionally
+      // — nothing precedes it for a shadow to be a boundary FROM, so any
+      // pending shadow carried by an earlier transparent node is moot here.
+      currentSurfaceHex = hex;
+      pendingShadowBoundary = false;
+      continue;
+    }
+
+    const isBoundary =
+      hex !== currentSurfaceHex || hasElevationShadow(style.boxShadow) || pendingShadowBoundary;
+    if (isBoundary) {
       level += 1;
       currentSurfaceHex = hex;
     }
+    pendingShadowBoundary = false;
   }
 
   return level;
+}
+
+// A box-shadow only marks a real elevation boundary when at least one of its
+// comma-separated layers is neither `inset` (a pressed/divider effect, drawn
+// INSIDE the box, never a stacking cue) nor fully transparent (alpha 0 — a
+// shadow no one can see). Splits on top-level commas only: an rgba() color's
+// own commas must not be mistaken for layer separators. A layer with no
+// rgba()/rgb() color at all (a hex color, a keyword, or the `currentColor`
+// default) can't be judged on alpha, so it's treated as visible.
+function hasElevationShadow(boxShadow: string): boolean {
+  if (boxShadow === '' || boxShadow === 'none') return false;
+  return splitTopLevelCommas(boxShadow).some(isQualifyingShadowLayer);
+}
+
+function isQualifyingShadowLayer(rawLayer: string): boolean {
+  const layer = rawLayer.trim();
+  if (layer.includes('inset')) return false;
+  const color = parseRgbColor(layer);
+  return !color || color.a > 0;
+}
+
+// Splits on `,` at paren-depth 0 only — a box-shadow layer's own rgba()/hsla()
+// color commas must stay inside that layer, not be read as separating two
+// different shadow layers.
+function splitTopLevelCommas(value: string): string[] {
+  const segments: string[] = [];
+  let depth = 0;
+  let current = '';
+
+  for (const character of value) {
+    if (character === '(') depth += 1;
+    else if (character === ')') depth -= 1;
+
+    if (character === ',' && depth === 0) {
+      segments.push(current);
+      current = '';
+      continue;
+    }
+    current += character;
+  }
+  segments.push(current);
+
+  return segments;
 }
