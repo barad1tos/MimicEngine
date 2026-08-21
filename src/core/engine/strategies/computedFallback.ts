@@ -1,6 +1,11 @@
 import { installedCensus, type CensusSnapshot } from '../../analyzer/signatureCensus';
 import { isOpaque, parseCssColor, toHex, type HexColor } from '../../color/parseColor';
-import { buildColorMapping, extractSitePalette, type ColorMapping } from '../colorMap';
+import {
+  buildColorMapping,
+  extractSitePalette,
+  mappingKeyOf,
+  type ColorMapping,
+} from '../colorMap';
 import { guardContrast } from '../contrastGuard';
 import { coverageFromCounts } from '../coverage';
 import { planStrategies } from '../decisionTable';
@@ -50,7 +55,7 @@ export const computedFallback: PaletteEngine = {
 
     const groups = buildSelectorGroups(novelDeclarations, guardedMapping);
     const css = emitGroupedRules(groups);
-    const mappedCount = palette.filter((entry) => guardedMapping.has(entry.hex)).length;
+    const mappedCount = palette.filter((entry) => guardedMapping.has(mappingKeyOf(entry))).length;
     // Coverage's denominator must stay disjoint from authoredRemap's own
     // report: distinctColorsSeen counts every opaque value the census saw,
     // authored-covered or not, and summing that with authoredRemap's report
@@ -124,6 +129,9 @@ function toNovelDeclarations(
       const color = parseCssColor(censusColor.value);
       if (!color) continue;
       if (!isOpaque(color)) continue;
+      // Plain-hex comparison, deliberately elevation-blind: an authored rule
+      // covering this hex at all means authoredRemap already emits a rule
+      // for it, regardless of which stacking depth the census sampled it at.
       if (authoredHexes.has(toHex(color))) continue;
 
       declarations.push({
@@ -136,6 +144,7 @@ function toNovelDeclarations(
         // getComputedStyle already resolves the current cascade, so there is
         // no condition chain left to preserve.
         conditions: [],
+        ...(censusColor.elevation === undefined ? {} : { elevation: censusColor.elevation }),
       });
     }
   }
@@ -173,7 +182,11 @@ function buildSelectorGroups(
     [];
 
   for (const declaration of declarations) {
-    const mappedValue = mapping.get(toHex(declaration.color));
+    const key = mappingKeyOf({
+      hex: toHex(declaration.color),
+      ...(declaration.elevation === undefined ? {} : { elevation: declaration.elevation }),
+    });
+    const mappedValue = mapping.get(key);
     if (mappedValue !== undefined)
       resolved.push({ declaration, mappedValue, isSelectorHint: false });
   }
