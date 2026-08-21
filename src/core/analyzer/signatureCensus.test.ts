@@ -108,4 +108,38 @@ describe('signatureCensus traversal', () => {
     expect(census.ingestAddedElements([fresh])).toBe(true);
     expect(census.snapshot().entries.some((entry) => entry.selector === 'div.fresh')).toBe(true);
   });
+
+  it('ingestAddedElements returns true when a same-cap twin samples a new distinct color', () => {
+    // Two representatives already sampled (2 of the REPRESENTATIVES_PER_SIGNATURE
+    // cap of 3), both rgb(1, 1, 1) — the signature is "known", but a third
+    // representative introducing a genuinely new value must still count as
+    // learned: the refinement pass (Task 3) and the controller's recompose
+    // decision (Task 5) both key off this boolean to notice the divergence.
+    document.body.innerHTML =
+      '<div class="pair" style="color: rgb(1, 1, 1);">a</div>' +
+      '<div class="pair" style="color: rgb(1, 1, 1);">b</div>';
+    const census = fullCensus();
+
+    const twin = document.createElement('div');
+    twin.className = 'pair';
+    twin.style.color = 'rgb(2, 2, 2)';
+    document.body.append(twin);
+
+    expect(census.ingestAddedElements([twin])).toBe(true);
+  });
+
+  it('ingestAddedElements walks descendants and learns new signatures nested inside the added element', () => {
+    document.body.innerHTML = '<div class="container">x</div>';
+    const census = fullCensus();
+
+    const container = document.querySelector('.container');
+    if (!(container instanceof HTMLElement)) throw new Error('fixture missing container');
+    const child = document.createElement('span');
+    child.className = 'child';
+    child.style.color = 'rgb(3, 3, 3)';
+    container.append(child);
+
+    expect(census.ingestAddedElements([container])).toBe(true);
+    expect(census.snapshot().entries.some((entry) => entry.selector === 'span.child')).toBe(true);
+  });
 });
