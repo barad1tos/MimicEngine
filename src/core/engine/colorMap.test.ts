@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
 import { parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
-import { buildColorMapping, extractSitePalette, type SitePaletteEntry } from './colorMap';
+import {
+  buildColorMapping,
+  extractSitePalette,
+  mapAccent,
+  type SitePaletteEntry,
+} from './colorMap';
 import type { AuthoredColorDeclaration, PageFacts } from './pageFacts';
 
 const catppuccinFrappe = builtInThemes[0];
@@ -254,6 +259,20 @@ describe('buildColorMapping — elevation-aware background ladder', () => {
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
 
     expect(mapping.has(hex('#101010'))).toBe(true);
+  });
+
+  it('an accent-classified background entry that also carries elevation is present under its composite key (regression: partitionAccents keyed its map by plain hex, not mappingKeyOf, silently dropping the entry)', () => {
+    // Confirms this fixture actually exercises the accent-partition path
+    // (chroma above ACCENT_CHROMA_THRESHOLD), not the background ladder.
+    expect(oklchOf('#dd2222').c).toBeGreaterThan(0.09);
+
+    const accentEntry = entry('#dd2222', 'background', 1, 1);
+    const palette = [accentEntry];
+
+    const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: false });
+
+    expect(mapping.size).toBe(1);
+    expect(mapping.get('#dd2222@1')).toBe(mapAccent(accentEntry, catppuccinFrappe, false));
   });
 });
 

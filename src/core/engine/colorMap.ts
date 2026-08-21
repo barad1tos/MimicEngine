@@ -65,6 +65,8 @@ export const BRAND_CHROMA_THRESHOLD = 0.14;
 
 function comparePaletteEntries(a: SitePaletteEntry, b: SitePaletteEntry): number {
   if (b.weight !== a.weight) return b.weight - a.weight;
+  const deltaElevation = (a.elevation ?? 0) - (b.elevation ?? 0);
+  if (deltaElevation !== 0) return deltaElevation;
   return compareStrings(a.hex, b.hex);
 }
 
@@ -200,13 +202,16 @@ export function mapAccent(
 }
 
 // Accents are pulled out of their buckets before the bucket steps run: an
-// entry is either an accent or a bucket member, never both.
+// entry is either an accent or a bucket member, never both. Keyed via
+// mappingKeyOf — an accent-classified background entry can still carry an
+// elevation, and buildColorMapping's final assembly always looks this map
+// up by mappingKeyOf(entry), never the plain hex.
 function partitionAccents(
   palette: readonly SitePaletteEntry[],
   theme: PaletteTheme,
   preserveBrandColors: boolean,
-): { accents: Map<HexColor, HexColor>; rest: SitePaletteEntry[] } {
-  const accents = new Map<HexColor, HexColor>();
+): { accents: Map<string, HexColor>; rest: SitePaletteEntry[] } {
+  const accents = new Map<string, HexColor>();
   const rest: SitePaletteEntry[] = [];
 
   for (const entry of palette) {
@@ -216,7 +221,7 @@ function partitionAccents(
     }
     const target = mapAccent(entry, theme, preserveBrandColors);
     if (target !== null) {
-      accents.set(entry.hex, target);
+      accents.set(mappingKeyOf(entry), target);
     }
   }
 
