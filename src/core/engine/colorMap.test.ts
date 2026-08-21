@@ -52,8 +52,19 @@ function makeFacts(
   };
 }
 
-function entry(hex: string, bucket: PaletteBucket, weight = 1): SitePaletteEntry {
-  return { hex: toHex(requireColor(hex)), color: requireColor(hex), weight, bucket };
+function entry(
+  hex: string,
+  bucket: PaletteBucket,
+  weight = 1,
+  elevation?: number,
+): SitePaletteEntry {
+  return {
+    hex: toHex(requireColor(hex)),
+    color: requireColor(hex),
+    weight,
+    bucket,
+    ...(elevation === undefined ? {} : { elevation }),
+  };
 }
 
 describe('extractSitePalette', () => {
@@ -210,6 +221,39 @@ describe('buildColorMapping — background ladder', () => {
 
     expect(mapping.get(hex('#aaaaaa'))).toBe(catppuccinFrappe.tokens.canvas);
     expect(mapping.get(hex('#bbbbbb'))).toBe(catppuccinFrappe.tokens.surface1);
+  });
+});
+
+describe('buildColorMapping — elevation-aware background ladder', () => {
+  it('same hex at different elevations lands on different ladder rungs', () => {
+    const palette = [entry('#ffffff', 'background', 10, 0), entry('#ffffff', 'background', 5, 1)];
+
+    const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
+
+    expect(mapping.get('#ffffff@0')).toBe(catppuccinFrappe.tokens.canvas);
+    expect(mapping.get('#ffffff@1')).toBe(catppuccinFrappe.tokens.surface1);
+  });
+
+  it('elevation orders before luminance in the ladder', () => {
+    const palette = [
+      entry('#f4f2ee', 'background', 10, 0), // darker, ground
+      entry('#ffffff', 'background', 8, 0), // lighter, ground band
+      entry('#ffffff', 'background', 5, 1), // card
+    ];
+
+    const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
+
+    expect(mapping.get('#f4f2ee@0')).toBe(catppuccinFrappe.tokens.canvas);
+    expect(mapping.get('#ffffff@0')).toBe(catppuccinFrappe.tokens.surface1);
+    expect(mapping.get('#ffffff@1')).toBe(catppuccinFrappe.tokens.surface2);
+  });
+
+  it('entries without elevation keep plain-hex keys end to end', () => {
+    const palette = [entry('#101010', 'background', 3)];
+
+    const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
+
+    expect(mapping.has(hex('#101010'))).toBe(true);
   });
 });
 

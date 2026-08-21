@@ -2,7 +2,7 @@ import { passesContrast } from '../color/contrast';
 import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
 import { parseCssColor, toHex, type HexColor } from '../color/parseColor';
 import type { PaletteTheme } from '../themes';
-import { themeTokenHex, type ColorMapping, type SitePaletteEntry } from './colorMap';
+import { mappingKeyOf, themeTokenHex, type ColorMapping, type SitePaletteEntry } from './colorMap';
 import { compareStrings } from './sort';
 
 export type GuardedMapping = { mapping: ColorMapping; adjustments: number };
@@ -35,7 +35,7 @@ function resolveBackgroundHex(
   theme: PaletteTheme,
 ): HexColor {
   const heaviest = heaviestBackgroundEntry(palette);
-  const mapped = heaviest ? mapping.get(heaviest.hex) : undefined;
+  const mapped = heaviest ? mapping.get(mappingKeyOf(heaviest)) : undefined;
   return mapped ?? themeTokenHex(theme, 'canvas');
 }
 
@@ -96,22 +96,22 @@ export function guardContrast(
   palette: SitePaletteEntry[],
   theme: PaletteTheme,
 ): GuardedMapping {
-  const paletteByHex = new Map(palette.map((entry) => [entry.hex, entry]));
+  const paletteByKey = new Map(palette.map((entry) => [mappingKeyOf(entry), entry]));
   const backgroundHex = resolveBackgroundHex(palette, mapping, theme);
 
   let adjustments = 0;
   const repaired: ColorMapping = new Map();
   const themeTextHex = themeTokenHex(theme, 'text');
 
-  for (const [hex, target] of mapping) {
-    if (paletteByHex.get(hex)?.bucket !== 'text') {
-      repaired.set(hex, target);
+  for (const [key, target] of mapping) {
+    if (paletteByKey.get(key)?.bucket !== 'text') {
+      repaired.set(key, target);
       continue;
     }
 
     const repairedHex = repairTextTarget(target, backgroundHex, themeTextHex);
     if (repairedHex !== target) adjustments += 1;
-    repaired.set(hex, repairedHex);
+    repaired.set(key, repairedHex);
   }
 
   adjustments += repairBrandText(palette, mapping, backgroundHex, theme, repaired);
@@ -143,12 +143,12 @@ function repairBrandText(
 
   for (const entry of palette) {
     if (entry.bucket !== 'text') continue;
-    if (mapping.has(entry.hex)) continue;
+    if (mapping.has(mappingKeyOf(entry))) continue;
 
     const repairedHex = repairTextTarget(entry.hex, backgroundHex, themeTextHex);
     if (repairedHex === entry.hex) continue;
 
-    repaired.set(entry.hex, repairedHex);
+    repaired.set(mappingKeyOf(entry), repairedHex);
     adjustments += 1;
   }
 
