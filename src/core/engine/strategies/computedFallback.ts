@@ -1,9 +1,12 @@
 import { installedCensus, type CensusSnapshot } from '../../analyzer/signatureCensus';
+import { contrastRatio } from '../../color/contrast';
 import { isOpaque, parseCssColor, toHex, type HexColor } from '../../color/parseColor';
+import type { PaletteTheme } from '../../themes';
 import {
   buildColorMapping,
   extractSitePalette,
   mappingKeyOf,
+  themeTokenHex,
   type ColorMapping,
   type SitePaletteEntry,
 } from '../colorMap';
@@ -12,6 +15,7 @@ import { coverageFromCounts } from '../coverage';
 import { planStrategies } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
+import { compareStrings } from '../sort';
 import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
 
 // A census color only ever becomes a declaration once its value has parsed
@@ -54,7 +58,7 @@ export const computedFallback: PaletteEngine = {
     });
     const { mapping: guardedMapping } = guardContrast(mapping, palette, theme);
 
-    const groups = buildSelectorGroups(novelDeclarations, guardedMapping);
+    const groups = buildSelectorGroups(novelDeclarations, guardedMapping, theme);
     const css = emitGroupedRules(groups);
     const mappedCount = mappedHexCount(palette, guardedMapping);
     // Coverage's denominator must stay disjoint from authoredRemap's own
@@ -187,6 +191,12 @@ function buildSyntheticFacts(authoredRules: NovelDeclaration[]): PageFacts {
   };
 }
 
+type ResolvedNovelDeclaration = {
+  declaration: NovelDeclaration;
+  mappedValue: string;
+  isSelectorHint: false;
+};
+
 // Groups by selector in first-appearance (census entry) order. Census
 // selectors are exact — signatureToSelector derives them from the element's
 // own tag/classes (or its refined parent-prefixed form), never a fabricated
@@ -195,9 +205,9 @@ function buildSyntheticFacts(authoredRules: NovelDeclaration[]): PageFacts {
 function buildSelectorGroups(
   declarations: readonly NovelDeclaration[],
   mapping: ColorMapping,
+  theme: PaletteTheme,
 ): SelectorGroup[] {
-  const resolved: { declaration: NovelDeclaration; mappedValue: string; isSelectorHint: false }[] =
-    [];
+  const resolved: ResolvedNovelDeclaration[] = [];
 
   for (const declaration of declarations) {
     const key = mappingKeyOf({
@@ -209,5 +219,58 @@ function buildSelectorGroups(
       resolved.push({ declaration, mappedValue, isSelectorHint: false });
   }
 
-  return groupSelectors(resolved);
+  return groupSelectors(applyPairedTextGuard(resolved, theme));
+}
+
+// guardContrast (contrastGuard.ts) already repairs each text-bucket mapping
+// against an approximation of "the" page background (its heaviest
+// background-bucket entry) — a reasonable global default, but a signature's
+// OWN background can be a different, more saturated surface than that
+// approximation (an accent-colored pill, a badge), and the global repair
+// never sees that pairing. This is the per-selector second pass: when the
+// SAME census entry resolved both a background-bucket and a text-bucket
+// mapped value, replace the text mapping with pairedTextOverride's result
+// whenever the pair itself fails 4.5:1. Border declarations are untouched —
+// only 'text' entries are ever replaced. Pure: returns a new array, never
+// mutates `resolved`.
+function applyPairedTextGuard(
+  resolved: readonly ResolvedNovelDeclaration[],
+  theme: PaletteTheme,
+): ResolvedNovelDeclaration[] {
+  const mappedBackgroundBySelector = new Map<string, string>();
+  for (const entry of resolved) {
+    if (entry.declaration.bucket === 'background')
+      mappedBackgroundBySelector.set(entry.declaration.selector, entry.mappedValue);
+  }
+
+  return resolved.map((entry) => {
+    if (entry.declaration.bucket !== 'text') return entry;
+    const mappedBackground = mappedBackgroundBySelector.get(entry.declaration.selector);
+    if (mappedBackground === undefined) return entry;
+
+    const override = pairedTextOverride(entry.mappedValue, mappedBackground, theme);
+    return override === null ? entry : { ...entry, mappedValue: override };
+  });
+}
+
+// null when the pair already clears 4.5:1, or when contrastRatio can't parse
+// it (leave untouched — same "no ratio, no repair" contract as
+// guardContrast's own text repair). Otherwise the higher-contrast of the
+// theme's canvas/text tokens against `mappedBackground` wins; an exact tie
+// breaks deterministically on compareStrings of the two candidate hexes.
+function pairedTextOverride(
+  mappedText: string,
+  mappedBackground: string,
+  theme: PaletteTheme,
+): string | null {
+  const ratio = contrastRatio(mappedText, mappedBackground);
+  if (ratio === null || ratio >= 4.5) return null;
+
+  const canvasHex = themeTokenHex(theme, 'canvas');
+  const textHex = themeTokenHex(theme, 'text');
+  const canvasRatio = contrastRatio(canvasHex, mappedBackground) ?? 0;
+  const textRatio = contrastRatio(textHex, mappedBackground) ?? 0;
+
+  if (canvasRatio !== textRatio) return canvasRatio > textRatio ? canvasHex : textHex;
+  return compareStrings(canvasHex, textHex) < 0 ? canvasHex : textHex;
 }
