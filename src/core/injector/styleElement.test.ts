@@ -173,10 +173,14 @@ describe('apply(apply(page)) idempotency invariant', () => {
   // two elevations (elevationOf: `.card`'s ancestor `.ground` has an opaque
   // background, `.ground` itself does not) — the composite hex@elevation
   // mapping key must route them to different surface tokens. `.pill` pairs a
-  // saturated background with a near-white text color that fails 4.5:1
-  // against it pre-remap — the per-selector paired guard (carried over from
-  // Task 4's review as a gap in the invariant double-run) must fire and
-  // leave the emitted pair readable.
+  // saturated green background with near-white text — the RAW site pair is
+  // perfectly readable (~5.22:1). Remapping is what breaks it: the raw
+  // background maps to the theme's accent-ish `success` token (`#a6d189`)
+  // while the plain text-bucket mapping stays the theme's global `text`
+  // token (`#c6d0f5`), and THAT mapped pair fails at ~1.135:1. The
+  // per-selector paired guard (carried over from Task 4's review as a gap in
+  // the invariant double-run) must fire and restore >=4.5:1 for the emitted
+  // pair.
   function renderComputedFallbackFixturePage(): void {
     document.head.innerHTML = `
       <style>
@@ -280,11 +284,14 @@ describe('apply(apply(page)) idempotency invariant', () => {
     expect(cardBg).toBeDefined();
     expect(groundBg).not.toBe(cardBg);
 
-    // Paired-override guard: .pill's saturated background + near-white text
-    // fails 4.5:1 before remap; the per-selector guard must fire through the
-    // full pipeline and the repaired pair must stay readable across the
-    // double run (the fired-override path Task 4's review flagged as
-    // untested by any invariant double-run).
+    // Paired-override guard: .pill's raw site pair is readable (~5.22:1) —
+    // remapping is what breaks it: the raw background maps to the theme's
+    // accent-ish `success` token while the plain text-bucket mapping stays
+    // the theme's global `text` token, and that mapped pair fails at
+    // ~1.135:1. The per-selector guard must fire through the full pipeline
+    // and restore >=4.5:1 for the emitted pair, across the double run (the
+    // fired-override path Task 4's review flagged as untested by any
+    // invariant double-run).
     const pillBlock = /:where\(span\.pill\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
     const pillBg = /background-color: (#\w{6})/.exec(pillBlock)?.[1];
     const pillText = /(?<!background-)color: (#\w{6})/.exec(pillBlock)?.[1];
