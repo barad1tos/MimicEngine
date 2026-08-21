@@ -241,6 +241,26 @@ export function createPageThemeController(): PageThemeController {
     );
   };
 
+  // Creates a fresh census, walks its synchronous first chunk, installs it
+  // for computedFallback.produce() to read, and schedules the remaining
+  // idle-time chunks if the walk didn't finish synchronously. Called once
+  // from start(), and again — lazily — from apply()'s enabled branch
+  // whenever census is null: a site disabled mid-session tears the census
+  // down entirely (see the disabled branch below), so re-enabling it later
+  // in the same page lifetime must get a fresh walk here rather than
+  // computedFallback reading a permanently empty census until the next full
+  // page load. Bumping censusGeneration (defense in depth, mirroring
+  // stop()'s bump) invalidates any idle chunk a previous bootstrap on this
+  // same instance might still have pending — harmless when there isn't one.
+  const bootstrapCensus = (): void => {
+    censusGeneration += 1;
+    census = createSignatureCensus();
+    census.begin(document);
+    const firstChunkComplete = census.advance(CENSUS_FIRST_CHUNK);
+    installCensus(census);
+    if (!firstChunkComplete) scheduleCensusChunk();
+  };
+
   // Routes newly added elements through the census so it keeps learning
   // after its initial traversal (SPA-style DOM churn, lazy-rendered content).
   // Deliberately separate from domObserver/observeDomChanges: that observer
@@ -386,6 +406,18 @@ export function createPageThemeController(): PageThemeController {
       return;
     }
 
+    // A site re-enabled mid-session (via a settings change) after the
+    // disabled branch above tore its census down finds census null here —
+    // bootstrap a fresh one before composing so computedFallback sees real
+    // samples again in this same apply(), rather than reading a permanently
+    // empty census until the next full page load. The `!stopped` check is
+    // defense in depth: the generation guard just above already means
+    // stop() cannot have run since this apply() call's own generation was
+    // assigned, but this keeps the guard's contract explicit even if that
+    // changes later. Guarded by `!census` so an already-bootstrapped census
+    // (the common case) is never recreated.
+    if (!census && !stopped) bootstrapCensus();
+
     const theme = resolveTheme(siteSettings.themeId, importedThemes);
     const facts = collectPageFacts(document);
     const metrics = deriveMetrics(facts, { mutationRate });
@@ -445,20 +477,13 @@ export function createPageThemeController(): PageThemeController {
 
   return {
     async start() {
-      // Synchronous setup, before the initial apply(): begin the census and
-      // advance its first chunk synchronously so that first apply()'s
-      // computedFallback.produce() (reading installedCensus()) already sees
-      // real samples, not an empty snapshot. The census mutation observer
-      // starts here too, before any await, so no page mutation during the
-      // settings read below can slip past it. Bumping censusGeneration here
-      // (defense in depth, mirroring stop()'s bump) invalidates any idle
-      // chunk a previous start() on this same instance might still have
-      // pending.
-      censusGeneration += 1;
-      census = createSignatureCensus();
-      census.begin(document);
-      const firstChunkComplete = census.advance(CENSUS_FIRST_CHUNK);
-      installCensus(census);
+      // Synchronous setup, before the initial apply(): bootstrap the census
+      // (begin + its synchronous first chunk + install) so that first
+      // apply()'s computedFallback.produce() (reading installedCensus())
+      // already sees real samples, not an empty snapshot. The census
+      // mutation observer starts here too, before any await, so no page
+      // mutation during the settings read below can slip past it.
+      bootstrapCensus();
       censusObserver = observeCensusMutations();
 
       // A throwing initial apply() must not stop start() itself from
@@ -475,8 +500,7 @@ export function createPageThemeController(): PageThemeController {
       // generation guard already aborts that apply()'s own side effects, but
       // without this check start() would still register the
       // settings-changed listener afterward, leaking it on an
-      // already-stopped controller. The same guard covers scheduling the
-      // first census idle chunk below.
+      // already-stopped controller.
       if (stopped) return;
       stopSettingsListener = onSettingsChanged(() => {
         capTripped = false;
@@ -487,7 +511,6 @@ export function createPageThemeController(): PageThemeController {
           console.error('[Palette Mimicry] apply failed', error);
         });
       });
-      if (!firstChunkComplete) scheduleCensusChunk();
     },
 
     stop() {
