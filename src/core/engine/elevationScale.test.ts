@@ -328,10 +328,14 @@ describe('resolveElevationStep', () => {
   });
 
   it('re-derives the ceiling step for all three built-in themes under depth softening (Amendment 3.4)', () => {
-    // Softening later rungs (0.7x / 0.5x of the base step) only ever makes
-    // the constraint walk MORE permissive than the old undamped multiply --
-    // it can never shrink a theme's resolved step below what Amendment 3.2
-    // already achieved. All three built-in themes hold the full ceiling.
+    // Softening later rungs (0.7x / 0.5x of the base step) empirically holds
+    // the full ceiling step for all three built-in themes here -- it is not
+    // a proven general guarantee that no theme's resolved step can ever
+    // shrink under the decayed formula. What IS guaranteed is emission/
+    // constraint self-consistency: resolveElevationStep's walk and
+    // elevationBackgroundHex's emission both read the same decayed, capped
+    // rung through the single cumulativeElevationShift source, so the two
+    // can never drift apart from each other.
     expect(resolveElevationStep(darkTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5); // catppuccin-frappe
     expect(resolveElevationStep(everforestDarkTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
     expect(resolveElevationStep(ayuMirageTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
