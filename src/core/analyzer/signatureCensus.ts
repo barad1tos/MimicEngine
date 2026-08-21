@@ -56,6 +56,21 @@ type SignatureRecord = {
   // (an active vs. inactive filter pill) collapse onto whichever
   // representative happened to be opaque, flakily across loads (K-rep order).
   properties: Map<string, PropertySlot>;
+  // cssProperty names refineDivergentSignatures() has DROPPED for THIS
+  // record (Codex census, PR #18 — resurrection fix): deleting a slot from
+  // `properties` alone erases only the current sample, not the fact that a
+  // conflict was ever seen. Without a tombstone, a record still under the
+  // K=3 cap (or an already-`refined` record: refinement never revisits it,
+  // so nothing else would ever re-detect the conflict) that gains one more
+  // representative via ingestAddedElements would recreate a fresh,
+  // single-value slot — silently resurrecting the exact painted-wrong-color
+  // bug the drop existed to prevent. `sampleInto` checks this set and
+  // refuses to record into a tombstoned property at all, so a dropped
+  // property can never come back for this record's lifetime. Named
+  // `tombstonedProperties` (not `droppedProperties`, matching Codex's
+  // report) specifically so it never collides with the census-level
+  // `droppedProperties` COUNT this module already tracks.
+  tombstonedProperties: Set<string>;
 };
 
 type PropertySlot = {
@@ -166,6 +181,11 @@ export function createSignatureCensus(): SignatureCensus {
     let sampledNewValue = false;
 
     for (const declaration of sampledDeclarationsFor(style)) {
+      // A tombstoned property never gets a slot again for this record — no
+      // recreation, no flag churn, no risk of a later representative
+      // resurrecting a conflict this record already retreated from honestly.
+      if (record.tombstonedProperties.has(declaration.cssProperty)) continue;
+
       if (declaration.bucket === 'background' && isTransparentValue(declaration.value)) {
         if (recordTransparentBackground(record, declaration.cssProperty)) sampledNewValue = true;
         continue;
@@ -198,6 +218,7 @@ export function createSignatureCensus(): SignatureCensus {
       representativeCount: 0,
       refined: isRefinedAway,
       properties: new Map(),
+      tombstonedProperties: new Set(),
     };
     records.set(signature, record);
     sampleInto(record, element);
@@ -218,6 +239,68 @@ export function createSignatureCensus(): SignatureCensus {
   // first-wins instead, since an approximate stacking depth is still useful
   // signal, unlike a wrong color or a guessed-opaque transparent element.
   // Refined records are never refined again (depth cap).
+  // A signature is divergent when its representatives disagree on any
+  // property's VALUE, on its ELEVATION (background slots only), or MIXED an
+  // opaque background with an explicitly transparent one (Amendment 3.3).
+  const isDivergentSlot = (slot: PropertySlot): boolean =>
+    slot.values.size > 1 ||
+    slot.elevations.size > 1 ||
+    (slot.hasOpaqueValue && slot.hasTransparentRepresentative);
+
+  // The narrower subset of `isDivergentSlot` that actually DROPS a property
+  // (see dropDivergentProperties): elevation-only disagreement is excluded
+  // on purpose — it degrades to first-wins (see firstElevation below), not a
+  // drop. Any slot this returns true for was necessarily already caught by
+  // isDivergentSlot in an earlier pass, so a raw (non-refined) record can
+  // never reach this check without having gone through refineSignature
+  // first — see the resurrection-guard trace in the type comment above.
+  const isDropWorthySlot = (slot: PropertySlot): boolean =>
+    slot.values.size > 1 || (slot.hasOpaqueValue && slot.hasTransparentRepresentative);
+
+  // Re-keys one divergent raw signature by one level of parent context and
+  // re-samples occurrences fresh via a new DOM query — no element
+  // references are ever retained, and the resulting refined record(s)
+  // inherit NOTHING from the raw record (own empty `properties` and
+  // `tombstonedProperties`; see the type comment above).
+  const refineSignature = (signature: string): void => {
+    records.delete(signature);
+    refinedAway.add(signature);
+    const occurrences = findOccurrences(signature);
+    withStylesheetDisabled(() => {
+      for (const element of occurrences) {
+        const refinedKey = computeRefinedSignature(element);
+        const refinedRecord = records.get(refinedKey) ?? {
+          representativeCount: 0,
+          refined: true,
+          properties: new Map(),
+          tombstonedProperties: new Set(),
+        };
+        records.set(refinedKey, refinedRecord);
+        if (refinedRecord.representativeCount < REPRESENTATIVES_PER_SIGNATURE) {
+          sampleInto(refinedRecord, element);
+        }
+      }
+    });
+  };
+
+  // Deletes and tombstones every still drop-worthy property on `record` —
+  // an honest retreat, never a guessed-opaque paint. Tombstoning happens
+  // before counting so a re-encounter of an already-tombstoned property
+  // (impossible today: sampleInto refuses to ever recreate a tombstoned
+  // slot) can never double-count the census-level `droppedProperties` stat.
+  const dropDivergentProperties = (record: SignatureRecord): void => {
+    for (const [cssProperty, slot] of record.properties) {
+      if (!isDropWorthySlot(slot)) continue;
+      record.properties.delete(cssProperty);
+      if (record.tombstonedProperties.has(cssProperty)) continue;
+      record.tombstonedProperties.add(cssProperty);
+      droppedProperties += 1;
+    }
+  };
+
+  // Depth-1 refinement, run once per census at traversal completion (and
+  // after each ingestAddedElements batch that learned something). Refined
+  // records are never refined again (depth cap).
   const refineDivergentSignatures = (): void => {
     // Iterates the Map live (not a snapshot copy): deleting the entry the
     // loop is currently on is spec-defined-safe for Map iteration, and any
@@ -226,47 +309,12 @@ export function createSignatureCensus(): SignatureCensus {
     // live iteration never re-processes what it just created.
     for (const [signature, record] of records) {
       if (record.refined) continue;
-      const divergent = [...record.properties.values()].some(
-        (slot) =>
-          slot.values.size > 1 ||
-          slot.elevations.size > 1 ||
-          (slot.hasOpaqueValue && slot.hasTransparentRepresentative),
-      );
-      if (!divergent) continue;
-
-      records.delete(signature);
-      refinedAway.add(signature);
-      const occurrences = findOccurrences(signature);
-      withStylesheetDisabled(() => {
-        for (const element of occurrences) {
-          const refinedKey = computeRefinedSignature(element);
-          const refinedRecord = records.get(refinedKey) ?? {
-            representativeCount: 0,
-            refined: true,
-            properties: new Map(),
-          };
-          records.set(refinedKey, refinedRecord);
-          if (refinedRecord.representativeCount < REPRESENTATIVES_PER_SIGNATURE) {
-            sampleInto(refinedRecord, element);
-          }
-        }
-      });
+      const divergent = [...record.properties.values()].some(isDivergentSlot);
+      if (divergent) refineSignature(signature);
     }
 
     for (const record of records.values()) {
-      for (const [cssProperty, slot] of record.properties) {
-        // Value mismatch drops for any bucket; a background slot still
-        // mixing an opaque representative with a transparent one after
-        // refinement drops too (Amendment 3.3) — an honest retreat, never a
-        // guessed-opaque paint. Elevation-only disagreement is excluded here
-        // on purpose: it degrades to first-wins (see firstElevation below),
-        // not a drop.
-        const stillMixedTransparency = slot.hasOpaqueValue && slot.hasTransparentRepresentative;
-        if (slot.values.size > 1 || stillMixedTransparency) {
-          record.properties.delete(cssProperty);
-          droppedProperties += 1;
-        }
-      }
+      dropDivergentProperties(record);
     }
   };
 
