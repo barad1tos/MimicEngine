@@ -1,6 +1,7 @@
 import { hueDistance, rgbaToOklch, type Oklch } from '../color/oklch';
 import { isOpaque, parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import type { PaletteTheme, ThemeTokenName } from '../themes';
+import { ELEVATION_LEVELS, elevationBackgroundHex } from './elevationScale';
 import type { AuthoredColorDeclaration, PageFacts } from './pageFacts';
 import { compareStrings } from './sort';
 
@@ -52,7 +53,6 @@ export function themeTokenHex(theme: PaletteTheme, token: ThemeTokenName): HexCo
 type PaletteBucket = AuthoredColorDeclaration['bucket'];
 
 const BUCKET_PRIORITY: readonly PaletteBucket[] = ['background', 'text', 'border', 'other'];
-const SURFACE_LADDER: readonly ThemeTokenName[] = ['canvas', 'surface1', 'surface2', 'surface3'];
 const ACCENT_TOKEN_ORDER: readonly ThemeTokenName[] = [
   'accent',
   'link',
@@ -230,51 +230,65 @@ function partitionAccents(
 
 // Background ladder
 
-function ladderTokenAt(index: number): ThemeTokenName {
-  const clamped = Math.min(index, SURFACE_LADDER.length - 1);
-  return SURFACE_LADDER[clamped] ?? 'surface3';
+const MAX_LADDER_LEVEL = ELEVATION_LEVELS - 1;
+
+function clampLadderLevel(level: number): number {
+  return Math.max(0, Math.min(level, MAX_LADDER_LEVEL));
 }
 
 type LadderResult = {
   assignments: Map<string, HexColor>;
-  // Distinct tokens actually used, in ladder order (canvas, surface1, ...).
-  assignedTokens: readonly ThemeTokenName[];
+  // Distinct elevation levels actually assigned (0..3), ascending -- feeds
+  // assignOtherBucket's nearest-lightness fallback below.
+  assignedLevels: readonly number[];
 };
 
-// Background-bucket entries sorted by elevation asc FIRST (ground before
-// raised surfaces; entries with no elevation all sit at the implicit ground
-// rung, elevation 0), then by OKLCH `l` (ascending for dark mode, descending
-// for light) within the same elevation, ties broken by hex asc, then walked
-// onto the theme ladder canvas, surface1, surface2, surface3, surface3...
-// (same rung semantics as variableRemap's surface ladder). Assigned via
-// mappingKeyOf so two entries sharing a hex at different elevations land on
-// different rungs instead of colliding.
+// Background-bucket entries split by elevation presence (Amendment 3:
+// depth is an engine-owned, theme-universal ramp, never the theme's own
+// surface1-3 tokens):
+// - A census-sourced entry (signatureCensus's elevationOf -- always set for
+//   a background-bucket sample, see toNovelDeclarations) maps DIRECTLY onto
+//   `elevationBackgroundHex(theme, min(entry.elevation, 3))`. Elevation is
+//   already an engine-recognized stacking LEVEL, not a relative ordering
+//   among this page's sampled colors -- two entries sharing an elevation
+//   collapse onto the SAME rung regardless of their raw site hex or
+//   luminance (they are the same visual surface).
+// - An entry with no elevation (authoredRemap's palette never carries one)
+//   keeps the pre-elevation index-walk: sorted by OKLCH `l` (ascending for
+//   dark mode, descending for light) among themselves, ties broken by hex
+//   asc, walked onto elevation levels 0, 1, 2, 3, 3... in order.
+// Both branches target the same derived hex space and are assigned via
+// mappingKeyOf, so a census entry's composite `hex@elevation` key never
+// collides with an elevation-less entry's plain hex key.
 function assignLadder(entries: readonly SitePaletteEntry[], theme: PaletteTheme): LadderResult {
   const direction = theme.mode === 'dark' ? 1 : -1;
-  const withLightness = entries.map((entry) => ({ entry, l: rgbaToOklch(entry.color).l }));
+  const assignments = new Map<string, HexColor>();
+  const levelsUsed = new Set<number>();
 
+  const withElevation = entries.filter((entry) => entry.elevation !== undefined);
+  const withoutElevation = entries.filter((entry) => entry.elevation === undefined);
+
+  for (const entry of withElevation) {
+    const level = clampLadderLevel(entry.elevation ?? 0);
+    assignments.set(mappingKeyOf(entry), elevationBackgroundHex(theme, level));
+    levelsUsed.add(level);
+  }
+
+  const withLightness = withoutElevation.map((entry) => ({ entry, l: rgbaToOklch(entry.color).l }));
   withLightness.sort((a, b) => {
-    const deltaElevation = (a.entry.elevation ?? 0) - (b.entry.elevation ?? 0);
-    if (deltaElevation !== 0) return deltaElevation;
     const deltaL = (a.l - b.l) * direction;
     if (deltaL !== 0) return deltaL;
     return compareStrings(a.entry.hex, b.entry.hex);
   });
 
-  const assignments = new Map<string, HexColor>();
-  const assignedTokens: ThemeTokenName[] = [];
-  const seenTokens = new Set<ThemeTokenName>();
-
   withLightness.forEach(({ entry }, index) => {
-    const token = ladderTokenAt(index);
-    assignments.set(mappingKeyOf(entry), themeTokenHex(theme, token));
-    if (!seenTokens.has(token)) {
-      seenTokens.add(token);
-      assignedTokens.push(token);
-    }
+    const level = clampLadderLevel(index);
+    assignments.set(mappingKeyOf(entry), elevationBackgroundHex(theme, level));
+    levelsUsed.add(level);
   });
 
-  return { assignments, assignedTokens };
+  const assignedLevels = [...levelsUsed].sort((a, b) => a - b);
+  return { assignments, assignedLevels };
 }
 
 // Text, border, and other buckets
@@ -308,21 +322,35 @@ function assignBorderBucket(
 }
 
 function nearestByLightness(
-  candidates: readonly { token: ThemeTokenName; l: number }[],
+  candidates: readonly { level: number; l: number }[],
   targetL: number,
-): ThemeTokenName {
-  const initial = { token: 'surface1' as ThemeTokenName, l: Number.POSITIVE_INFINITY };
+): number {
+  const initial = { level: 0, l: Number.POSITIVE_INFINITY };
   return candidates.reduce(
     (best, candidate) =>
       Math.abs(candidate.l - targetL) < Math.abs(best.l - targetL) ? candidate : best,
     initial,
-  ).token;
+  ).level;
 }
 
-// 'other'-bucket low-chroma entries map to the nearest of the tokens already
-// assigned in the background ladder, by absolute `l` distance (ties -> the
-// earlier ladder position). If the ladder assigned nothing (no background
-// entries), 'other' falls back to surface1.
+// The OKLCH lightness of one elevation level's derived background, for
+// nearest-lightness comparison in assignOtherBucket below. elevationBackgroundHex
+// always returns a parseable hex (it round-trips through toHex itself), so a
+// parse failure here means a corrupted HexColor reached this function.
+function elevationLightnessAt(theme: PaletteTheme, level: number): number {
+  const hexValue = elevationBackgroundHex(theme, level);
+  const color = parseCssColor(hexValue);
+  if (!color) {
+    throw new Error(`invalid derived elevation color for level ${level.toString()}: ${hexValue}`);
+  }
+  return rgbaToOklch(color).l;
+}
+
+// 'other'-bucket low-chroma entries map to the nearest elevation level
+// already assigned in the background ladder, by absolute `l` distance (ties
+// -> the earlier ladder position). If the ladder assigned nothing (no
+// background entries), 'other' falls back to the theme's own surface1 token
+// -- there is no elevation ramp to fall back to when nothing anchors it.
 function assignOtherBucket(
   entries: readonly SitePaletteEntry[],
   theme: PaletteTheme,
@@ -331,7 +359,7 @@ function assignOtherBucket(
   const assignments = new Map<HexColor, HexColor>();
   if (entries.length === 0) return assignments;
 
-  if (ladder.assignedTokens.length === 0) {
+  if (ladder.assignedLevels.length === 0) {
     const surface1Hex = themeTokenHex(theme, 'surface1');
     for (const entry of entries) {
       assignments.set(entry.hex, surface1Hex);
@@ -339,15 +367,15 @@ function assignOtherBucket(
     return assignments;
   }
 
-  const tokenLightness = ladder.assignedTokens.map((token) => ({
-    token,
-    l: themeTokenOklch(theme, token).l,
+  const levelLightness = ladder.assignedLevels.map((level) => ({
+    level,
+    l: elevationLightnessAt(theme, level),
   }));
 
   for (const entry of entries) {
     const entryL = rgbaToOklch(entry.color).l;
-    const nearest = nearestByLightness(tokenLightness, entryL);
-    assignments.set(entry.hex, themeTokenHex(theme, nearest));
+    const nearestLevel = nearestByLightness(levelLightness, entryL);
+    assignments.set(entry.hex, elevationBackgroundHex(theme, nearestLevel));
   }
 
   return assignments;

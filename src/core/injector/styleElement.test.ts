@@ -278,11 +278,18 @@ describe('apply(apply(page)) idempotency invariant', () => {
     // Elevation ladder: .ground and .card share one raw background hex but
     // .card's own box-shadow is a real surface boundary, putting them at two
     // different elevations — the full pipeline must still emit two DIFFERENT
-    // mapped surface tokens for them, proving the composite hex@elevation
-    // mapping key survives collectPageFacts -> decide -> compose end to end,
-    // not just in computedFallback.produce called directly.
-    const groundBg = /:where\(div\.ground\) \{[^}]*background-color: (#\w{6})/.exec(first.css)?.[1];
-    const cardBg = /:where\(div\.card\) \{[^}]*background-color: (#\w{6})/.exec(first.css)?.[1];
+    // `var(--pm-elevation-N)` values for them (Amendment 3: the ladder now
+    // targets the universal elevation ramp, substituted at render time —
+    // see computedFallback.ts), proving the composite hex@elevation mapping
+    // key survives collectPageFacts -> decide -> compose end to end, not
+    // just in computedFallback.produce called directly.
+    const groundBg =
+      /:where\(div\.ground\) \{[^}]*background-color: (var\(--pm-elevation-\d\))/.exec(
+        first.css,
+      )?.[1];
+    const cardBg = /:where\(div\.card\) \{[^}]*background-color: (var\(--pm-elevation-\d\))/.exec(
+      first.css,
+    )?.[1];
     expect(groundBg).toBeDefined();
     expect(cardBg).toBeDefined();
     expect(groundBg).not.toBe(cardBg);

@@ -13,6 +13,7 @@ import {
 import { guardContrast, repairTextTarget } from '../contrastGuard';
 import { coverageFromCounts } from '../coverage';
 import { planStrategies } from '../decisionTable';
+import { elevationLevelForHex, elevationVariable, shadowVariable } from '../elevationScale';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
@@ -226,7 +227,78 @@ function buildSelectorGroups(
   }
 
   const backgroundBySelector = buildBackgroundBySelector(declarations, mapping);
-  return groupSelectors(applyPairedTextGuard(resolved, backgroundBySelector, theme));
+  const guarded = applyPairedTextGuard(resolved, backgroundBySelector, theme);
+  const withElevationVariables = substituteElevationBackgrounds(guarded, theme);
+  const islandShadows = buildIslandShadowDeclarations(guarded);
+
+  return groupSelectors([...withElevationVariables, ...islandShadows]);
+}
+
+// The "render-time" substitution the elevation-ramp design calls for:
+// guardContrast and the paired-text guard above already ran their contrast
+// math against `mappedValue` while it was still a literal HEX (a `var()`
+// reference is opaque to contrast checks) — ColorMapping keeps storing real
+// hexes end to end, and only the CSS TEXT this strategy emits for a
+// background declaration switches to the matching `var(--pm-elevation-N)`
+// once its mapped hex is one of the theme's own derived elevation-ramp
+// colors (elevationLevelForHex). An accent-classified or preserved
+// background never resolves here (its mapped value, if any, is a theme
+// accent token, not a ladder rung) and is left as a literal hex, same as
+// today. Text and border values are never touched.
+function substituteElevationBackgrounds(
+  resolved: readonly ResolvedNovelDeclaration[],
+  theme: PaletteTheme,
+): ResolvedNovelDeclaration[] {
+  return resolved.map((item) => {
+    if (item.declaration.bucket !== 'background') return item;
+
+    const color = parseCssColor(item.mappedValue);
+    if (!color) return item;
+
+    const level = elevationLevelForHex(theme, toHex(color));
+    if (level === null) return item;
+
+    return { ...item, mappedValue: `var(${elevationVariable(level)})` };
+  });
+}
+
+const MIN_ISLAND_ELEVATION = 1;
+
+// One synthetic `box-shadow` declaration per selector whose OWN background
+// declaration (a) actually resolved through `mapping` — an emitted
+// background rule; a preserved/unmapped background casts no shadow — and
+// (b) carries an elevation >= 1 (the ground rung, level 0, is flat). The
+// shadow's level mirrors the background's own clamped elevation, so an
+// island and its shadow always share the same rung; shadowVariable clamps
+// internally, so the raw census elevation is passed through unclamped here.
+// Deduped by (selector, conditions): a signature has at most one background
+// declaration in practice, but this stays correct even if that changes.
+// Read from `guarded` (post paired-guard, pre elevation-substitution) —
+// only `declaration.bucket`/`elevation` are read, never `mappedValue`, so
+// ordering relative to substituteElevationBackgrounds does not matter.
+function buildIslandShadowDeclarations(
+  guarded: readonly ResolvedNovelDeclaration[],
+): ResolvedNovelDeclaration[] {
+  const seenSelectors = new Set<string>();
+  const shadows: ResolvedNovelDeclaration[] = [];
+
+  for (const { declaration } of guarded) {
+    if (declaration.bucket !== 'background') continue;
+    const { elevation } = declaration;
+    if (elevation === undefined || elevation < MIN_ISLAND_ELEVATION) continue;
+
+    const dedupeKey = `${JSON.stringify(declaration.conditions)}|${declaration.selector}`;
+    if (seenSelectors.has(dedupeKey)) continue;
+    seenSelectors.add(dedupeKey);
+
+    shadows.push({
+      declaration: { ...declaration, property: 'box-shadow' },
+      mappedValue: `var(${shadowVariable(elevation)})`,
+      isSelectorHint: false,
+    });
+  }
+
+  return shadows;
 }
 
 // A selector's paired background for the guard below: the MAPPED value when

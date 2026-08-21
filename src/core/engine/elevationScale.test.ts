@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { rgbaToOklch, type Oklch } from '../color/oklch';
+import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
 import {
   ELEVATION_LEVELS,
   ELEVATION_LIGHTNESS_STEP,
   elevationBackgroundHex,
+  elevationLevelForHex,
   elevationShadowValue,
   elevationVariable,
   shadowVariable,
@@ -146,6 +147,44 @@ describe('elevationBackgroundHex', () => {
     const lightness = oklchOf(elevationBackgroundHex(blackCanvasLight, 3)).l;
     expect(lightness).toBeGreaterThanOrEqual(0);
     expect(lightness).toBeLessThan(0.1);
+  });
+});
+
+describe('elevationLevelForHex', () => {
+  it.each([0, 1, 2, 3])('resolves the level whose ramp hex matches exactly (level %i)', (level) => {
+    const hex = elevationBackgroundHex(darkTheme, level);
+    expect(elevationLevelForHex(darkTheme, hex)).toBe(level);
+  });
+
+  it("returns null for a hex outside the theme's own elevation ramp", () => {
+    const foreignHex = toHex(requireColor('#ff00ff'));
+    expect(elevationLevelForHex(darkTheme, foreignHex)).toBeNull();
+  });
+
+  it('is theme-scoped: the same derived hex need not resolve to the same level in a different theme', () => {
+    const level2HexDark = elevationBackgroundHex(darkTheme, 2);
+    expect(elevationLevelForHex(lightTheme, level2HexDark)).not.toBe(2);
+  });
+
+  it('resolves the LOWEST level first when two (not all) levels clamp to the same hex', () => {
+    // Canvas lightness picked so level 1 (canvas + 1 step) stays under 1, but
+    // level 2 (canvas + 2 steps) and level 3 (canvas + 3 steps) both
+    // overshoot and clamp to the same value -- an adjacent-pair collision,
+    // not a collapse of every level, unlike a literal white canvas (where
+    // even level 1 already clamps).
+    const canvasLightness = 1 - 1.5 * ELEVATION_LIGHTNESS_STEP;
+    const nearClampTheme = withCanvas(
+      darkTheme,
+      toHex(oklchToRgba({ l: canvasLightness, c: 0, h: 0 })),
+    );
+
+    const level1Hex = elevationBackgroundHex(nearClampTheme, 1);
+    const level2Hex = elevationBackgroundHex(nearClampTheme, 2);
+    const level3Hex = elevationBackgroundHex(nearClampTheme, 3);
+
+    expect(level2Hex).toBe(level3Hex);
+    expect(level1Hex).not.toBe(level2Hex);
+    expect(elevationLevelForHex(nearClampTheme, level2Hex)).toBe(2);
   });
 });
 
