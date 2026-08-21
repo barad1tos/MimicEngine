@@ -111,6 +111,51 @@ describe('computedFallback strategy', () => {
     expect(css).toBe('');
   });
 
+  it('does not fall back to sampling the live DOM when no census is installed (styled fixture)', () => {
+    // Unlike the test above, this fixture IS styled — an unstyled fixture
+    // can't tell "no census installed" apart from "produce silently walked
+    // the live DOM instead", because happy-dom's computed styles are empty
+    // either way. A styled fixture makes the two paths observably different:
+    // if produce ever fell back to a fresh DOM walk when installedCensus()
+    // is null, this would emit a rule for .hero. It must not — no census
+    // installed means no coverage, period.
+    document.head.innerHTML = '<style>.hero { color: rgb(20, 30, 40); }</style>';
+    document.body.innerHTML = '<p class="hero">text</p>';
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).toBe('');
+  });
+
+  it('reads the installed snapshot, not the live DOM, after the DOM has since mutated', () => {
+    // Census the DOM in state A (one styled element), install it, then
+    // mutate the DOM to add a second, differently-colored styled element
+    // WITHOUT re-censusing (no ingestAddedElements call). produce must keep
+    // emitting from the snapshot it was handed, not re-derive coverage from
+    // whatever the live document looks like by the time it runs.
+    document.head.innerHTML = '<style>.hero { color: rgb(20, 30, 40); }</style>';
+    document.body.innerHTML = '<p class="hero">text</p>';
+    censusFromCurrentDom();
+
+    document.head.innerHTML += '<style>.late { color: rgb(90, 100, 110); }</style>';
+    document.body.innerHTML += '<div class="late">late text</div>';
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).toContain(':where(p.hero)');
+    expect(css).not.toContain('.late');
+  });
+
   it('returns an empty string when the installed census is empty', () => {
     censusFromCurrentDom();
 
@@ -261,7 +306,7 @@ describe('computedFallback strategy', () => {
   });
 
   it('coverage denominator counts census-seen colors, not just mapped ones', () => {
-    // .a maps; .b diverges (dropped) — discovered must still count b's colors.
+    // .a maps; .c diverges (dropped) — discovered must still count c's colors.
     document.head.innerHTML = `
       <style>
         .a { color: rgb(20, 30, 40); }
