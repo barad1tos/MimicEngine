@@ -26,6 +26,24 @@ type ChangeListener = (changes: Record<string, unknown>, areaName: string) => vo
 
 const MAX_REAPPLIES_PER_MINUTE = 12;
 
+// happy-dom's layout engine always reports zero-size rects, which makes the
+// census' visibility filter (isProbablyVisible) reject every element by
+// default — fine for tests that only assert traversal completion/counts,
+// but a test asserting on *sampled* content (e.g. whether an addition taught
+// the census something new) needs elements to read as laid-out, same as
+// signatureCensus.test.ts's own fixture stub.
+const VISIBLE_RECT = {
+  x: 0,
+  y: 0,
+  width: 100,
+  height: 20,
+  top: 0,
+  left: 0,
+  right: 100,
+  bottom: 20,
+  toJSON: () => ({}),
+} as DOMRect;
+
 // The real observer (MutationObserver + 250ms debounce, wired up in
 // `observeDomChanges`) is exercised by the T12 real-browser smoke, not here.
 // This seam swap replaces it with a captured callback the test can invoke
@@ -756,5 +774,88 @@ describe('createPageThemeController — census lifecycle', () => {
 
     expect(installedCensus()).toBeNull();
     expect(injectSpy.mock.calls).toHaveLength(injectCountAtStop);
+  });
+
+  it('an intervening mutation-driven apply() does not strand the census walk', async () => {
+    // Sync chunk (800) + two idle chunks (1000 each) reach the end of a
+    // ~2500-element document. Regression for a bug where scheduleCensusChunk
+    // captured applyGeneration — bumped by every apply(), including the
+    // census's own debounced reapply — so an unrelated apply() firing
+    // between two idle chunks made the next chunk's generation check fail
+    // and the walk stranded forever (reproduced: stuck at ~801 elements,
+    // complete permanently false).
+    document.body.innerHTML = bigFixture(2500);
+    const controller = createPageThemeController();
+
+    await controller.start();
+    expect(installedCensus()?.snapshot().complete).toBe(false);
+
+    // A page mutation fires the (mocked) live observer's callback before the
+    // first scheduled idle timeout runs — this apply() bumps applyGeneration
+    // but must have no bearing on the census's own idle-chunk loop.
+    fireLatestObserverCallback();
+
+    await vi.runAllTimersAsync(); // drains every idle chunk + census debounce
+
+    const snapshot = installedCensus()?.snapshot();
+    expect(snapshot?.complete).toBe(true);
+    expect(snapshot?.elementsVisited).toBeGreaterThanOrEqual(2500);
+
+    controller.stop();
+  });
+
+  it('a real DOM mutation observed only by the census observer does not bypass a tripped mutation cap', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    // Trip the cap through the mocked live-observer path (matches the
+    // "mutation cap gating" describe block's own firing pattern).
+    for (let firing = 1; firing <= MAX_REAPPLIES_PER_MINUTE + 1; firing++) {
+      fireLatestObserverCallback();
+    }
+    await flushMicrotasks();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    const injectCountAtCap = injectSpy.mock.calls.length;
+
+    // observeDomChanges is entirely mocked in this file (no real
+    // MutationObserver behind the mocked domObserver) — a genuine DOM
+    // mutation is seen only by the controller's own real censusObserver.
+    // Regression: that observer used to ingest and schedule a reapply
+    // unconditionally, bypassing capTripped entirely.
+    document.body.append(document.createElement('span'));
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    expect(injectSpy.mock.calls).toHaveLength(injectCountAtCap);
+    expect(warnSpy).toHaveBeenCalledTimes(1); // no additional cap warning
+
+    controller.stop();
+  });
+
+  it('ingesting an addition that teaches the census nothing schedules no census reapply', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    // Five identical elements exceed REPRESENTATIVES_PER_SIGNATURE (3)
+    // during the initial synchronous traversal, so this signature is
+    // already fully sampled — a later addition of the exact same signature
+    // teaches ingestAddedElements nothing new.
+    document.body.innerHTML = '<span class="steady">a</span>'.repeat(5);
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const injectCountAfterInitialApply = injectSpy.mock.calls.length;
+
+    const addition = document.createElement('span');
+    addition.className = 'steady';
+    document.body.append(addition);
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    expect(injectSpy.mock.calls).toHaveLength(injectCountAfterInitialApply);
+
+    controller.stop();
   });
 });

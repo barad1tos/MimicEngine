@@ -150,6 +150,15 @@ export function createPageThemeController(): PageThemeController {
   // computedFallback.produce at apply() time) mirrors this exactly: installed
   // on start(), cleared on stop() — never left dangling for a dead instance.
   let census: SignatureCensus | null = null;
+  // Dedicated cancellation token for the census idle-chunk loop — deliberately
+  // separate from applyGeneration. Every apply() (including the census's own
+  // 250ms debounced re-apply) bumps applyGeneration; piggybacking the chunk
+  // loop on it meant the loop could self-strand after its own reapply fired
+  // before the next idle callback (reproduced: a 2500-element walk stopping
+  // dead at ~801 elements, complete forever false). Only stop() and a fresh
+  // start() bump censusGeneration, so ordinary apply() activity is entirely
+  // irrelevant to whether the walk continues.
+  let censusGeneration = 0;
   // Handle for the next scheduleCensusChunk() idle callback, so stop() can
   // cancel it — a stale idle callback from a previous generation must never
   // resume census work after teardown.
@@ -193,17 +202,20 @@ export function createPageThemeController(): PageThemeController {
   };
 
   // Drives the census to completion one idle-time chunk at a time. The
-  // generation captured here is checked when the idle callback actually
-  // fires: stop() bumps applyGeneration as its very first action, so a chunk
-  // whose idle callback lands after stop() sees a mismatched generation and
-  // aborts instead of resuming census work on a torn-down controller.
+  // censusGeneration captured here (not applyGeneration — see its
+  // declaration above) is checked when the idle callback actually fires:
+  // stop() bumps censusGeneration as part of its census teardown, so a chunk
+  // whose idle callback lands after stop() sees a mismatch and aborts
+  // instead of resuming census work on a torn-down controller. Ordinary
+  // apply() traffic never touches censusGeneration, so it never interrupts
+  // the walk.
   const scheduleCensusChunk = (): void => {
     if (!census) return;
-    const generation = applyGeneration;
+    const generation = censusGeneration;
     censusIdleHandle = scheduleIdleWork(
       () => {
         censusIdleHandle = null;
-        if (generation !== applyGeneration || !census) return;
+        if (generation !== censusGeneration || !census) return;
         const done = census.advance(CENSUS_IDLE_CHUNK);
         scheduleCensusReapply();
         if (!done) scheduleCensusChunk();
@@ -222,15 +234,19 @@ export function createPageThemeController(): PageThemeController {
   // passed through here.
   const observeCensusMutations = (): MutationObserver => {
     const observer = new MutationObserver((records) => {
-      if (!census) return;
+      // The mutation cap means "go quiet": no ingest walk and no reapply
+      // while capTripped — mirroring ensureDomObserver's own cap gate, this
+      // observer must not become a side channel that keeps recomposing
+      // during a storm the cap already decided to silence. A settings
+      // change clears capTripped and triggers a fresh apply(), which
+      // naturally covers whatever arrived during the pause.
+      if (!census || capTripped) return;
       const addedElements = addedElementsFrom(records);
       if (addedElements.length === 0) return;
-      // The return value only says whether this batch taught the census
-      // something new — recompose is scheduled unconditionally on any batch
-      // of added elements so page structure changes never get silently
-      // ignored even when it wasn't the color mapping that advanced.
-      census.ingestAddedElements(addedElements);
-      scheduleCensusReapply();
+      const learned = census.ingestAddedElements(addedElements);
+      // Only recompose when this batch actually taught the census something
+      // new — an ingest that learned nothing must not trigger a recompute.
+      if (learned) scheduleCensusReapply();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
     return observer;
@@ -387,7 +403,11 @@ export function createPageThemeController(): PageThemeController {
       // computedFallback.produce() (reading installedCensus()) already sees
       // real samples, not an empty snapshot. The census mutation observer
       // starts here too, before any await, so no page mutation during the
-      // settings read below can slip past it.
+      // settings read below can slip past it. Bumping censusGeneration here
+      // (defense in depth, mirroring stop()'s bump) invalidates any idle
+      // chunk a previous start() on this same instance might still have
+      // pending.
+      censusGeneration += 1;
       census = createSignatureCensus();
       census.begin(document);
       const firstChunkComplete = census.advance(CENSUS_FIRST_CHUNK);
@@ -428,10 +448,12 @@ export function createPageThemeController(): PageThemeController {
       // read) before tearing anything else down — its post-await generation
       // re-check then fails and it aborts before re-injecting the
       // stylesheet, re-setting data-pm-active, or re-syncing shadow styles.
-      // A pending census idle callback relies on the same bump: its own
-      // generation check (in scheduleCensusChunk) fails right after this,
-      // so no chunk survives stop().
       applyGeneration += 1;
+      // Separate token for the census idle-chunk loop (see its declaration
+      // above): a pending chunk's own censusGeneration check fails right
+      // after this bump, so no chunk survives stop() even though ordinary
+      // apply() traffic never touches this counter.
+      censusGeneration += 1;
       // Set before start() can observe it — see the LISTENER-AFTER-STOP note
       // on start() above.
       stopped = true;
