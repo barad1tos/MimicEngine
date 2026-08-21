@@ -37,12 +37,20 @@ export type SignatureCensus = {
 type SignatureRecord = {
   representativeCount: number;
   refined: boolean;
-  // cssProperty -> { bucket, values seen across representatives }. `elevation`
-  // is only ever set on the background slot, and only from the FIRST
-  // representative that lands one — later representatives never overwrite it.
+  // cssProperty -> { bucket, values AND elevations seen across
+  // representatives }. `elevations` is only ever populated on the
+  // background slot (elevationOf is meaningless for text/border) and, like
+  // `values`, is insertion-ordered — its first entry is the FIRST elevation
+  // any representative landed for this property, the "first-wins" value
+  // snapshot() exposes as the property's single `elevation`. Two
+  // representatives disagreeing on elevation (same background hex, but one
+  // sits deeper in an opaque-ancestor stack than the other — see C-3) is
+  // divergence exactly like disagreeing on `values`: refineDivergentSignatures
+  // re-keys by parent context so each stacking depth gets its own record
+  // instead of silently collapsing onto whichever depth was sampled first.
   properties: Map<
     string,
-    { bucket: CensusColor['bucket']; values: Set<string>; elevation?: number }
+    { bucket: CensusColor['bucket']; values: Set<string>; elevations: Set<number> }
   >;
 };
 
@@ -89,21 +97,28 @@ export function createSignatureCensus(): SignatureCensus {
       if (!isRelevantValue(declaration.value)) continue;
       trackOpaque(declaration.value);
       const existingSlot = record.properties.get(declaration.cssProperty);
-      // Elevation is expensive (walks the ancestor chain) and only meaningful
-      // on the FIRST representative to land this property, so it's computed
-      // lazily, right here, and only for a background declaration that just
-      // survived the relevance filter above.
-      if (!existingSlot && declaration.bucket === 'background') {
-        declaration.elevation = elevationOf(element);
-      }
       const slot = existingSlot ?? {
         bucket: declaration.bucket,
         values: new Set<string>(),
-        ...(declaration.elevation === undefined ? {} : { elevation: declaration.elevation }),
+        elevations: new Set<number>(),
       };
       if (!slot.values.has(declaration.value)) {
         slot.values.add(declaration.value);
         sampledNewValue = true;
+      }
+      // Elevation is expensive (walks the ancestor chain), so it's computed
+      // lazily, right here, only for a background declaration that just
+      // survived the relevance filter above — but on EVERY representative,
+      // not just the first: two representatives can share the same
+      // background hex while sitting at different stacking depths (C-3), and
+      // that disagreement is only visible if every representative's own
+      // elevation gets recorded, not just the first one's.
+      if (declaration.bucket === 'background') {
+        const elevation = elevationOf(element);
+        if (!slot.elevations.has(elevation)) {
+          slot.elevations.add(elevation);
+          sampledNewValue = true;
+        }
       }
       record.properties.set(declaration.cssProperty, slot);
     }
@@ -140,11 +155,16 @@ export function createSignatureCensus(): SignatureCensus {
 
   // Depth-1 refinement, run once per census at traversal completion (and
   // after each ingestAddedElements batch that learned something): a
-  // signature whose representatives disagreed on any property is re-keyed
-  // by parent context. Occurrences are re-found with a fresh DOM query — no
-  // element references are ever retained. If a refined record still
-  // disagrees, the property is dropped and counted; refined records are
-  // never refined again (depth cap).
+  // signature whose representatives disagreed on any property's VALUE, or
+  // (background slots only) on its ELEVATION, is re-keyed by parent context
+  // — same background hex at two different stacking depths is still a real
+  // split, just a gentler one than a color mismatch (C-3). Occurrences are
+  // re-found with a fresh DOM query — no element references are ever
+  // retained. If a refined record still disagrees on VALUE, the property is
+  // dropped and counted; elevation disagreement never drops the property
+  // (see the drop loop below) — it degrades to first-wins instead, since an
+  // approximate stacking depth is still useful signal, unlike a wrong color.
+  // Refined records are never refined again (depth cap).
   const refineDivergentSignatures = (): void => {
     // Iterates the Map live (not a snapshot copy): deleting the entry the
     // loop is currently on is spec-defined-safe for Map iteration, and any
@@ -153,7 +173,9 @@ export function createSignatureCensus(): SignatureCensus {
     // live iteration never re-processes what it just created.
     for (const [signature, record] of records) {
       if (record.refined) continue;
-      const divergent = [...record.properties.values()].some((slot) => slot.values.size > 1);
+      const divergent = [...record.properties.values()].some(
+        (slot) => slot.values.size > 1 || slot.elevations.size > 1,
+      );
       if (!divergent) continue;
 
       records.delete(signature);
@@ -188,6 +210,16 @@ export function createSignatureCensus(): SignatureCensus {
   const soleValue = (values: Set<string>): string | null => {
     if (values.size !== 1) return null;
     return values.values().next().value ?? null;
+  };
+
+  // Unlike soleValue, this never rejects on size > 1: an elevation slot that
+  // is STILL mixed after refinement (the depth-1 cap left two stacking
+  // depths sharing one record) degrades gracefully to first-wins rather than
+  // dropping the property outright (C-3) — `elevations` is insertion-ordered,
+  // so its first entry is exactly the first representative's own reading.
+  const firstElevation = (elevations: Set<number>): number | undefined => {
+    const first = elevations.values().next();
+    return first.done ? undefined : first.value;
   };
 
   return {
@@ -243,11 +275,12 @@ export function createSignatureCensus(): SignatureCensus {
         for (const [cssProperty, slot] of record.properties) {
           const value = soleValue(slot.values);
           if (value === null) continue;
+          const elevation = firstElevation(slot.elevations);
           colors.push({
             cssProperty,
             bucket: slot.bucket,
             value,
-            ...(slot.elevation === undefined ? {} : { elevation: slot.elevation }),
+            ...(elevation === undefined ? {} : { elevation }),
           });
         }
         entries.push({ selector: signatureToSelector(signature), colors });

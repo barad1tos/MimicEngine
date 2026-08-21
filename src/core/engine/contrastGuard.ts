@@ -51,12 +51,17 @@ function stepAwayFromBackground(target: Oklch, backgroundL: number, step: number
 
 // Failing text targets step OKLCH `l` away from the background's `l`, up to
 // MAX_LIGHTNESS_STEPS, re-checking WCAG contrast via a hex round-trip after
-// each step. The first passing hex wins; if none pass, the curated theme
-// `text` token is the deterministic fallback.
-function repairTextTarget(
+// each step. The first passing hex wins; if none pass, `fallbackHex` is the
+// deterministic result — guardContrast itself always passes the theme's own
+// curated `text` token, but any caller needing this exact stepping algorithm
+// against an arbitrary (not page-approximated) background may pass its own
+// best-achievable fallback instead. Exported so computedFallback's per-
+// selector paired guard reuses this single-sourced stepping rather than
+// duplicating it (see pairedTextOverride in computedFallback.ts).
+export function repairTextTarget(
   targetHex: HexColor,
   backgroundHex: HexColor,
-  themeTextHex: HexColor,
+  fallbackHex: HexColor,
 ): HexColor {
   if (passesContrast(targetHex, backgroundHex)) return targetHex;
 
@@ -66,12 +71,12 @@ function repairTextTarget(
     // HexColor is a type-level guarantee, not a runtime one — a value that
     // reached here without actually going through toHex() (corrupted state,
     // a future caller bypassing the constructor) fails to parse silently
-    // otherwise. Surface it before falling back to the theme's text token.
+    // otherwise. Surface it before falling back.
     console.warn('[Palette Mimicry] unparseable color in contrast repair', {
       targetHex,
       backgroundHex,
     });
-    return themeTextHex;
+    return fallbackHex;
   }
 
   const targetOklch = rgbaToOklch(targetColor);
@@ -83,7 +88,7 @@ function repairTextTarget(
     if (passesContrast(candidateHex, backgroundHex)) return candidateHex;
   }
 
-  return themeTextHex;
+  return fallbackHex;
 }
 
 // Repairs every mapped text-bucket target that fails WCAG contrast against

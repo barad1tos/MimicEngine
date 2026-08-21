@@ -3,8 +3,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSignatureCensus, installCensus } from '../../analyzer/signatureCensus';
 import { contrastRatio } from '../../color/contrast';
+import { oklchToRgba } from '../../color/oklch';
+import { toHex } from '../../color/parseColor';
 import type { SiteSettings } from '../../storage/settingsStore';
-import { builtInThemes } from '../../themes';
+import { builtInThemes, type PaletteTheme } from '../../themes';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { StrategyId } from '../strategyId';
@@ -623,5 +625,107 @@ describe('computedFallback strategy', () => {
     const plainText = /(?<!background-)color: (#\w{6})/.exec(plainBlock)?.[1];
     expect(plainText).toBeDefined();
     expect(plainText).toBe(catppuccinFrappe.tokens.text);
+  });
+
+  it('checks a preserved brand background instead of skipping the paired guard (C-1)', () => {
+    // preserveBrandColors=true (the default) makes partitionAccents
+    // (colorMap.ts) leave this high-chroma background OUT of `mapping`
+    // entirely -- true preservation, not a missing case. Before the fix,
+    // an unmapped background declaration had no entry in the paired guard's
+    // selector->background lookup, so the guard skipped this selector
+    // outright and its text got the plain global text-bucket mapping with
+    // no check against the color the background actually stays: a red badge
+    // keeps #ff0000, and black text remapped straight to the theme's text
+    // token (#c6d0f5) clashes with it (2.62:1, per the Codex report).
+    document.head.innerHTML = `
+      <style>
+        .badge { background-color: rgb(255, 0, 0); color: rgb(0, 0, 0); }
+      </style>
+    `;
+    document.body.innerHTML = '<span class="badge">New</span>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(true),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const block = /:where\(span\.badge\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    // Preserved means untouched: no background rule is ever emitted for it.
+    expect(block).not.toContain('background-color');
+
+    const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
+    expect(text).toBeDefined();
+    if (text === undefined) throw new Error('expected a text color');
+    expect(contrastRatio(text, '#ff0000')).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('repairs the better-of-two pick against the ACTUAL paired background when both theme tokens fail (C-2)', () => {
+    // An imported theme's own canvas/text pair only ever gets validated
+    // against EACH OTHER (8.06:1 here) -- never against an arbitrary
+    // background a signature happens to sit on. This custom theme's own
+    // `accent` token (#969696) fails 4.5:1 against BOTH canvas (4.16:1) and
+    // text (1.94:1): the pre-fix "better of two" pick (canvas, the higher of
+    // the two) would ship a candidate that still fails. .page/.wrapper give
+    // canvas the page's dominant (highest-weight) background so
+    // guardContrast's own GLOBAL text repair validates against canvas, not
+    // .badge's own paired background -- only computedFallback's per-selector
+    // paired guard ever checks .badge's actual pairing.
+    const customTheme: PaletteTheme = {
+      id: 'custom-imported-c2',
+      name: 'Custom Imported',
+      mode: 'dark',
+      tokens: {
+        canvas: '#303446',
+        surface1: '#414559',
+        surface2: '#51576d',
+        surface3: '#626880',
+        text: '#c6d0f5',
+        textMuted: '#a5adce',
+        border: '#626880',
+        accent: '#969696',
+        link: '#00ff00',
+        success: '#00ffff',
+        warning: '#0000ff',
+        danger: '#ff00ff',
+        selection: '#51576d',
+        focus: '#babbf1',
+      },
+    };
+    // Chroma ~0.10: accent-classified (ACCENT_CHROMA_THRESHOLD is 0.09) but
+    // below BRAND_CHROMA_THRESHOLD (0.14), so preserveBrandColors does NOT
+    // preserve it -- mapAccent resolves it to the nearest accent-family
+    // token by hue, and hue 0 matches this theme's achromatic `accent`
+    // token (hue 0 by convention), so it lands there.
+    const badgeHex = toHex(oklchToRgba({ l: 0.5, c: 0.1, h: 0 }));
+
+    document.head.innerHTML = `
+      <style>
+        .page { background-color: rgb(48, 52, 70); color: rgb(198, 208, 245); }
+        .wrapper { background-color: rgb(48, 52, 70); color: rgb(198, 208, 245); }
+        .badge { background-color: ${badgeHex}; color: rgb(198, 208, 245); }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="page">A</div><div class="wrapper">B</div><span class="badge">C</span>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      customTheme,
+      anySiteSettings(true),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const block = /:where\(span\.badge\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const bg = /background-color: (#\w{6})/.exec(block)?.[1];
+    const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
+    expect(bg).toBeDefined();
+    expect(text).toBeDefined();
+    if (bg === undefined || text === undefined) throw new Error('expected both bg and text');
+    expect(bg).toBe('#969696');
+    expect(contrastRatio(text, bg)).toBeGreaterThanOrEqual(4.5);
   });
 });
