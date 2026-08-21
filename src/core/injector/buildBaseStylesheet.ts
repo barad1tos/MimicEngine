@@ -11,6 +11,16 @@ const ACTIVE_GATE = 'html[data-pm-active="true"]';
 type GatedRule = {
   readonly selectors: readonly string[];
   readonly declarations: readonly string[];
+  // Amendment 2 (2026-08-21, signature-census-design.md): the generic
+  // opaque-background readability net for button/input-shaped elements —
+  // baseline's job when computedFallback can't see the page at all. When
+  // computedFallback IS in the plan, the census already paints exactly the
+  // surfaces genuinely opaque on the page; this floor then does nothing but
+  // paint over transparent controls it has no business touching (the
+  // LinkedIn top-bar hairline/checkerboard live finding). Marked on both the
+  // base and :hover interactive-surface rules; every other rule (unmarked)
+  // is unconditional.
+  readonly interactiveFloor?: boolean;
 };
 
 const BASE_RULES: readonly GatedRule[] = [
@@ -43,12 +53,14 @@ const BASE_RULES: readonly GatedRule[] = [
       'border-color: var(--pm-border) !important;',
       'caret-color: var(--pm-accent) !important;',
     ],
+    interactiveFloor: true,
   },
   {
     selectors: [
       ':where(button:hover, [role="button"]:hover, input:hover, select:hover, textarea:hover)',
     ],
     declarations: ['background-color: var(--pm-surface2) !important;'],
+    interactiveFloor: true,
   },
   {
     selectors: [
@@ -100,15 +112,31 @@ function formatRule(selectors: readonly string[], declarations: readonly string[
   return `${selectors.join(',\n')} {\n${body}\n}`;
 }
 
-export function buildBaseStylesheet(_theme: PaletteTheme): string {
-  return BASE_RULES.map((rule) =>
-    formatRule(
-      rule.selectors.map((selector) =>
-        selector === '' ? ACTIVE_GATE : `${ACTIVE_GATE} ${selector}`,
+export type BuildBaseStylesheetOptions = {
+  // See GatedRule.interactiveFloor: true when the plan also runs
+  // computedFallback, which paints exactly the surfaces genuinely opaque on
+  // the page — the generic readability net would only paint over it.
+  readonly omitInteractiveFloor?: boolean;
+};
+
+export function buildBaseStylesheet(
+  _theme: PaletteTheme,
+  options: BuildBaseStylesheetOptions = {},
+): string {
+  const rules = options.omitInteractiveFloor
+    ? BASE_RULES.filter((rule) => !rule.interactiveFloor)
+    : BASE_RULES;
+
+  return rules
+    .map((rule) =>
+      formatRule(
+        rule.selectors.map((selector) =>
+          selector === '' ? ACTIVE_GATE : `${ACTIVE_GATE} ${selector}`,
+        ),
+        rule.declarations,
       ),
-      rule.declarations,
-    ),
-  ).join('\n\n');
+    )
+    .join('\n\n');
 }
 
 // Ungated mirror of buildBaseStylesheet, consumed by shadowStyles.ts to build
