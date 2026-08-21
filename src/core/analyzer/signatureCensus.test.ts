@@ -53,6 +53,15 @@ function backgroundElevationOf(
     ?.colors.find((color) => color.bucket === 'background')?.elevation;
 }
 
+function backgroundColorOf(
+  entries: CensusSnapshot['entries'],
+  selector: string,
+): CensusColor | undefined {
+  return entries
+    .find((entry) => entry.selector === selector)
+    ?.colors.find((color) => color.bucket === 'background');
+}
+
 describe('signatureCensus traversal', () => {
   it('samples one representative set per signature, not per element', () => {
     document.head.innerHTML = '<style>.card { background-color: rgb(1, 2, 3); }</style>';
@@ -496,14 +505,8 @@ describe('background transparency divergence (Amendment 3.3)', () => {
   // `isRelevantValue` dropped the transparent samples BEFORE they ever
   // reached the record, so the signature silently read as "opaque, size 1"
   // and painted flakily depending on K-representative order.
-  function backgroundColorOf(
-    entries: CensusSnapshot['entries'],
-    selector: string,
-  ): CensusColor | undefined {
-    return entries
-      .find((entry) => entry.selector === selector)
-      ?.colors.find((color) => color.bucket === 'background');
-  }
+  // (backgroundColorOf lives at module scope — shared with the
+  // resurrection-guard describe block below.)
 
   it('drops the background (and counts it) when opaque/transparent siblings share one signature with no distinguishing parent', () => {
     document.body.innerHTML = `
@@ -745,5 +748,128 @@ describe('elevation divergence (C-3)', () => {
     // A split, not a drop: elevation disagreement degrades gracefully --
     // both refined records keep their background-color property intact.
     expect(snapshot.droppedProperties).toBe(0);
+  });
+});
+
+describe('resurrection guard: tombstoned drops never come back (Codex census, PR #18)', () => {
+  // Deleting a dropped property's slot alone erases only the CURRENT
+  // sample, not the fact that a conflict was ever seen. A record still
+  // under the K=3 representative cap -- or one already `refined` (refinement
+  // never revisits it, so nothing else re-detects the conflict) -- that
+  // gains one more representative via ingestAddedElements would otherwise
+  // recreate a fresh, single-value slot and silently resurrect the exact
+  // painted-wrong-color bug Amendment 3.3's drop existed to prevent. Each
+  // record's own tombstone set (`tombstonedProperties`, distinct from the
+  // census-level `droppedProperties` COUNT) closes that gap: sampleInto
+  // refuses to record into a tombstoned property at all, for this record's
+  // entire lifetime.
+
+  it('a same-parent refined record already dropped for a transparent mix stays dropped when a third opaque rep arrives', () => {
+    document.body.innerHTML = `
+      <div class="group">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+        <span class="pill" style="background-color: transparent;">b</span>
+      </div>
+    `;
+    const census = fullCensus();
+    const before = census.snapshot();
+    const refinedSelector = 'div.group > span.pill';
+
+    // Only 2 of the K=3 representative slots are filled -- the refined
+    // record already dropped its background (unsplittable: both siblings
+    // share the exact same parent), leaving one slot open.
+    expect(before.entries.map((entry) => entry.selector)).toContain(refinedSelector);
+    expect(backgroundColorOf(before.entries, refinedSelector)).toBeUndefined();
+    expect(before.droppedProperties).toBe(1);
+
+    const group = document.querySelector('.group');
+    if (!(group instanceof HTMLElement)) throw new Error('fixture missing .group container');
+    const thirdSibling = document.createElement('span');
+    thirdSibling.className = 'pill';
+    // Agrees with the very first (opaque) representative -- on its own,
+    // this would look like clean, unanimous single-value evidence.
+    thirdSibling.style.backgroundColor = 'rgb(10, 20, 30)';
+    group.append(thirdSibling);
+
+    census.ingestAddedElements([thirdSibling]);
+
+    const after = census.snapshot();
+    // The tombstone holds: sampleInto refused to record into the dropped
+    // property at all, so no fresh single-value slot was ever created.
+    expect(backgroundColorOf(after.entries, refinedSelector)).toBeUndefined();
+    // Counted exactly once, at the original drop -- the later re-encounter
+    // must never inflate the statistic.
+    expect(after.droppedProperties).toBe(1);
+  });
+
+  it('a same-parent refined record already dropped for a value mismatch stays dropped when an agreeing rep arrives', () => {
+    document.head.innerHTML = `
+      <style>
+        .row:nth-child(1) .cell { color: rgb(1, 1, 1); }
+        .row:nth-child(2) .cell { color: rgb(2, 2, 2); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <div class="row"><span class="cell">a</span></div>
+      <div class="row"><span class="cell">b</span></div>
+    `;
+    const census = fullCensus();
+    const before = census.snapshot();
+    const refinedSelector = 'div.row > span.cell';
+
+    const beforeEntry = before.entries.find((entry) => entry.selector === refinedSelector);
+    expect(beforeEntry).toBeDefined();
+    expect(beforeEntry?.colors.every((color) => color.cssProperty !== 'color')).toBe(true);
+    expect(before.droppedProperties).toBe(1);
+
+    // A third `.row > .cell` occurrence, agreeing with the first sample --
+    // depth-1 refinement keys purely on the parent's tag+class, so this
+    // still lands in the SAME refined record (nth-child plays no part in
+    // the refined key), one slot short of the K=3 cap.
+    const newRow = document.createElement('div');
+    newRow.className = 'row';
+    const newCell = document.createElement('span');
+    newCell.className = 'cell';
+    newCell.style.color = 'rgb(1, 1, 1)';
+    newRow.append(newCell);
+    document.body.append(newRow);
+
+    census.ingestAddedElements([newRow]);
+
+    const after = census.snapshot();
+    const afterEntry = after.entries.find((entry) => entry.selector === refinedSelector);
+    expect(afterEntry?.colors.every((color) => color.cssProperty !== 'color')).toBe(true);
+    expect(after.droppedProperties).toBe(1);
+  });
+
+  it('a fresh census (bootstrap) after the conflicting sibling is gone sees the background normally again', () => {
+    document.body.innerHTML = `
+      <div class="group">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+        <span class="pill" style="background-color: transparent;">b</span>
+      </div>
+    `;
+    const staleCensus = fullCensus();
+    const refinedSelector = 'div.group > span.pill';
+    expect(backgroundColorOf(staleCensus.snapshot().entries, refinedSelector)).toBeUndefined();
+
+    // Simulates an SPA route change: the conflicting (transparent) sibling
+    // is gone from the DOM, and the controller bootstraps a brand-new
+    // census (a fresh createSignatureCensus(), never the stale object) --
+    // tombstones live only on the OLD census's own records.
+    document.body.innerHTML = `
+      <div class="group">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+      </div>
+    `;
+    const freshSnapshot = fullCensus().snapshot();
+
+    expect(backgroundColorOf(freshSnapshot.entries, 'span.pill')).toEqual({
+      cssProperty: 'background-color',
+      bucket: 'background',
+      value: 'rgb(10, 20, 30)',
+      elevation: 0,
+    });
+    expect(freshSnapshot.droppedProperties).toBe(0);
   });
 });
