@@ -13,7 +13,11 @@ export function tokenToCssVariableSuffix(token: ThemeTokenName): string {
   return token.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 
-function elevationRampCss(theme: PaletteTheme): string {
+// Exported for reuse by shadowStyles.ts's :host preamble (Amendment 3,
+// Task 4): a shadow root's stylesheet declares its own token block rather
+// than relying on :root inheritance, so it must carry the same elevation +
+// shadow ramp as this preamble does -- one derivation, two emission sites.
+export function elevationRampCss(theme: PaletteTheme): string {
   const lines: string[] = [];
   for (let level = 0; level < ELEVATION_LEVELS; level += 1) {
     lines.push(`  ${elevationVariable(level)}: ${elevationBackgroundHex(theme, level)};`);

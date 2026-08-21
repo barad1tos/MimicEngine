@@ -1,5 +1,6 @@
 import type { PaletteTheme } from '../themes';
 import type { SiteOverride } from '../storage/settingsStore';
+import { elevationVariable } from '../engine/elevationScale';
 import { tokenToCssVariableSuffix } from '../engine/tokenVariables';
 
 const ACTIVE_GATE = 'html[data-pm-active="true"]';
@@ -29,7 +30,13 @@ const BASE_RULES: readonly GatedRule[] = [
   {
     selectors: ['', 'body'],
     declarations: [
-      'background-color: var(--pm-canvas) !important;',
+      // Amendment 3 (2026-08-21, signature-census-design.md): the ground
+      // rung of the universal elevation ramp, not the theme's own canvas
+      // token directly -- elevation-0 IS the canvas verbatim
+      // (elevationBackgroundHex), so this is byte-identical in value, just
+      // resolved through the same ramp variableRemap's surface ladder and
+      // computedFallback's background ladder now target.
+      `background-color: var(${elevationVariable(0)}) !important;`,
       'color: var(--pm-text) !important;',
     ],
   },
