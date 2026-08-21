@@ -14,6 +14,12 @@ export type CensusColor = {
 export type CensusSnapshot = {
   entries: { selector: string; colors: CensusColor[] }[];
   distinctColorsSeen: number;
+  // Every opaque value the census has sampled, in insertion (first-seen)
+  // order — the raw material computedFallback's coverage denominator parses
+  // and hex-dedupes itself, kept separate from distinctColorsSeen (a count)
+  // so a strategy can exclude authored-covered colors from its own tally
+  // without the census needing to know about authoredRemap at all.
+  opaqueValuesSeen: readonly string[];
   droppedProperties: number;
   signatureCount: number;
   elementsVisited: number;
@@ -173,6 +179,11 @@ export function createSignatureCensus(): SignatureCensus {
       });
       if (finished) {
         complete = true;
+        // Drop the retained TreeWalker once traversal is done: it pins its
+        // root and every node visited to reach the end, which — if kept
+        // alive past this point (e.g. across a same-page SPA navigation) —
+        // would hold pre-navigation DOM in memory for no further benefit.
+        walker = null;
         refineDivergentSignatures();
       }
       return complete;
@@ -206,6 +217,7 @@ export function createSignatureCensus(): SignatureCensus {
       return {
         entries,
         distinctColorsSeen: opaqueValuesSeen.size,
+        opaqueValuesSeen: [...opaqueValuesSeen],
         droppedProperties,
         signatureCount: records.size,
         elementsVisited,
@@ -235,8 +247,9 @@ function isRelevantValue(value: string): boolean {
 
 type SampledDeclaration = { cssProperty: string; bucket: CensusColor['bucket']; value: string };
 
-// Moved from the legacy per-produce() DOM sampler (deleted in Task 4):
-// uniform drawn border sides collapse to one border-color declaration
+// Moved from computedFallback's legacy per-produce() DOM sampler, deleted
+// once the census became the single sampling pass: uniform drawn border
+// sides collapse to one border-color declaration
 // (weight 1 in the palette's bucket majority — the Codex P1 fix from PR #11);
 // differing sides stay per-side longhands. Sides gate on computed width > 0.
 function sampledDeclarationsFor(style: CSSStyleDeclaration): SampledDeclaration[] {

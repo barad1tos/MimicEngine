@@ -71,8 +71,8 @@ const planWithAuthoredRemap = planWith(['baseline', 'authoredRemap', 'computedFa
 const planWithoutAuthoredRemap = planWith(['baseline', 'computedFallback']);
 
 // Builds a census over the current document and installs it, the same way
-// pageThemeController installs its live census before invoking the plan
-// (Task 5). Every test that needs computedFallback to see sampled colors
+// pageThemeController installs its live census before invoking the plan.
+// Every test that needs computedFallback to see sampled colors
 // calls this after setting up its DOM fixture.
 function censusFromCurrentDom(): void {
   const census = createSignatureCensus();
@@ -329,6 +329,37 @@ describe('computedFallback strategy', () => {
     );
 
     expect(coverage?.discovered).toBeGreaterThanOrEqual(3);
+  });
+
+  it('excludes authored-covered colors from the coverage denominator when the stoplist is active', () => {
+    // A fully-themed, mixed-visibility page: the only color the census sees
+    // is already covered by authored analysis. Before this fix, the
+    // denominator was distinctColorsSeen (every opaque census value,
+    // authored-covered or not) — summed with authoredRemap's own report in
+    // aggregateCoverage, that double-counted this color and could report a
+    // fully-themed page at ~50%. The census side of this page must
+    // contribute 0/0: nothing left over for computedFallback to discover.
+    document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
+    document.body.innerHTML = '<p class="hero">text</p>';
+    censusFromCurrentDom();
+
+    const facts = factsWithAuthoredRule({
+      selector: '.hero',
+      property: 'color',
+      value: '#ff0000',
+      color: { r: 255, g: 0, b: 0, a: 1 },
+      bucket: 'text',
+      conditions: [],
+    });
+
+    const { coverage } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      facts,
+      planWithAuthoredRemap,
+    );
+
+    expect(coverage).toEqual({ discovered: 0, mapped: 0, ratio: 0 });
   });
 
   it('snapshot: emits a grouped stylesheet from novel sampled colors', () => {

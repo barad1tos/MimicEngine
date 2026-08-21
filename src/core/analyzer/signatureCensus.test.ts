@@ -60,6 +60,19 @@ describe('signatureCensus traversal', () => {
     expect(fullCensus().snapshot()).toEqual(fullCensus().snapshot());
   });
 
+  it('advance() after completion keeps returning true and never throws (walker released)', () => {
+    document.body.innerHTML = '<i class="one">a</i>';
+    const census = createSignatureCensus();
+    census.begin(document);
+
+    expect(census.advance(1000)).toBe(true);
+    // A second advance() call past completion must short-circuit cleanly —
+    // the TreeWalker was released once traversal finished, so nothing here
+    // should attempt to step a null walker.
+    expect(() => census.advance(1000)).not.toThrow();
+    expect(census.advance(1000)).toBe(true);
+  });
+
   it('advance() reports completion and later snapshots are supersets', () => {
     document.body.innerHTML = '<i class="one">a</i><i class="two">b</i><i class="three">c</i>';
     const census = createSignatureCensus();
@@ -131,8 +144,10 @@ describe('signatureCensus traversal', () => {
     // Two representatives already sampled (2 of the REPRESENTATIVES_PER_SIGNATURE
     // cap of 3), both rgb(1, 1, 1) — the signature is "known", but a third
     // representative introducing a genuinely new value must still count as
-    // learned: the refinement pass (Task 3) and the controller's recompose
-    // decision (Task 5) both key off this boolean to notice the divergence.
+    // learned: the divergence-refinement pass (re-keying signatures whose
+    // representatives disagree by parent context) and the controller's
+    // decision whether to schedule a census-driven re-apply both key off
+    // this boolean to notice the divergence.
     document.body.innerHTML =
       '<div class="pair" style="color: rgb(1, 1, 1);">a</div>' +
       '<div class="pair" style="color: rgb(1, 1, 1);">b</div>';

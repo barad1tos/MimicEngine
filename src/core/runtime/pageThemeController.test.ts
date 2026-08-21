@@ -687,6 +687,20 @@ describe('createPageThemeController — orphan shadow self-heal', () => {
 describe('createPageThemeController — census lifecycle', () => {
   const siteKey = normalizeHostname(window.location.hostname);
 
+  // A manual computedFallback override guarantees planIncludesComputedFallback()
+  // is true regardless of page metrics — needed by any test in this block that
+  // wants to observe the census-driven reapply actually fire (recomposing is a
+  // no-op for every other strategy's plan, since only computedFallback reads
+  // census output).
+  function seedComputedFallbackStrategy(): void {
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), strategy: 'computedFallback' } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
+  }
+
   beforeEach(() => {
     vi.useFakeTimers();
     // requestIdleCallback/cancelIdleCallback don't exist in happy-dom;
@@ -722,6 +736,7 @@ describe('createPageThemeController — census lifecycle', () => {
 
   it('writes the live census snapshot into the diagnostics record and keeps it current across re-applies', async () => {
     document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800)
+    seedComputedFallbackStrategy(); // so the chunk-completion reapply isn't withheld
     const controller = createPageThemeController();
 
     await controller.start();
@@ -750,6 +765,7 @@ describe('createPageThemeController — census lifecycle', () => {
 
   it('continues the census through idle callbacks until it completes, then re-applies', async () => {
     document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800)
+    seedComputedFallbackStrategy(); // so the chunk-completion reapply isn't withheld
     const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
     const controller = createPageThemeController();
 
@@ -832,7 +848,12 @@ describe('createPageThemeController — census lifecycle', () => {
     controller.stop();
   });
 
-  it('a real DOM mutation observed only by the census observer does not bypass a tripped mutation cap', async () => {
+  it('learns from a real DOM mutation while the mutation cap is tripped, but withholds the reapply', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    // A plan that includes computedFallback, so the only reason the reapply
+    // stays withheld below is the tripped cap — not planIncludesComputedFallback()
+    // failing for an unrelated reason.
+    seedComputedFallbackStrategy();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
     const controller = createPageThemeController();
@@ -851,12 +872,22 @@ describe('createPageThemeController — census lifecycle', () => {
     // observeDomChanges is entirely mocked in this file (no real
     // MutationObserver behind the mocked domObserver) — a genuine DOM
     // mutation is seen only by the controller's own real censusObserver.
-    // Regression: that observer used to ingest and schedule a reapply
-    // unconditionally, bypassing capTripped entirely.
-    document.body.append(document.createElement('span'));
+    // Contract: ingest must still learn from it — learning only ever
+    // updates the census's own in-memory record, so there is nothing here
+    // for the cap to protect against, and apply() never re-ingests missed
+    // elements once the cap clears — but the reapply that would recompose
+    // the live page stays withheld while the cap is tripped.
+    const learnedElement = document.createElement('span');
+    learnedElement.className = 'learned-during-cap';
+    document.body.append(learnedElement);
     await flushMicrotasks();
     await vi.runAllTimersAsync();
 
+    expect(
+      installedCensus()
+        ?.snapshot()
+        .entries.some((entry) => entry.selector === 'span.learned-during-cap'),
+    ).toBe(true);
     expect(injectSpy.mock.calls).toHaveLength(injectCountAtCap);
     expect(warnSpy).toHaveBeenCalledTimes(1); // no additional cap warning
 
@@ -882,6 +913,76 @@ describe('createPageThemeController — census lifecycle', () => {
     await flushMicrotasks();
     await vi.runAllTimersAsync();
 
+    expect(injectSpy.mock.calls).toHaveLength(injectCountAfterInitialApply);
+
+    controller.stop();
+  });
+
+  it('does not schedule a census reapply when the current plan has no use for it (manual baseline strategy)', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    const settings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), strategy: 'baseline' } },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, settings);
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const injectCountAfterInitialApply = injectSpy.mock.calls.length;
+
+    // A manual 'baseline' plan never includes computedFallback, so the
+    // census still learns from this mutation (ingest is unconditional —
+    // warm census for a possible future plan upgrade), but recomposing the
+    // page over it would be a guaranteed no-op: nothing reads census output.
+    const learnedElement = document.createElement('span');
+    learnedElement.className = 'baseline-learns';
+    document.body.append(learnedElement);
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    expect(
+      installedCensus()
+        ?.snapshot()
+        .entries.some((entry) => entry.selector === 'span.baseline-learns'),
+    ).toBe(true);
+    expect(injectSpy.mock.calls).toHaveLength(injectCountAfterInitialApply);
+
+    controller.stop();
+  });
+
+  it('tears down census machinery when the site is disabled, leaving no idle work pending', async () => {
+    document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800), so a chunk is pending
+    const enabledSettings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: { [siteKey]: createDefaultSiteSettings() },
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, enabledSettings);
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    expect(installedCensus()).not.toBeNull();
+    expect(installedCensus()?.snapshot().complete).toBe(false); // the idle chunk hasn't run yet
+    const injectCountAfterInitialApply = injectSpy.mock.calls.length;
+
+    // Disable the site mid-census, before the pending idle chunk fires.
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, {
+      ...enabledSettings,
+      sites: { [siteKey]: { ...createDefaultSiteSettings(), enabled: false } },
+    });
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+
+    expect(installedCensus()).toBeNull();
+
+    // Must not throw from an orphaned idle callback, and must not resume any
+    // census work (the pending chunk was cancelled, not merely abandoned).
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()).toBeNull();
     expect(injectSpy.mock.calls).toHaveLength(injectCountAfterInitialApply);
 
     controller.stop();
