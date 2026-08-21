@@ -1128,4 +1128,64 @@ describe('createPageThemeController — census lifecycle', () => {
 
     controller.stop();
   });
+
+  it('consumes a pending census-stale flag once the cap clears via a settings change (C-2 residual)', async () => {
+    // Residual edge from the re-review: a significant attribute mutation
+    // during a cap-tripped window sets censusStale, but scheduleCensusReapply
+    // is gated on !capTripped so it's never called — the flag then sits
+    // unconsumed forever unless some UNRELATED later mutation happens to
+    // fire the census observer again. The settings-changed handler is the
+    // only path that clears capTripped, so it must be the one that notices
+    // and consumes a pending censusStale too.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.body.innerHTML = '<span class="item">x</span>';
+    seedComputedFallbackStrategy();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+
+    // Trip the cap through the mocked live-observer path (matches the
+    // "mutation cap gating" describe block's own firing pattern).
+    for (let firing = 1; firing <= MAX_REAPPLIES_PER_MINUTE + 1; firing++) {
+      fireLatestObserverCallback();
+    }
+    await flushMicrotasks();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    // A significant attribute mutation while the cap is tripped: flag set,
+    // no reset — same existing behavior the sibling cap-tripped test above
+    // already covers.
+    const item = document.querySelector('.item');
+    if (!(item instanceof HTMLElement)) throw new Error('fixture missing .item');
+    item.classList.add('marker');
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    let selectors =
+      installedCensus()
+        ?.snapshot()
+        .entries.map((entry) => entry.selector) ?? [];
+    expect(selectors).toContain('span.item');
+    expect(selectors).not.toContain('span.item.marker');
+
+    // The settings change is the only path that clears the cap — it must
+    // also consume the pending censusStale flag, rebuilding the census via
+    // the same fresh-full-walk reset used everywhere else, rather than
+    // leaving computedFallback serving stale samples until some unrelated
+    // mutation happens to arrive later.
+    fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    selectors =
+      installedCensus()
+        ?.snapshot()
+        .entries.map((entry) => entry.selector) ?? [];
+    expect(selectors).not.toContain('span.item');
+    expect(selectors).toContain('span.item.marker');
+
+    controller.stop();
+  });
 });
