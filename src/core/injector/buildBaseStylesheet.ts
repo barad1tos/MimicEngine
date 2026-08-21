@@ -59,7 +59,7 @@ const BASE_RULES: readonly GatedRule[] = [
     // genuinely supersedes — the census samples backgrounds itself, so a
     // page it can see needs no generic opaque-background assumption here.
     selectors: [':where(button, [role="button"], input, select, textarea)'],
-    declarations: ['background-color: var(--pm-surface1) !important;'],
+    declarations: [`background-color: var(${elevationVariable(1)}) !important;`],
     interactiveFloor: true,
   },
   {
@@ -83,7 +83,7 @@ const BASE_RULES: readonly GatedRule[] = [
     selectors: [
       ':where(button:hover, [role="button"]:hover, input:hover, select:hover, textarea:hover)',
     ],
-    declarations: ['background-color: var(--pm-surface2) !important;'],
+    declarations: [`background-color: var(${elevationVariable(2)}) !important;`],
     interactiveFloor: true,
   },
   {
@@ -98,7 +98,7 @@ const BASE_RULES: readonly GatedRule[] = [
   {
     selectors: [':where(code, kbd, samp, pre)'],
     declarations: [
-      'background-color: var(--pm-surface1) !important;',
+      `background-color: var(${elevationVariable(1)}) !important;`,
       'color: var(--pm-text) !important;',
       'border-color: var(--pm-border) !important;',
     ],
@@ -110,14 +110,14 @@ const BASE_RULES: readonly GatedRule[] = [
   {
     selectors: [':where(th)'],
     declarations: [
-      'background-color: var(--pm-surface1) !important;',
+      `background-color: var(${elevationVariable(1)}) !important;`,
       'color: var(--pm-text) !important;',
     ],
   },
   {
     selectors: [':where(blockquote, details, dialog, fieldset, figure, form)'],
     declarations: [
-      'background-color: var(--pm-surface1) !important;',
+      `background-color: var(${elevationVariable(1)}) !important;`,
       'color: var(--pm-text) !important;',
       'border-color: var(--pm-border) !important;',
     ],
