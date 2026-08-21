@@ -39,6 +39,20 @@ function fullCensus() {
   return census;
 }
 
+// Elevation is a VISUAL SURFACE LEVEL, not a raw ancestor count: a node only
+// starts a new surface when it either changes the background hex or a
+// qualifying box-shadow is in play. Same hex + no shadow means "still the
+// same surface as its parent" regardless of how many opaque ancestors sit
+// above it.
+function backgroundElevationOf(
+  entries: CensusSnapshot['entries'],
+  selector: string,
+): number | undefined {
+  return entries
+    .find((entry) => entry.selector === selector)
+    ?.colors.find((color) => color.bucket === 'background')?.elevation;
+}
+
 describe('signatureCensus traversal', () => {
   it('samples one representative set per signature, not per element', () => {
     document.head.innerHTML = '<style>.card { background-color: rgb(1, 2, 3); }</style>';
@@ -299,19 +313,6 @@ describe('divergence refinement', () => {
 });
 
 describe('background elevation', () => {
-  // Elevation is a VISUAL SURFACE LEVEL, not a raw ancestor count: a node
-  // only starts a new surface when it either changes the background hex or
-  // carries its own box-shadow. Same hex + no shadow means "still the same
-  // surface as its parent" regardless of how many opaque ancestors sit
-  // above it.
-  const backgroundElevationOf = (
-    entries: CensusSnapshot['entries'],
-    selector: string,
-  ): number | undefined =>
-    entries
-      .find((entry) => entry.selector === selector)
-      ?.colors.find((color) => color.bucket === 'background')?.elevation;
-
   it('bumps elevation on a shadow boundary and on a color boundary, not on ancestor depth alone', () => {
     document.head.innerHTML = `
       <style>
@@ -407,6 +408,86 @@ describe('background elevation', () => {
   });
 });
 
+describe('shadow boundary refinements (Codex P2s)', () => {
+  it('a transparent wrapper carrying the shadow still creates a boundary for its opaque child', () => {
+    // The shadow that makes this a new surface lives on the TRANSPARENT
+    // .wrapper, not on .child itself — a naive fold that skips non-opaque
+    // nodes outright would lose that shadow entirely and, since .child
+    // shares .ground's exact hex, silently fold it back into .ground's
+    // surface (elevation 0). The pending-shadow-boundary carry must survive
+    // the skip and land on the next opaque node.
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .wrapper { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+        .child { background-color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="ground"><div class="wrapper"><div class="child">x</div></div></div>';
+
+    const entries = fullCensus().snapshot().entries;
+    expect(backgroundElevationOf(entries, 'div.child')).toBe(1);
+  });
+
+  it('a shadowless transparent wrapper leaves a same-hex child at the same surface', () => {
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .wrapper { }
+        .child { background-color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="ground"><div class="wrapper"><div class="child">x</div></div></div>';
+
+    const entries = fullCensus().snapshot().entries;
+    expect(backgroundElevationOf(entries, 'div.child')).toBe(0);
+  });
+
+  it('an inset-only shadow never creates a boundary', () => {
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="ground"><section class="card">x</section></div>';
+
+    const entries = fullCensus().snapshot().entries;
+    expect(backgroundElevationOf(entries, 'section.card')).toBe(0);
+  });
+
+  it('a fully-transparent (alpha 0) shadow never creates a boundary', () => {
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: rgba(0, 0, 0, 0) 0px 1px 3px; }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="ground"><section class="card">x</section></div>';
+
+    const entries = fullCensus().snapshot().entries;
+    expect(backgroundElevationOf(entries, 'section.card')).toBe(0);
+  });
+
+  it('a multi-shadow value bumps once a single segment qualifies, inset segments aside', () => {
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card {
+          background-color: rgb(255, 255, 255);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.2) 0 1px 2px;
+        }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="ground"><section class="card">x</section></div>';
+
+    const entries = fullCensus().snapshot().entries;
+    expect(backgroundElevationOf(entries, 'section.card')).toBe(1);
+  });
+});
+
 describe('elevation divergence (C-3)', () => {
   it('splits same-hex backgrounds at different elevations into separate refined records, without dropping', () => {
     // Two `.card` elements share tag+class AND the exact same background
@@ -433,10 +514,6 @@ describe('elevation divergence (C-3)', () => {
 
     const snapshot = fullCensus().snapshot();
     const selectors = snapshot.entries.map((entry) => entry.selector);
-    const backgroundElevationOf = (selector: string): number | undefined =>
-      snapshot.entries
-        .find((entry) => entry.selector === selector)
-        ?.colors.find((color) => color.bucket === 'background')?.elevation;
 
     // Refined into two parent-qualified selectors -- never one broad,
     // elevation-blind `section.card` rule.
@@ -444,8 +521,8 @@ describe('elevation divergence (C-3)', () => {
     expect(selectors).toContain('div.wrap > section.card');
     expect(selectors).toContain('div.ground > section.card');
 
-    expect(backgroundElevationOf('div.wrap > section.card')).toBe(1);
-    expect(backgroundElevationOf('div.ground > section.card')).toBe(0);
+    expect(backgroundElevationOf(snapshot.entries, 'div.wrap > section.card')).toBe(1);
+    expect(backgroundElevationOf(snapshot.entries, 'div.ground > section.card')).toBe(0);
 
     // A split, not a drop: elevation disagreement degrades gracefully --
     // both refined records keep their background-color property intact.
