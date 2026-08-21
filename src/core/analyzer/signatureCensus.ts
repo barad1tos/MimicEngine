@@ -9,6 +9,7 @@ export type CensusColor = {
   cssProperty: string;
   bucket: 'text' | 'background' | 'border';
   value: string;
+  elevation?: number;
 };
 
 export type CensusSnapshot = {
@@ -36,8 +37,13 @@ export type SignatureCensus = {
 type SignatureRecord = {
   representativeCount: number;
   refined: boolean;
-  // cssProperty -> { bucket, values seen across representatives }
-  properties: Map<string, { bucket: CensusColor['bucket']; values: Set<string> }>;
+  // cssProperty -> { bucket, values seen across representatives }. `elevation`
+  // is only ever set on the background slot, and only from the FIRST
+  // representative that lands one — later representatives never overwrite it.
+  properties: Map<
+    string,
+    { bucket: CensusColor['bucket']; values: Set<string>; elevation?: number }
+  >;
 };
 
 const BORDER_SIDES = [
@@ -82,9 +88,18 @@ export function createSignatureCensus(): SignatureCensus {
     for (const declaration of sampledDeclarationsFor(style)) {
       if (!isRelevantValue(declaration.value)) continue;
       trackOpaque(declaration.value);
-      const slot = record.properties.get(declaration.cssProperty) ?? {
+      const existingSlot = record.properties.get(declaration.cssProperty);
+      // Elevation is expensive (walks the ancestor chain) and only meaningful
+      // on the FIRST representative to land this property, so it's computed
+      // lazily, right here, and only for a background declaration that just
+      // survived the relevance filter above.
+      if (!existingSlot && declaration.bucket === 'background') {
+        declaration.elevation = elevationOf(element);
+      }
+      const slot = existingSlot ?? {
         bucket: declaration.bucket,
         values: new Set<string>(),
+        ...(declaration.elevation === undefined ? {} : { elevation: declaration.elevation }),
       };
       if (!slot.values.has(declaration.value)) {
         slot.values.add(declaration.value);
@@ -227,7 +242,13 @@ export function createSignatureCensus(): SignatureCensus {
         const colors: CensusColor[] = [];
         for (const [cssProperty, slot] of record.properties) {
           const value = soleValue(slot.values);
-          if (value !== null) colors.push({ cssProperty, bucket: slot.bucket, value });
+          if (value === null) continue;
+          colors.push({
+            cssProperty,
+            bucket: slot.bucket,
+            value,
+            ...(slot.elevation === undefined ? {} : { elevation: slot.elevation }),
+          });
         }
         entries.push({ selector: signatureToSelector(signature), colors });
       }
@@ -270,7 +291,12 @@ function isRelevantValue(value: string): boolean {
   return Boolean(value) && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)';
 }
 
-type SampledDeclaration = { cssProperty: string; bucket: CensusColor['bucket']; value: string };
+type SampledDeclaration = {
+  cssProperty: string;
+  bucket: CensusColor['bucket'];
+  value: string;
+  elevation?: number;
+};
 
 // Moved from computedFallback's legacy per-produce() DOM sampler, deleted
 // once the census became the single sampling pass: uniform drawn border
@@ -309,4 +335,17 @@ function sampledDeclarationsFor(style: CSSStyleDeclaration): SampledDeclaration[
 function isProbablyVisible(element: Element): boolean {
   const rect = element.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
+}
+
+// Count of ancestors with an opaque computed background — the "stacking
+// depth" a background color sits at. Called only from inside the
+// withStylesheetDisabled window sampleInto already runs in, so these
+// getComputedStyle reads see the page's authored colors, not ours.
+function elevationOf(element: Element): number {
+  let count = 0;
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const background = parseCssColor(getComputedStyle(ancestor).backgroundColor);
+    if (background && isOpaque(background)) count += 1;
+  }
+  return count;
 }
