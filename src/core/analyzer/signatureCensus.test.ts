@@ -607,6 +607,103 @@ describe('background transparency divergence (Amendment 3.3)', () => {
       expect(late.entries.map((candidate) => candidate.selector)).toContain(entry.selector);
     }
   });
+
+  // The live-SPA flakiness scenario Amendment 3.3 targets: a signature
+  // census'd to COMPLETION with only opaque representatives (no divergence,
+  // no refinement yet), then a state-differing twin (e.g. a filter pill that
+  // flips to its "inactive"/transparent state) arrives later through a DOM
+  // mutation. ingestAddedElements' post-ingest refinement pass must catch
+  // this exactly like the initial-traversal path does — the bug this
+  // amendment fixes was specifically about a representative's OWN sample
+  // order, and a mutation-added twin is the most realistic way that order
+  // varies across page loads.
+  it('mutation-triggered divergence: a same-parent transparent twin added post-completion cannot be split away, so the background drops', () => {
+    document.body.innerHTML = `
+      <div class="group">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+        <span class="pill" style="background-color: rgb(10, 20, 30);">b</span>
+      </div>
+    `;
+    const census = fullCensus();
+    const before = census.snapshot();
+
+    // Two opaque representatives, one slot short of the K=3 cap, not yet
+    // divergent — no refinement has happened at this point.
+    expect(before.entries.map((entry) => entry.selector)).toContain('span.pill');
+    expect(backgroundColorOf(before.entries, 'span.pill')).toEqual({
+      cssProperty: 'background-color',
+      bucket: 'background',
+      value: 'rgb(10, 20, 30)',
+      elevation: 0,
+    });
+    expect(before.droppedProperties).toBe(0);
+
+    const group = document.querySelector('.group');
+    if (!(group instanceof HTMLElement)) throw new Error('fixture missing .group container');
+    const twin = document.createElement('span');
+    twin.className = 'pill';
+    twin.style.backgroundColor = 'transparent';
+    group.append(twin);
+
+    // The twin lands in the last open representative slot and its explicit
+    // transparent background is genuinely new, divergence-worthy signal.
+    expect(census.ingestAddedElements([twin])).toBe(true);
+
+    const after = census.snapshot();
+    const selectors = after.entries.map((entry) => entry.selector);
+    // All three siblings share the exact same parent — refinement re-keys
+    // by parent context but finds no distinguishing context between them,
+    // so the refined record is STILL a mix and must retreat honestly rather
+    // than paint every match opaque depending on which representative
+    // happened to land first.
+    expect(selectors).not.toContain('span.pill');
+    const refinedSelector = 'div.group > span.pill';
+    expect(selectors).toContain(refinedSelector);
+    expect(backgroundColorOf(after.entries, refinedSelector)).toBeUndefined();
+    expect(after.droppedProperties).toBeGreaterThanOrEqual(1);
+  });
+
+  it('mutation-triggered divergence: a different-parent transparent twin splits cleanly, the opaque side keeps its background', () => {
+    document.body.innerHTML = `
+      <div class="light">
+        <span class="pill" style="background-color: rgb(10, 20, 30);">a</span>
+        <span class="pill" style="background-color: rgb(10, 20, 30);">b</span>
+      </div>
+      <div class="dark"></div>
+    `;
+    const census = fullCensus();
+    expect(census.snapshot().droppedProperties).toBe(0);
+
+    const darkContainer = document.querySelector('.dark');
+    if (!(darkContainer instanceof HTMLElement)) {
+      throw new Error('fixture missing .dark container');
+    }
+    const twin = document.createElement('span');
+    twin.className = 'pill';
+    twin.style.backgroundColor = 'transparent';
+    darkContainer.append(twin);
+
+    expect(census.ingestAddedElements([twin])).toBe(true);
+
+    const after = census.snapshot();
+    const selectors = after.entries.map((entry) => entry.selector);
+
+    // A real distinguishing parent exists this time — refinement separates
+    // the opaque siblings from the transparent twin instead of retreating.
+    expect(selectors).not.toContain('span.pill');
+    expect(selectors).toContain('div.light > span.pill');
+    expect(selectors).toContain('div.dark > span.pill');
+
+    expect(backgroundColorOf(after.entries, 'div.light > span.pill')).toEqual({
+      cssProperty: 'background-color',
+      bucket: 'background',
+      value: 'rgb(10, 20, 30)',
+      elevation: 0,
+    });
+    // The transparent twin's own side never gets an opaque color to paint.
+    expect(backgroundColorOf(after.entries, 'div.dark > span.pill')).toBeUndefined();
+    expect(after.droppedProperties).toBe(0);
+  });
 });
 
 describe('elevation divergence (C-3)', () => {
