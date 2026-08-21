@@ -362,6 +362,56 @@ describe('computedFallback strategy', () => {
     expect(coverage).toEqual({ discovered: 0, mapped: 0, ratio: 0 });
   });
 
+  it('emits different surface tokens for the same hex at different elevations', () => {
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="ground"><div class="card">x</div></div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const groundRule = /:where\(div\.ground\) \{[^}]*background-color: (#\w{6})/.exec(css)?.[1];
+    const cardRule = /:where\(div\.card\) \{[^}]*background-color: (#\w{6})/.exec(css)?.[1];
+    expect(groundRule).toBeDefined();
+    expect(cardRule).toBeDefined();
+    expect(groundRule).not.toBe(cardRule);
+  });
+
+  it('counts both same-hex, different-elevation backgrounds as mapped in coverage', () => {
+    // Same fixture as the elevation-surface-token test above: .ground and
+    // .card share a raw hex but occupy different elevation-keyed mapping
+    // entries. mappedCount must resolve each via mappingKeyOf, not the plain
+    // hex — otherwise the second entry's lookup silently misses and coverage
+    // undercounts an elevation-bearing background that the CSS output above
+    // proves was actually mapped and emitted.
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="ground"><div class="card">x</div></div>';
+    censusFromCurrentDom();
+
+    const { coverage } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(coverage?.mapped).toBe(2);
+  });
+
   it('snapshot: emits a grouped stylesheet from novel sampled colors', () => {
     document.head.innerHTML = `
       <style>
