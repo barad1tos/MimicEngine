@@ -4,6 +4,8 @@ import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
 import {
+  CUMULATIVE_SHIFT_CEILING,
+  cumulativeElevationShift,
   ELEVATION_LEVELS,
   ELEVATION_LIGHTNESS_STEP,
   elevationBackgroundHex,
@@ -59,6 +61,63 @@ describe('elevationScale constants', () => {
   });
 });
 
+describe('cumulativeElevationShift (Amendment 3.4 depth softening)', () => {
+  const DECAY_TOLERANCE_DIGITS = 6;
+
+  it('decays each level relative to the one before it: 1.0x / 0.7x / 0.5x of the base step', () => {
+    // A moderate step, well under where the cumulative cap could ever engage
+    // (0.03 * 2.2 = 0.066 < CUMULATIVE_SHIFT_CEILING), so the deltas measured
+    // here are the decay ratios alone, uncontaminated by the cap.
+    const step = 0.03;
+
+    const level1 = cumulativeElevationShift(step, 1);
+    const level2 = cumulativeElevationShift(step, 2);
+    const level3 = cumulativeElevationShift(step, 3);
+
+    expect(level1).toBeCloseTo(step * 1, DECAY_TOLERANCE_DIGITS);
+    expect(level2 - level1).toBeCloseTo(step * 0.7, DECAY_TOLERANCE_DIGITS);
+    expect(level3 - level2).toBeCloseTo(step * 0.5, DECAY_TOLERANCE_DIGITS);
+  });
+
+  it("stays under the cumulative cap at the ceiling candidate's full depth (0.045 * 2.2 = 0.099)", () => {
+    // Confirms the cap is a genuine ceiling, not something the production
+    // candidate ladder ever brushes against in practice.
+    const fullDepthShift = cumulativeElevationShift(ELEVATION_LIGHTNESS_STEP, 3);
+    expect(fullDepthShift).toBeCloseTo(0.099, 5);
+    expect(fullDepthShift).toBeLessThan(CUMULATIVE_SHIFT_CEILING);
+  });
+
+  it('engages the cumulative cap once a larger base step would exceed it, without touching lower levels', () => {
+    // step = 0.05: level 1 (0.05) and level 2 (0.085) both stay under the
+    // 0.1 ceiling: only level 3's undamped total (0.11) would cross it, so
+    // this is the case where the cap clips the tail rung alone.
+    const step = 0.05;
+
+    expect(cumulativeElevationShift(step, 1)).toBeCloseTo(0.05, DECAY_TOLERANCE_DIGITS);
+    expect(cumulativeElevationShift(step, 2)).toBeCloseTo(0.085, DECAY_TOLERANCE_DIGITS);
+    expect(cumulativeElevationShift(step, 3)).toBe(CUMULATIVE_SHIFT_CEILING);
+
+    // Still strictly increasing across levels even with the cap engaged at
+    // the tail -- the cap clips the excess, it doesn't collapse the ramp.
+    expect(cumulativeElevationShift(step, 1)).toBeLessThan(cumulativeElevationShift(step, 2));
+    expect(cumulativeElevationShift(step, 2)).toBeLessThan(cumulativeElevationShift(step, 3));
+  });
+
+  it('clamps an extreme base step to exactly the ceiling', () => {
+    expect(cumulativeElevationShift(1, 3)).toBe(CUMULATIVE_SHIFT_CEILING);
+  });
+
+  it('is zero at level 0 regardless of step', () => {
+    expect(cumulativeElevationShift(0.045, 0)).toBe(0);
+    expect(cumulativeElevationShift(1, 0)).toBe(0);
+  });
+
+  it('is deterministic for the same step and level', () => {
+    expect(cumulativeElevationShift(0.037, 2)).toBe(cumulativeElevationShift(0.037, 2));
+    expect(cumulativeElevationShift(1, 3)).toBe(cumulativeElevationShift(1, 3));
+  });
+});
+
 describe('elevationBackgroundHex', () => {
   const THEME_CASES: readonly [label: string, theme: PaletteTheme][] = [
     ['dark theme', darkTheme],
@@ -89,7 +148,7 @@ describe('elevationBackgroundHex', () => {
   // ceiling constant, so this keeps holding even if the built-in palette is
   // retuned and its resolved step shrinks (see the `resolveElevationStep`
   // describe block below for themes where it already does).
-  it('dark theme: lightness strictly decreases level over level by the resolved step', () => {
+  it('dark theme: lightness strictly decreases level over level by the decayed cumulative shift', () => {
     const step = resolveElevationStep(darkTheme);
     const canvasLightness = oklchOf(darkTheme.tokens.canvas).l;
     let previous = canvasLightness;
@@ -97,12 +156,15 @@ describe('elevationBackgroundHex', () => {
     for (const level of LEVELS) {
       const lightness = oklchOf(elevationBackgroundHex(darkTheme, level)).l;
       expect(lightness).toBeLessThan(previous);
-      expect(lightness).toBeCloseTo(canvasLightness - step * level, LIGHTNESS_TOLERANCE_DIGITS);
+      expect(lightness).toBeCloseTo(
+        canvasLightness - cumulativeElevationShift(step, level),
+        LIGHTNESS_TOLERANCE_DIGITS,
+      );
       previous = lightness;
     }
   });
 
-  it('light theme: lightness strictly decreases level over level by the resolved step', () => {
+  it('light theme: lightness strictly decreases level over level by the decayed cumulative shift', () => {
     const step = resolveElevationStep(lightTheme);
     const canvasLightness = oklchOf(lightTheme.tokens.canvas).l;
     let previous = canvasLightness;
@@ -110,7 +172,10 @@ describe('elevationBackgroundHex', () => {
     for (const level of LEVELS) {
       const lightness = oklchOf(elevationBackgroundHex(lightTheme, level)).l;
       expect(lightness).toBeLessThan(previous);
-      expect(lightness).toBeCloseTo(canvasLightness - step * level, LIGHTNESS_TOLERANCE_DIGITS);
+      expect(lightness).toBeCloseTo(
+        canvasLightness - cumulativeElevationShift(step, level),
+        LIGHTNESS_TOLERANCE_DIGITS,
+      );
       previous = lightness;
     }
   });
@@ -224,7 +289,7 @@ describe('resolveElevationStep', () => {
       for (const level of LEVELS) {
         const lightness = oklchOf(elevationBackgroundHex(theme, level)).l;
         expect(lightness).toBeCloseTo(
-          canvasOklch.l - ELEVATION_LIGHTNESS_STEP * level,
+          canvasOklch.l - cumulativeElevationShift(ELEVATION_LIGHTNESS_STEP, level),
           LIGHTNESS_TOLERANCE_DIGITS,
         );
       }
@@ -260,6 +325,16 @@ describe('resolveElevationStep', () => {
     // direction is caught here rather than silently re-flattening the ramp
     // this amendment exists to fix.
     expect(resolveElevationStep(ayuMirageTheme)).toBeGreaterThan(0.015);
+  });
+
+  it('re-derives the ceiling step for all three built-in themes under depth softening (Amendment 3.4)', () => {
+    // Softening later rungs (0.7x / 0.5x of the base step) only ever makes
+    // the constraint walk MORE permissive than the old undamped multiply --
+    // it can never shrink a theme's resolved step below what Amendment 3.2
+    // already achieved. All three built-in themes hold the full ceiling.
+    expect(resolveElevationStep(darkTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5); // catppuccin-frappe
+    expect(resolveElevationStep(everforestDarkTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
+    expect(resolveElevationStep(ayuMirageTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
   });
 
   // (c) A valid imported light-theme shape (#ffffff canvas / #767676 text,

@@ -27,6 +27,23 @@ const SHADOW_ALPHA = 0.5;
 const SHADOW_OFFSET_STEP = 2;
 const SHADOW_BLUR_STEP = 6;
 
+// Depth softening (Amendment 3.4, 2026-08-22): each level's OWN increment
+// decays relative to the resolved base step -- level 1 at full strength,
+// level 2 at 0.7x, level 3 at 0.5x -- indexed by `level - 1`. Undamped, a
+// flat step x level multiply lets the deepest rung drift arbitrarily far
+// from the theme's tonal family; decaying later levels keeps the ramp
+// visually coherent as depth increases.
+const LEVEL_DECAY_RATIOS: readonly number[] = [1, 0.7, 0.5];
+// The tonal ramp's cumulative lightness shift never exceeds this, however
+// deep or however large the resolved step -- the deepest rung stays inside
+// the theme's own tonal family instead of drifting into a cold pit
+// unrelated to the theme's palette (operator-calibrated on ayu-mirage).
+// Exported so tests can exercise the cap directly with a step larger than
+// `resolveElevationStep` would ever resolve to (its candidate ladder tops
+// out at `ELEVATION_LIGHTNESS_STEP`, whose full-depth cumulative shift never
+// reaches this ceiling in practice: 0.045 * 2.2 = 0.099).
+export const CUMULATIVE_SHIFT_CEILING = 0.1;
+
 // Readability constrains depth (product priority #1): a fixed 0.045 step can
 // make elevated rungs unreadable for a theme's own text tokens (measured on
 // everforest-dark, ayu-mirage, and a valid imported light-theme shape). The
@@ -72,8 +89,31 @@ function canvasColor(theme: PaletteTheme): RgbaColor {
   return color;
 }
 
+/**
+ * The tonal ramp's cumulative OKLCH lightness shift for `level` (0..3) at a
+ * given base `step` -- the SINGLE source both `elevatedRungHex` (emission)
+ * and `stepKeepsTextReadable` (the constraint walk `resolveElevationStep`
+ * runs) read through, so the per-level decay and the cumulative cap can
+ * never drift apart between what's emitted and what's contrast-checked.
+ * Each level's own increment is `step * LEVEL_DECAY_RATIOS[level - 1]`; the
+ * running total is capped at `CUMULATIVE_SHIFT_CEILING` BEFORE the caller
+ * clamps lightness into [0, 1] -- an unusually large base step compresses
+ * the deepest rungs rather than pushing them past the theme's tonal family.
+ * Pure and deterministic.
+ *
+ * @example cumulativeElevationShift(0.045, 3) // ~0.099 -- ceiling not engaged
+ */
+export function cumulativeElevationShift(step: number, level: number): number {
+  let shift = 0;
+  for (let index = 0; index < level; index += 1) {
+    shift += step * (LEVEL_DECAY_RATIOS[index] ?? 0);
+  }
+  return Math.min(shift, CUMULATIVE_SHIFT_CEILING);
+}
+
 function elevatedRungHex(canvasOklch: Oklch, step: number, level: number): HexColor {
-  const lightness = clampLightness(canvasOklch.l + ELEVATION_DIRECTION * step * level);
+  const shift = cumulativeElevationShift(step, level);
+  const lightness = clampLightness(canvasOklch.l + ELEVATION_DIRECTION * shift);
   return toHex(oklchToRgba({ l: lightness, c: canvasOklch.c, h: canvasOklch.h }));
 }
 
@@ -111,14 +151,16 @@ export function resolveElevationStep(theme: PaletteTheme): number {
 /**
  * The tonal-ramp background for one elevation level, derived purely from the
  * theme's canvas token -- no per-theme surface tokens involved. Level 0 is
- * the canvas verbatim; each level above it shifts OKLCH lightness DOWN by
- * `resolveElevationStep(theme)` (up to `ELEVATION_LIGHTNESS_STEP`, shrinking
- * or flattening to keep the theme's text readable) -- raised surfaces are
- * darker than their ground in every mode (Amendment 3.2), hue and chroma
- * preserved, lightness clamped to [0, 1]. `level` clamps into
- * 0..`ELEVATION_LEVELS - 1`.
+ * the canvas verbatim; each level above it shifts OKLCH lightness DOWN from
+ * the resolved `resolveElevationStep(theme)` base step, decaying per level
+ * (Amendment 3.4: 1.0x / 0.7x / 0.5x for levels 1/2/3) and capped so the
+ * cumulative shift never exceeds `CUMULATIVE_SHIFT_CEILING` -- the deepest
+ * rung stays inside the theme's own tonal family instead of drifting toward
+ * a cold pit unrelated to its palette. Raised surfaces are darker than their
+ * ground in every mode (Amendment 3.2), hue and chroma preserved, lightness
+ * clamped to [0, 1]. `level` clamps into 0..`ELEVATION_LEVELS - 1`.
  *
- * @example elevationBackgroundHex(darkTheme, 2) // canvas darkened two steps
+ * @example elevationBackgroundHex(darkTheme, 2) // canvas darkened ~1.7 steps
  */
 export function elevationBackgroundHex(theme: PaletteTheme, level: number): HexColor {
   const canvas = canvasColor(theme);
