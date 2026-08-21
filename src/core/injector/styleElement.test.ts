@@ -170,9 +170,11 @@ describe('apply(apply(page)) idempotency invariant', () => {
   // elevation-paired-guard plan's two new mechanisms, so the full pipeline
   // (not just computedFallback.test.ts in isolation) proves them stable
   // across a double run: `.ground`/`.card` share one raw background hex at
-  // two elevations (elevationOf: `.card`'s ancestor `.ground` has an opaque
-  // background, `.ground` itself does not) — the composite hex@elevation
-  // mapping key must route them to different surface tokens. `.pill` pairs a
+  // two visual surface levels — elevation is a surface level, not a raw
+  // ancestor count, so `.card` also carries its own box-shadow: that's the
+  // real boundary that makes it a distinct surface from `.ground` despite
+  // the identical hex — the composite hex@elevation mapping key must route
+  // them to different surface tokens. `.pill` pairs a
   // saturated green background with near-white text — the RAW site pair is
   // perfectly readable (~5.22:1). Remapping is what breaks it: the raw
   // background maps to the theme's accent-ish `success` token (`#a6d189`)
@@ -186,7 +188,7 @@ describe('apply(apply(page)) idempotency invariant', () => {
       <style>
         .hero { color: rgb(20, 30, 40); }
         .ground { background-color: rgb(255, 255, 255); }
-        .card { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
         .pill { background-color: rgb(1, 117, 79); color: rgb(244, 244, 244); }
       </style>
     `;
@@ -273,9 +275,10 @@ describe('apply(apply(page)) idempotency invariant', () => {
     // Sanity: the census path actually fired a rule, not a trivial empty match.
     expect(first.css).toContain('!important');
 
-    // Elevation ladder: .ground and .card share one raw background hex at
-    // two elevations, so the full pipeline must still emit two DIFFERENT
-    // mapped surface tokens for them — proving the composite hex@elevation
+    // Elevation ladder: .ground and .card share one raw background hex but
+    // .card's own box-shadow is a real surface boundary, putting them at two
+    // different elevations — the full pipeline must still emit two DIFFERENT
+    // mapped surface tokens for them, proving the composite hex@elevation
     // mapping key survives collectPageFacts -> decide -> compose end to end,
     // not just in computedFallback.produce called directly.
     const groundBg = /:where\(div\.ground\) \{[^}]*background-color: (#\w{6})/.exec(first.css)?.[1];

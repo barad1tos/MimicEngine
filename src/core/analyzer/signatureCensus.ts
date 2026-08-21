@@ -1,5 +1,5 @@
 // src/core/analyzer/signatureCensus.ts
-import { isOpaque, parseCssColor } from '../color/parseColor';
+import { type HexColor, isOpaque, parseCssColor, toHex } from '../color/parseColor';
 import { withStylesheetDisabled } from '../injector/styleElement';
 import { computeRefinedSignature, computeSignature, signatureToSelector } from './styleSignature';
 
@@ -370,15 +370,46 @@ function isProbablyVisible(element: Element): boolean {
   return rect.width > 0 && rect.height > 0;
 }
 
-// Count of ancestors with an opaque computed background — the "stacking
-// depth" a background color sits at. Called only from inside the
-// withStylesheetDisabled window sampleInto already runs in, so these
-// getComputedStyle reads see the page's authored colors, not ours.
+// Visual surface level, not a raw ancestor count: a row nested inside a
+// same-color card is still the SAME surface as the card, not a new layer —
+// real sites mark true elevation with a box-shadow, not by nesting depth
+// alone. Walks the opaque-background ancestor chain root-most first, then
+// folds the element's own node in last: the level bumps only when a node's
+// hex differs from the current surface's hex, or the node itself carries a
+// box-shadow; a same-hex, shadow-less node is folded into the surface
+// already established by its predecessor. Non-opaque nodes (transparent
+// wrappers) are skipped entirely — they can neither start nor bump a
+// surface. Called only from inside the withStylesheetDisabled window
+// sampleInto already runs in, so these getComputedStyle reads see the
+// page's authored colors, not ours.
 function elevationOf(element: Element): number {
-  let count = 0;
+  const ancestors: Element[] = [];
   for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-    const background = parseCssColor(getComputedStyle(ancestor).backgroundColor);
-    if (background && isOpaque(background)) count += 1;
+    ancestors.push(ancestor);
   }
-  return count;
+  ancestors.reverse();
+
+  let level = 0;
+  let currentSurfaceHex: HexColor | null = null;
+
+  for (const node of [...ancestors, element]) {
+    const style = getComputedStyle(node);
+    const background = parseCssColor(style.backgroundColor);
+    if (!background || !isOpaque(background)) continue;
+
+    const hex = toHex(background);
+    if (currentSurfaceHex === null) {
+      currentSurfaceHex = hex;
+      continue;
+    }
+
+    const boxShadow = style.boxShadow;
+    const hasOwnShadow = boxShadow !== '' && boxShadow !== 'none';
+    if (hex !== currentSurfaceHex || hasOwnShadow) {
+      level += 1;
+      currentSurfaceHex = hex;
+    }
+  }
+
+  return level;
 }
