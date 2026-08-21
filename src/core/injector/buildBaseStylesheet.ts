@@ -12,14 +12,16 @@ type GatedRule = {
   readonly selectors: readonly string[];
   readonly declarations: readonly string[];
   // Amendment 2 (2026-08-21, signature-census-design.md): the generic
-  // opaque-background readability net for button/input-shaped elements —
+  // opaque-BACKGROUND readability net for button/input-shaped elements —
   // baseline's job when computedFallback can't see the page at all. When
   // computedFallback IS in the plan, the census already paints exactly the
   // surfaces genuinely opaque on the page; this floor then does nothing but
   // paint over transparent controls it has no business touching (the
-  // LinkedIn top-bar hairline/checkerboard live finding). Marked on both the
-  // base and :hover interactive-surface rules; every other rule (unmarked)
-  // is unconditional.
+  // LinkedIn top-bar hairline/checkerboard live finding). Marked ONLY on the
+  // background declarations (base + :hover) — see the Codex P2 note above
+  // the interactive-surface rules below for why color/border-color/
+  // caret-color stay in a separate, unconditional rule instead of sharing
+  // this flag. Every other rule (unmarked) is unconditional too.
   readonly interactiveFloor?: boolean;
 };
 
@@ -46,14 +48,29 @@ const BASE_RULES: readonly GatedRule[] = [
     declarations: ['color: var(--pm-link) !important;'],
   },
   {
+    // Omittable: the only piece of the original combined rule computedFallback
+    // genuinely supersedes — the census samples backgrounds itself, so a
+    // page it can see needs no generic opaque-background assumption here.
+    selectors: [':where(button, [role="button"], input, select, textarea)'],
+    declarations: ['background-color: var(--pm-surface1) !important;'],
+    interactiveFloor: true,
+  },
+  {
+    // Codex P2 (PR #15): unconditional even when computedFallback runs.
+    // color/border-color ARE census-sampled buckets (text/border), so
+    // computedFallback's own later-in-source-order rule already overrides
+    // these for any signature it actually emits a rule for — keeping them
+    // here is a safe default, not a regression. caret-color is NEVER
+    // census-sampled (sampledDeclarationsFor covers text/background/border
+    // only) — nothing else can ever restore it, so it must never be tied to
+    // the omittable background rule above, or an input's original caret can
+    // end up invisible against the themed background.
     selectors: [':where(button, [role="button"], input, select, textarea)'],
     declarations: [
-      'background-color: var(--pm-surface1) !important;',
       'color: var(--pm-text) !important;',
       'border-color: var(--pm-border) !important;',
       'caret-color: var(--pm-accent) !important;',
     ],
-    interactiveFloor: true,
   },
   {
     selectors: [
