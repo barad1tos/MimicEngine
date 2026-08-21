@@ -15,7 +15,7 @@ type NovelDeclaration = AuthoredColorDeclaration & {
   color: NonNullable<AuthoredColorDeclaration['color']>;
 };
 
-// The controller (Task 5) builds and installs a live SignatureCensus before
+// The controller builds and installs a live SignatureCensus before
 // invoking the plan, so by the time this strategy runs the page has already
 // been walked once — no repeat DOM/CSSOM read here. `produce` reads whatever
 // census is installed, keeps only colors invisible to the authored-CSS
@@ -37,9 +37,8 @@ export const computedFallback: PaletteEngine = {
     // plan without authoredRemap (e.g. an opaque page where computedFallback
     // is the only strategy that can see the page's colors at all) must
     // remap every opaque color it finds, authored-visible or not.
-    const authoredHexes = planStrategies(plan).includes('authoredRemap')
-      ? collectAuthoredHexes(facts)
-      : new Set<HexColor>();
+    const stoplistActive = planStrategies(plan).includes('authoredRemap');
+    const authoredHexes = stoplistActive ? collectAuthoredHexes(facts) : new Set<HexColor>();
     const novelDeclarations = toNovelDeclarations(snapshot, authoredHexes);
     const syntheticFacts = buildSyntheticFacts(novelDeclarations);
 
@@ -52,7 +51,21 @@ export const computedFallback: PaletteEngine = {
     const groups = buildSelectorGroups(novelDeclarations, guardedMapping);
     const css = emitGroupedRules(groups);
     const mappedCount = palette.filter((entry) => guardedMapping.has(entry.hex)).length;
-    const coverage = coverageFromCounts(snapshot.distinctColorsSeen, mappedCount);
+    // Coverage's denominator must stay disjoint from authoredRemap's own
+    // report: distinctColorsSeen counts every opaque value the census saw,
+    // authored-covered or not, and summing that with authoredRemap's report
+    // in aggregateCoverage double-counts every color both strategies can
+    // see (a fully-themed mixed-visibility page reporting ~50% instead of
+    // ~100%). When the stoplist is active, only census-seen hexes ABSENT
+    // from authoredHexes count as discovered — mirroring which colors
+    // toNovelDeclarations kept. When the stoplist is inactive (no
+    // authoredRemap in the plan), every hex-deduped opaque value counts, same
+    // as before this fix, just deduped by hex rather than by raw string.
+    const censusHexes = distinctOpaqueHexes(snapshot.opaqueValuesSeen);
+    const discovered = stoplistActive
+      ? [...censusHexes].filter((hex) => !authoredHexes.has(hex)).length
+      : censusHexes.size;
+    const coverage = coverageFromCounts(discovered, mappedCount);
 
     return { css, coverage };
   },
@@ -71,6 +84,23 @@ function collectAuthoredHexes(facts: PageFacts): Set<HexColor> {
   }
   for (const property of facts.customProperties) {
     if (property.color && isOpaque(property.color)) hexes.add(toHex(property.color));
+  }
+
+  return hexes;
+}
+
+// Parses every opaque value the census saw into its distinct hexes, dropping
+// whatever fails to parse or turns out translucent — defensive, since
+// trackOpaque (signatureCensus.ts) only ever adds already-opaque values, but
+// this is the coverage denominator's own gate rather than a re-trust of the
+// census's internals.
+function distinctOpaqueHexes(values: readonly string[]): Set<HexColor> {
+  const hexes = new Set<HexColor>();
+
+  for (const value of values) {
+    const color = parseCssColor(value);
+    if (!color || !isOpaque(color)) continue;
+    hexes.add(toHex(color));
   }
 
   return hexes;

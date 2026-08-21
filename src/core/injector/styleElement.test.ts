@@ -161,11 +161,11 @@ describe('apply(apply(page)) idempotency invariant', () => {
     `;
   }
 
-  // Task 7 fixture: a DOM whose only color signal is invisible to authored
+  // Fixture for a DOM whose only color signal is invisible to authored
   // analysis (no custom properties, no readable-sheet budget relevant here)
   // and visible only to the census — the manual computedFallback pick below
   // is the sole strategy in the plan, so this exercises the census-bootstrap
-  // path (Task 4/5) through the determinism/idempotency invariants.
+  // path through the determinism/idempotency invariants.
   function renderComputedFallbackFixturePage(): void {
     document.head.innerHTML = `
       <style>
@@ -178,8 +178,8 @@ describe('apply(apply(page)) idempotency invariant', () => {
   }
 
   // Builds a census over the current document and installs it, the same way
-  // pageThemeController installs its live census before invoking the plan
-  // (Task 5) — mirrors computedFallback.test.ts's censusFromCurrentDom (Task 4).
+  // pageThemeController installs its live census before invoking the plan —
+  // mirrors computedFallback.test.ts's own censusFromCurrentDom helper.
   function censusFromCurrentDom(): void {
     const census = createSignatureCensus();
     census.begin(document);

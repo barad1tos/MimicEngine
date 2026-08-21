@@ -74,10 +74,10 @@ function escapeAttributeValue(value: string): string {
   return value.replaceAll('\\', '\\\\').replaceAll('"', String.raw`\"`);
 }
 
-// `:is(svg, svg *)` rather than a bare descendant combinator: Task 1's
-// collector records the fill/stroke attribute from the <svg> root itself too
-// (icon libraries put it there), and `svg *` alone would never match the
-// root — see the T1-review ruling in the M4 brief.
+// `:is(svg, svg *)` rather than a bare descendant combinator: the SVG
+// presentation-color collector records the fill/stroke attribute from the
+// <svg> root itself too (icon libraries put it there), and `svg *` alone
+// would never match the root.
 //
 // Padded-attribute edge: pageFacts trims the collected value, but this
 // exact-match selector is built from that trimmed value against the live

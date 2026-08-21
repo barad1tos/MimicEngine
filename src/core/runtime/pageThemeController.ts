@@ -176,6 +176,14 @@ export function createPageThemeController(): PageThemeController {
   // so this observer is unconditional and its own reapply path is exempt
   // from the rate recorder.
   let censusObserver: MutationObserver | null = null;
+  // The most recent plan any apply() call decided — read only to gate
+  // whether a census-driven reapply is worth scheduling at all: recomposing
+  // when the plan doesn't include computedFallback is a guaranteed no-op,
+  // since that's the only strategy that reads census output. Set at the end
+  // of every apply() that reaches decideStrategies (never in the
+  // disabled-site early return, where no plan is decided at all). Null until
+  // the first such apply() completes.
+  let lastPlan: StrategyPlan | null = null;
 
   const stopDomObserver = (): void => {
     domObserver?.stop();
@@ -201,6 +209,13 @@ export function createPageThemeController(): PageThemeController {
     }, CENSUS_REAPPLY_DEBOUNCE_MS);
   };
 
+  // Recomposing after census progress is a guaranteed no-op unless the
+  // current plan actually reads census output — computedFallback is the
+  // only strategy that does. Both the chunk-completion path and the
+  // ingest-learned path gate their reapply scheduling on this.
+  const planIncludesComputedFallback = (): boolean =>
+    lastPlan !== null && planStrategies(lastPlan).includes('computedFallback');
+
   // Drives the census to completion one idle-time chunk at a time. The
   // censusGeneration captured here (not applyGeneration — see its
   // declaration above) is checked when the idle callback actually fires:
@@ -217,7 +232,9 @@ export function createPageThemeController(): PageThemeController {
         censusIdleHandle = null;
         if (generation !== censusGeneration || !census) return;
         const done = census.advance(CENSUS_IDLE_CHUNK);
-        scheduleCensusReapply();
+        // Recompose is a no-op unless the current plan reads census output —
+        // see planIncludesComputedFallback above.
+        if (planIncludesComputedFallback()) scheduleCensusReapply();
         if (!done) scheduleCensusChunk();
       },
       { timeout: CENSUS_IDLE_TIMEOUT_MS },
@@ -234,19 +251,27 @@ export function createPageThemeController(): PageThemeController {
   // passed through here.
   const observeCensusMutations = (): MutationObserver => {
     const observer = new MutationObserver((records) => {
-      // The mutation cap means "go quiet": no ingest walk and no reapply
-      // while capTripped — mirroring ensureDomObserver's own cap gate, this
-      // observer must not become a side channel that keeps recomposing
-      // during a storm the cap already decided to silence. A settings
-      // change clears capTripped and triggers a fresh apply(), which
-      // naturally covers whatever arrived during the pause.
-      if (!census || capTripped) return;
+      if (!census) return;
       const addedElements = addedElementsFrom(records);
       if (addedElements.length === 0) return;
+      // Ingest always runs, tripped cap or not: learning only ever updates
+      // the census's own in-memory record — it never injects a stylesheet
+      // or otherwise side-effects the page — so there is nothing here for
+      // the cap to protect against. Gating ingest itself on capTripped (the
+      // previous behavior) meant every element added during a storm window
+      // was permanently invisible to the census: apply() never re-ingests
+      // anything on its own, so a later settings change clearing capTripped
+      // does not recover what was skipped. Only recomposing
+      // (scheduleCensusReapply) touches the live page, which is why that
+      // alone stays gated on capTripped — mirroring ensureDomObserver's own
+      // cap gate, this observer must not become a side channel that keeps
+      // recomposing during a storm the cap already decided to silence.
       const learned = census.ingestAddedElements(addedElements);
-      // Only recompose when this batch actually taught the census something
-      // new — an ingest that learned nothing must not trigger a recompute.
-      if (learned) scheduleCensusReapply();
+      // Recompose only when this batch actually taught the census something
+      // new, the cap isn't currently silencing reapplies, AND the current
+      // plan would actually read the census (computedFallback is the only
+      // strategy that does — see planIncludesComputedFallback above).
+      if (learned && !capTripped && planIncludesComputedFallback()) scheduleCensusReapply();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
     return observer;
@@ -348,6 +373,16 @@ export function createPageThemeController(): PageThemeController {
       removeStylesheet();
       deactivateOrSweepShadowStyles();
       stopDomObserver();
+      // Census machinery matters only for a live, enabled page — nothing
+      // can read its output while disabled, so mirror stop()'s census
+      // teardown here rather than leaving the walk (and its idle chunks and
+      // debounced reapplies) running for no reason.
+      if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
+      censusIdleHandle = null;
+      if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
+      censusReapplyTimer = undefined;
+      installCensus(null);
+      census = null;
       return;
     }
 
@@ -355,6 +390,7 @@ export function createPageThemeController(): PageThemeController {
     const facts = collectPageFacts(document);
     const metrics = deriveMetrics(facts, { mutationRate });
     const plan = decideStrategies(metrics, siteSettings.strategy);
+    lastPlan = plan;
     const { css, coverages } = composeStylesheet(theme, siteSettings, facts, plan);
     injectStylesheet(css);
 
