@@ -82,8 +82,17 @@ function splitKeyParts(value: string): string[] {
 function escapeClass(className: string): string {
   const cssEscape = (globalThis as { CSS?: { escape?: (value: string) => string } }).CSS?.escape;
   if (cssEscape) return cssEscape(className);
-  return className.replaceAll(/(?:^\d)|[^\w-]/g, (character: string, offset: number) => {
+  return className.replaceAll(/(?:^\d)|(?:[^\w-])/g, (character: string, offset: number) => {
     const isLeadingDigit = offset === 0 && /^\d$/.test(character);
-    return isLeadingDigit ? `\\${character.charCodeAt(0).toString(16)} ` : `\\${character}`;
+    if (!isLeadingDigit) return `\\${character}`;
+
+    // A regex-matched leading digit is always a single BMP code point, so
+    // this can never actually be undefined — the guard exists only to
+    // satisfy strict TS without a non-null assertion.
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) {
+      throw new Error(`escapeClass: no code point for matched character '${character}'`);
+    }
+    return `\\${codePoint.toString(16)} `;
   });
 }

@@ -37,20 +37,19 @@ export function planStorageKey(siteKey: string): string {
 export function isPlanDiagnostics(value: unknown): value is PlanDiagnostics {
   if (typeof value !== 'object' || value === null) return false;
 
-  const plan = (value as { plan?: unknown }).plan;
+  const { plan } = value as { plan?: unknown };
   if (typeof plan !== 'object' || plan === null) return false;
 
-  const provenance = (plan as { provenance?: unknown }).provenance;
+  const { provenance } = plan as { provenance?: unknown };
   if (typeof provenance !== 'object' || provenance === null) return false;
 
-  const kind = (provenance as { kind?: unknown }).kind;
+  const { kind, strategies } = provenance as { kind?: unknown; strategies?: unknown };
   if (kind !== 'auto' && kind !== 'manual') return false;
-  if (kind === 'auto' && !Array.isArray((provenance as { strategies?: unknown }).strategies)) {
-    return false;
-  }
+  if (kind === 'auto' && !Array.isArray(strategies)) return false;
 
-  const census = (value as { census?: unknown }).census;
-  if (census !== undefined && (typeof census !== 'object' || census === null)) return false;
+  const { census } = value as { census?: unknown };
+  const isCensusObject = typeof census === 'object' && census !== null;
+  if (census !== undefined && !isCensusObject) return false;
 
   return true;
 }

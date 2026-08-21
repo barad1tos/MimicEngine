@@ -64,12 +64,17 @@ export function createSignatureCensus(): SignatureCensus {
   let walker: TreeWalker | null = null;
   let complete = false;
 
+  const trackOpaque = (value: string): void => {
+    const color = parseCssColor(value);
+    if (color && isOpaque(color)) opaqueValuesSeen.add(value);
+  };
+
   // Returns true when this pass added at least one distinct value to any
   // property's values Set — i.e. genuinely new information, not just another
   // representative confirming what was already known. A signature already at
   // the representative cap, or a twin whose colors all match prior samples,
   // must not be reported as "learned" by callers keying off this.
-  function sampleInto(record: SignatureRecord, element: Element): boolean {
+  const sampleInto = (record: SignatureRecord, element: Element): boolean => {
     if (!(element instanceof HTMLElement) && !(element instanceof SVGElement)) return false;
     const style = getComputedStyle(element);
     let sampledNewValue = false;
@@ -89,14 +94,9 @@ export function createSignatureCensus(): SignatureCensus {
     }
     record.representativeCount += 1;
     return sampledNewValue;
-  }
+  };
 
-  function trackOpaque(value: string): void {
-    const color = parseCssColor(value);
-    if (color && isOpaque(color)) opaqueValuesSeen.add(value);
-  }
-
-  function visit(element: Element): boolean {
+  const visit = (element: Element): boolean => {
     elementsVisited += 1;
     if (!isProbablyVisible(element)) return false;
 
@@ -121,7 +121,7 @@ export function createSignatureCensus(): SignatureCensus {
     records.set(signature, record);
     sampleInto(record, element);
     return true;
-  }
+  };
 
   // Depth-1 refinement, run once per census at traversal completion (and
   // after each ingestAddedElements batch that learned something): a
@@ -130,8 +130,13 @@ export function createSignatureCensus(): SignatureCensus {
   // element references are ever retained. If a refined record still
   // disagrees, the property is dropped and counted; refined records are
   // never refined again (depth cap).
-  function refineDivergentSignatures(): void {
-    for (const [signature, record] of [...records.entries()]) {
+  const refineDivergentSignatures = (): void => {
+    // Iterates the Map live (not a snapshot copy): deleting the entry the
+    // loop is currently on is spec-defined-safe for Map iteration, and any
+    // refined record this same pass inserts is visited later in the same
+    // loop but immediately skipped by the `record.refined` check below — a
+    // live iteration never re-processes what it just created.
+    for (const [signature, record] of records) {
       if (record.refined) continue;
       const divergent = [...record.properties.values()].some((slot) => slot.values.size > 1);
       if (!divergent) continue;
@@ -163,17 +168,12 @@ export function createSignatureCensus(): SignatureCensus {
         }
       }
     }
-  }
+  };
 
-  function findOccurrences(signature: string): Element[] {
-    const candidates = document.querySelectorAll(signatureToSelector(signature));
-    return [...candidates].filter((element) => computeSignature(element) === signature);
-  }
-
-  function soleValue(values: Set<string>): string | null {
+  const soleValue = (values: Set<string>): string | null => {
     if (values.size !== 1) return null;
     return values.values().next().value ?? null;
-  }
+  };
 
   return {
     begin(root: ParentNode): void {
@@ -258,6 +258,14 @@ export function installedCensus(): SignatureCensus | null {
   return installed;
 }
 
+// Only touches document + module-level imports (signatureToSelector,
+// computeSignature) — no closure-captured state, so it lives at module
+// scope rather than inside createSignatureCensus().
+function findOccurrences(signature: string): Element[] {
+  const candidates = document.querySelectorAll(signatureToSelector(signature));
+  return [...candidates].filter((element) => computeSignature(element) === signature);
+}
+
 function isRelevantValue(value: string): boolean {
   return Boolean(value) && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)';
 }
@@ -268,7 +276,8 @@ type SampledDeclaration = { cssProperty: string; bucket: CensusColor['bucket']; 
 // once the census became the single sampling pass: uniform drawn border
 // sides collapse to one border-color declaration
 // (weight 1 in the palette's bucket majority — the Codex P1 fix from PR #11);
-// differing sides stay per-side longhands. Sides gate on computed width > 0.
+// differing sides stay per-side longhand declarations. Sides gate on
+// computed width > 0.
 function sampledDeclarationsFor(style: CSSStyleDeclaration): SampledDeclaration[] {
   const declarations: SampledDeclaration[] = [
     { cssProperty: 'color', bucket: 'text', value: style.color },
