@@ -5,6 +5,7 @@ import {
   extractSitePalette,
   mappingKeyOf,
   type ColorMapping,
+  type SitePaletteEntry,
 } from '../colorMap';
 import { guardContrast } from '../contrastGuard';
 import { coverageFromCounts } from '../coverage';
@@ -55,7 +56,7 @@ export const computedFallback: PaletteEngine = {
 
     const groups = buildSelectorGroups(novelDeclarations, guardedMapping);
     const css = emitGroupedRules(groups);
-    const mappedCount = palette.filter((entry) => guardedMapping.has(mappingKeyOf(entry))).length;
+    const mappedCount = mappedHexCount(palette, guardedMapping);
     // Coverage's denominator must stay disjoint from authoredRemap's own
     // report: distinctColorsSeen counts every opaque value the census saw,
     // authored-covered or not, and summing that with authoredRemap's report
@@ -92,6 +93,23 @@ function collectAuthoredHexes(facts: PageFacts): Set<HexColor> {
   }
 
   return hexes;
+}
+
+// Coverage's numerator: the count of DISTINCT RAW HEXES represented in
+// `mapping` — not the count of composite (hex@elevation) keys. Elevation
+// splits one color into multiple emitted RULES; it does not discover more
+// colors, so two same-hex backgrounds mapped at different elevations must
+// still count as ONE mapped color against the hex-deduped `discovered`
+// denominator below — otherwise mapped can exceed discovered and the ratio
+// escapes [0,1] (e.g. one white sampled at two elevations reporting "2/1").
+function mappedHexCount(palette: readonly SitePaletteEntry[], mapping: ColorMapping): number {
+  const hexes = new Set<HexColor>();
+
+  for (const entry of palette) {
+    if (mapping.has(mappingKeyOf(entry))) hexes.add(entry.hex);
+  }
+
+  return hexes.size;
 }
 
 // Parses every opaque value the census saw into its distinct hexes, dropping
