@@ -50,6 +50,15 @@ const BORDER_SIDES = [
 export function createSignatureCensus(): SignatureCensus {
   const records = new Map<string, SignatureRecord>();
   const opaqueValuesSeen = new Set<string>();
+  // Raw signatures refineDivergentSignatures() has deleted in favor of
+  // parent-qualified refined records. A later visit() (ingestAddedElements,
+  // typically) that recomputes one of these raw keys must key by refined
+  // context instead — the raw record is gone for good, not merely stale, so
+  // creating a fresh raw record would re-introduce the exact ambiguity
+  // refinement just resolved (see C-1: an unrefined `:where(button.btn)`
+  // rule landing after the refined rules and overriding both by source
+  // order).
+  const refinedAway = new Set<string>();
   let droppedProperties = 0;
   let elementsVisited = 0;
   let walker: TreeWalker | null = null;
@@ -91,7 +100,14 @@ export function createSignatureCensus(): SignatureCensus {
     elementsVisited += 1;
     if (!isProbablyVisible(element)) return false;
 
-    const signature = computeSignature(element);
+    const rawSignature = computeSignature(element);
+    // A raw signature refinement already split away must never be reborn as
+    // a fresh unrefined record — key this element by the same depth-1
+    // parent context refineDivergentSignatures used, so it either joins the
+    // existing refined record for that context or starts a new one, exactly
+    // as if this element had been present during the original refinement.
+    const isRefinedAway = refinedAway.has(rawSignature);
+    const signature = isRefinedAway ? computeRefinedSignature(element) : rawSignature;
     const existing = records.get(signature);
     if (existing) {
       if (existing.representativeCount >= REPRESENTATIVES_PER_SIGNATURE) return false;
@@ -99,7 +115,7 @@ export function createSignatureCensus(): SignatureCensus {
     }
     const record: SignatureRecord = {
       representativeCount: 0,
-      refined: false,
+      refined: isRefinedAway,
       properties: new Map(),
     };
     records.set(signature, record);
@@ -121,6 +137,7 @@ export function createSignatureCensus(): SignatureCensus {
       if (!divergent) continue;
 
       records.delete(signature);
+      refinedAway.add(signature);
       const occurrences = findOccurrences(signature);
       withStylesheetDisabled(() => {
         for (const element of occurrences) {

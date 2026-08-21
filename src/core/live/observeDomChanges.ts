@@ -4,6 +4,12 @@ export type DomChangeObserver = {
   stop: () => void;
 };
 
+// Shared with the census's own mutation observer (pageThemeController.ts):
+// both must react to exactly the same attribute mutations, since a
+// class/style/data-theme/aria-hidden flip is the one kind of change that can
+// alter computed colors without touching childList at all.
+export const SIGNIFICANT_ATTRIBUTES = ['class', 'style', 'data-theme', 'aria-hidden'] as const;
+
 // Our own stylesheet write (injectStylesheet setting the style element's
 // textContent) surfaces as a childList mutation whose target is that style
 // element itself. A record is "ours" whenever its target IS that element or
@@ -37,7 +43,7 @@ export function observeDomChanges(callback: () => void, debounceMs = 250): DomCh
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['class', 'style', 'data-theme', 'aria-hidden'],
+    attributeFilter: [...SIGNIFICANT_ATTRIBUTES],
   });
 
   return {

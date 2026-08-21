@@ -54,6 +54,38 @@ describe('signatureToSelector', () => {
   });
 });
 
+describe('computeSignature — C-3: pipe is a legal class character', () => {
+  it('keys a literal-pipe class differently from splitting the same characters into two classes', () => {
+    const pipeClass = elementFromHtml('<div class="foo|bar"></div>');
+    const twoClasses = elementFromHtml('<div class="bar foo"></div>');
+
+    expect(computeSignature(pipeClass)).not.toBe(computeSignature(twoClasses));
+  });
+
+  it('round-trips a literal-pipe class to a selector that matches the sampled element', () => {
+    document.body.innerHTML = '<div class="foo|bar"></div>';
+    const element = document.body.firstElementChild;
+    if (!element) throw new Error('fixture produced no element');
+
+    const signature = computeSignature(element);
+    const selector = signatureToSelector(signature);
+
+    expect(document.querySelector(selector)).toBe(element);
+  });
+
+  it('keeps refined-form splitting (" > ") working when a class contains a pipe', () => {
+    const parent = elementFromHtml('<div class="card"><button class="foo|bar"></button></div>');
+    const child = parent.firstElementChild;
+    if (!child) throw new Error('no child');
+
+    const refined = computeRefinedSignature(child);
+    const selector = signatureToSelector(refined);
+
+    expect(selector.includes(' > ')).toBe(true);
+    expect(document.querySelector(selector)).toBe(child);
+  });
+});
+
 describe('signatureToSelector without CSS.escape (fallback branch)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();

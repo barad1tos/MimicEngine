@@ -246,4 +246,52 @@ describe('divergence refinement', () => {
 
     expect(fullCensus().snapshot()).toEqual(fullCensus().snapshot());
   });
+
+  it('ingestAddedElements keys a refined-away raw signature by parent context, not a fresh raw record', () => {
+    // Regression for C-1: refineDivergentSignatures() deletes the raw
+    // "button|btn" record once it splits by parent context. A naive
+    // ingestAddedElements lookup by raw signature then finds nothing for a
+    // later-added .btn and creates a fresh UNREFINED "button|btn" record —
+    // whose broad `:where(button.btn)` rule would land after the refined
+    // rules with equal (zero) specificity and override both contexts by
+    // source order.
+    document.head.innerHTML = `
+      <style>
+        .light .btn { color: rgb(0, 0, 0); }
+        .dark .btn { color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <div class="light"><button class="btn">a</button></div>
+      <div class="dark"><button class="btn">b</button></div>
+    `;
+    const census = fullCensus();
+    expect(census.snapshot().entries.map((entry) => entry.selector)).not.toContain('button.btn');
+
+    const lightContainer = document.querySelector('.light');
+    if (!(lightContainer instanceof HTMLElement)) {
+      throw new Error('fixture missing .light container');
+    }
+    const addedButton = document.createElement('button');
+    addedButton.className = 'btn';
+    // A property no earlier .btn sample carries, so a successful land under
+    // the refined key is unambiguous evidence — not just an untouched
+    // leftover from the original refinement pass.
+    addedButton.style.backgroundColor = 'rgb(9, 9, 9)';
+    lightContainer.append(addedButton);
+
+    expect(census.ingestAddedElements([addedButton])).toBe(true);
+
+    const snapshot = census.snapshot();
+    const selectors = snapshot.entries.map((entry) => entry.selector);
+    expect(selectors).not.toContain('button.btn');
+    const lightEntry = snapshot.entries.find(
+      (entry) => entry.selector === 'div.light > button.btn',
+    );
+    expect(lightEntry?.colors).toContainEqual({
+      cssProperty: 'background-color',
+      bucket: 'background',
+      value: 'rgb(9, 9, 9)',
+    });
+  });
 });

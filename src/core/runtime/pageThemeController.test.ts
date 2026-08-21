@@ -62,6 +62,7 @@ vi.mock('../live/observeDomChanges', () => ({
     capturedObserverCallbacks.push(callback);
     return { stop: observerStopSpy };
   }),
+  SIGNIFICANT_ATTRIBUTES: ['class', 'style', 'data-theme', 'aria-hidden'],
 }));
 
 // `createStorageArea` is imported dynamically inside the factory (rather
@@ -1034,6 +1035,96 @@ describe('createPageThemeController — census lifecycle', () => {
     expect(installedCensus()?.snapshot().complete).toBe(true);
     const styleText = document.getElementById(STYLE_ELEMENT_ID)?.textContent;
     expect(styleText).toContain(':where(p.hero)');
+
+    controller.stop();
+  });
+
+  it('resets the census on a significant attribute mutation, keying the mutated element by its new signature (C-2)', async () => {
+    // Regression: the census observer used to watch childList only, so an
+    // SPA-style class/theme-attribute flip that changes a descendant's
+    // COMPUTED color without adding or removing any node left the census
+    // showing stale values forever — its grow-only value Sets have no way to
+    // represent "this color changed"; only a fresh full walk can recover.
+    // Proven here structurally (via signature identity) rather than by
+    // comparing sampled color values: happy-dom does not actually exclude a
+    // disabled <style> element's rules from getComputedStyle (a test-only
+    // environment gap — `element.disabled` and `sheet.disabled` are both
+    // no-ops there), so a color-value assertion on an element our own
+    // computedFallback rule already targets cannot be trusted. Flipping a
+    // class on the element itself changes its own signature (`span|item` ->
+    // `span|item|marker`) — only a genuine fresh full walk can key it under
+    // the new signature; incremental childList ingest never fires for an
+    // attribute-only mutation, so this is unambiguous evidence of the reset.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.body.innerHTML = '<span class="item">x</span>';
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+
+    const beforeSelectors =
+      installedCensus()
+        ?.snapshot()
+        .entries.map((entry) => entry.selector) ?? [];
+    expect(beforeSelectors).toContain('span.item');
+    const injectCountBeforeFlip = injectSpy.mock.calls.length;
+
+    const item = document.querySelector('.item');
+    if (!(item instanceof HTMLElement)) throw new Error('fixture missing .item');
+    item.classList.add('marker');
+
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    const afterSnapshot = installedCensus()?.snapshot();
+    expect(afterSnapshot?.complete).toBe(true);
+    const afterSelectors = afterSnapshot?.entries.map((entry) => entry.selector) ?? [];
+    expect(afterSelectors).not.toContain('span.item');
+    expect(afterSelectors).toContain('span.item.marker');
+    expect(injectSpy.mock.calls.length).toBeGreaterThan(injectCountBeforeFlip);
+
+    controller.stop();
+  });
+
+  it('does not reset the census or reapply on an attribute mutation while the mutation cap is tripped (C-2)', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.body.innerHTML = '<span class="item">x</span>';
+    seedComputedFallbackStrategy();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+
+    // Trip the cap through the mocked live-observer path (matches the
+    // "mutation cap gating" describe block's own firing pattern).
+    for (let firing = 1; firing <= MAX_REAPPLIES_PER_MINUTE + 1; firing++) {
+      fireLatestObserverCallback();
+    }
+    await flushMicrotasks();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    const injectCountAtCap = injectSpy.mock.calls.length;
+
+    const item = document.querySelector('.item');
+    if (!(item instanceof HTMLElement)) throw new Error('fixture missing .item');
+    item.classList.add('marker');
+
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    // No reset, no inject: the cap silences the census-driven reapply just
+    // like it silences the mutation-driven one.
+    expect(injectSpy.mock.calls).toHaveLength(injectCountAtCap);
+    const selectors =
+      installedCensus()
+        ?.snapshot()
+        .entries.map((entry) => entry.selector) ?? [];
+    expect(selectors).toContain('span.item');
+    expect(selectors).not.toContain('span.item.marker');
 
     controller.stop();
   });
