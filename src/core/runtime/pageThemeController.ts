@@ -557,6 +557,16 @@ export function createPageThemeController(): PageThemeController {
         apply().catch((error: unknown) => {
           console.error('[Palette Mimicry] apply failed', error);
         });
+        // A significant attribute mutation during a cap-tripped window sets
+        // censusStale, but scheduleCensusReapply is gated on !capTripped, so
+        // it was never called — the flag would otherwise sit unconsumed
+        // until some unrelated mutation happens to fire the census observer
+        // again, leaving computedFallback serving stale samples silently in
+        // the meantime. The cap just cleared above, so this is the recovery
+        // point: route through the same reset path every other
+        // census-stale trigger uses, gated the same way (only worth it when
+        // the plan actually reads census output).
+        if (censusStale && planIncludesComputedFallback()) scheduleCensusReapply();
       });
     },
 
