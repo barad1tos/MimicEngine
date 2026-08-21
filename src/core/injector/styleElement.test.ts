@@ -2,6 +2,7 @@
 // src/core/injector/styleElement.test.ts
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSignatureCensus, installCensus } from '../analyzer/signatureCensus';
+import { contrastRatio } from '../color/contrast';
 import { composeStylesheet } from '../engine/composeStylesheet';
 import { decideStrategies } from '../engine/decisionTable';
 import { collectPageFacts } from '../engine/pageFacts';
@@ -165,15 +166,30 @@ describe('apply(apply(page)) idempotency invariant', () => {
   // analysis (no custom properties, no readable-sheet budget relevant here)
   // and visible only to the census — the manual computedFallback pick below
   // is the sole strategy in the plan, so this exercises the census-bootstrap
-  // path through the determinism/idempotency invariants.
+  // path through the determinism/idempotency invariants. Also carries the
+  // elevation-paired-guard plan's two new mechanisms, so the full pipeline
+  // (not just computedFallback.test.ts in isolation) proves them stable
+  // across a double run: `.ground`/`.card` share one raw background hex at
+  // two elevations (elevationOf: `.card`'s ancestor `.ground` has an opaque
+  // background, `.ground` itself does not) — the composite hex@elevation
+  // mapping key must route them to different surface tokens. `.pill` pairs a
+  // saturated background with a near-white text color that fails 4.5:1
+  // against it pre-remap — the per-selector paired guard (carried over from
+  // Task 4's review as a gap in the invariant double-run) must fire and
+  // leave the emitted pair readable.
   function renderComputedFallbackFixturePage(): void {
     document.head.innerHTML = `
       <style>
         .hero { color: rgb(20, 30, 40); }
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); }
+        .pill { background-color: rgb(1, 117, 79); color: rgb(244, 244, 244); }
       </style>
     `;
     document.body.innerHTML = `
       <p class="hero">census-sampled text</p>
+      <div class="ground"><div class="card">x</div></div>
+      <span class="pill">All</span>
     `;
   }
 
@@ -252,5 +268,30 @@ describe('apply(apply(page)) idempotency invariant', () => {
     expect(second.metrics).toEqual(first.metrics);
     // Sanity: the census path actually fired a rule, not a trivial empty match.
     expect(first.css).toContain('!important');
+
+    // Elevation ladder: .ground and .card share one raw background hex at
+    // two elevations, so the full pipeline must still emit two DIFFERENT
+    // mapped surface tokens for them — proving the composite hex@elevation
+    // mapping key survives collectPageFacts -> decide -> compose end to end,
+    // not just in computedFallback.produce called directly.
+    const groundBg = /:where\(div\.ground\) \{[^}]*background-color: (#\w{6})/.exec(first.css)?.[1];
+    const cardBg = /:where\(div\.card\) \{[^}]*background-color: (#\w{6})/.exec(first.css)?.[1];
+    expect(groundBg).toBeDefined();
+    expect(cardBg).toBeDefined();
+    expect(groundBg).not.toBe(cardBg);
+
+    // Paired-override guard: .pill's saturated background + near-white text
+    // fails 4.5:1 before remap; the per-selector guard must fire through the
+    // full pipeline and the repaired pair must stay readable across the
+    // double run (the fired-override path Task 4's review flagged as
+    // untested by any invariant double-run).
+    const pillBlock = /:where\(span\.pill\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
+    const pillBg = /background-color: (#\w{6})/.exec(pillBlock)?.[1];
+    const pillText = /(?<!background-)color: (#\w{6})/.exec(pillBlock)?.[1];
+    expect(pillBg).toBeDefined();
+    expect(pillText).toBeDefined();
+    if (pillBg === undefined || pillText === undefined)
+      throw new Error('expected both bg and text for .pill');
+    expect(contrastRatio(pillText, pillBg)).toBeGreaterThanOrEqual(4.5);
   });
 });
