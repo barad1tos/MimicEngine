@@ -438,12 +438,12 @@ describe('buildColorMapping — golden palette', () => {
     expect(JSON.stringify(Object.fromEntries(mapping), null, 2)).toMatchInlineSnapshot(`
       "{
         "#101014": "#303446",
-        "#1c1c22": "#3b4052",
-        "#26262e": "#474c5f",
+        "#1c1c22": "#25293a",
+        "#26262e": "#1a1e2e",
         "#f5f5f7": "#c6d0f5",
         "#c9c9d1": "#a5adce",
         "#3a3a44": "#626880",
-        "#7a7a82": "#474c5f",
+        "#7a7a82": "#303446",
         "#4287f5": "#8caaee",
         "#27ae60": "#a6d189",
         "#c0392b": "#e78284"

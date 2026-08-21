@@ -16,6 +16,12 @@ const MIN_ELEVATION_LEVEL = 0;
 const MAX_ELEVATION_LEVEL = ELEVATION_LEVELS - 1;
 const MIN_SHADOW_LEVEL = 1;
 
+// Amendment 3.2 (2026-08-21, operator-calibrated): raised surfaces are darker
+// than their ground in EVERY mode -- the tonal ramp's direction is universal,
+// no longer theme-mode-dependent (the original Material-style "dark themes
+// lighten as elevation rises" direction is retired).
+const ELEVATION_DIRECTION = -1;
+
 const SHADOW_LIGHTNESS_FACTOR = 0.4;
 const SHADOW_ALPHA = 0.5;
 const SHADOW_OFFSET_STEP = 2;
@@ -66,24 +72,14 @@ function canvasColor(theme: PaletteTheme): RgbaColor {
   return color;
 }
 
-function elevatedRungHex(
-  canvasOklch: Oklch,
-  direction: number,
-  step: number,
-  level: number,
-): HexColor {
-  const lightness = clampLightness(canvasOklch.l + direction * step * level);
+function elevatedRungHex(canvasOklch: Oklch, step: number, level: number): HexColor {
+  const lightness = clampLightness(canvasOklch.l + ELEVATION_DIRECTION * step * level);
   return toHex(oklchToRgba({ l: lightness, c: canvasOklch.c, h: canvasOklch.h }));
 }
 
-function stepKeepsTextReadable(
-  theme: PaletteTheme,
-  canvasOklch: Oklch,
-  direction: number,
-  step: number,
-): boolean {
+function stepKeepsTextReadable(theme: PaletteTheme, canvasOklch: Oklch, step: number): boolean {
   for (let level = 1; level <= MAX_ELEVATION_LEVEL; level += 1) {
-    const rungHex = elevatedRungHex(canvasOklch, direction, step, level);
+    const rungHex = elevatedRungHex(canvasOklch, step, level);
     const textRatio = contrastRatio(theme.tokens.text, rungHex);
     const mutedRatio = contrastRatio(theme.tokens.textMuted, rungHex);
     if (textRatio === null || textRatio < TEXT_CONTRAST_FLOOR) return false;
@@ -104,10 +100,9 @@ function stepKeepsTextReadable(
  */
 export function resolveElevationStep(theme: PaletteTheme): number {
   const canvasOklch = rgbaToOklch(canvasColor(theme));
-  const direction = theme.mode === 'dark' ? 1 : -1;
 
   const step = ELEVATION_STEP_CANDIDATES.find((candidate) =>
-    stepKeepsTextReadable(theme, canvasOklch, direction, candidate),
+    stepKeepsTextReadable(theme, canvasOklch, candidate),
   );
 
   return step ?? 0;
@@ -116,14 +111,14 @@ export function resolveElevationStep(theme: PaletteTheme): number {
 /**
  * The tonal-ramp background for one elevation level, derived purely from the
  * theme's canvas token -- no per-theme surface tokens involved. Level 0 is
- * the canvas verbatim; each level above it shifts OKLCH lightness by
+ * the canvas verbatim; each level above it shifts OKLCH lightness DOWN by
  * `resolveElevationStep(theme)` (up to `ELEVATION_LIGHTNESS_STEP`, shrinking
- * or flattening to keep the theme's text readable), direction by theme mode
- * (dark themes lighten as elevation rises, light themes darken), hue and
- * chroma preserved, lightness clamped to [0, 1]. `level` clamps into
+ * or flattening to keep the theme's text readable) -- raised surfaces are
+ * darker than their ground in every mode (Amendment 3.2), hue and chroma
+ * preserved, lightness clamped to [0, 1]. `level` clamps into
  * 0..`ELEVATION_LEVELS - 1`.
  *
- * @example elevationBackgroundHex(darkTheme, 2) // canvas lightened two steps
+ * @example elevationBackgroundHex(darkTheme, 2) // canvas darkened two steps
  */
 export function elevationBackgroundHex(theme: PaletteTheme, level: number): HexColor {
   const canvas = canvasColor(theme);
@@ -131,10 +126,9 @@ export function elevationBackgroundHex(theme: PaletteTheme, level: number): HexC
   if (clampedLevel === MIN_ELEVATION_LEVEL) return toHex(canvas);
 
   const canvasOklch = rgbaToOklch(canvas);
-  const direction = theme.mode === 'dark' ? 1 : -1;
   const step = resolveElevationStep(theme);
 
-  return elevatedRungHex(canvasOklch, direction, step, clampedLevel);
+  return elevatedRungHex(canvasOklch, step, clampedLevel);
 }
 
 /**

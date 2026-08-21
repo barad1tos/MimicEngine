@@ -18,6 +18,8 @@ const darkTheme = builtInThemes[0];
 const lightTheme: PaletteTheme = { ...darkTheme, mode: 'light' };
 const everforestDarkTheme = builtInThemes.find((theme) => theme.id === 'everforest-dark');
 if (!everforestDarkTheme) throw new Error('everforest-dark missing from builtInThemes fixture');
+const ayuMirageTheme = builtInThemes.find((theme) => theme.id === 'ayu-mirage');
+if (!ayuMirageTheme) throw new Error('ayu-mirage missing from builtInThemes fixture');
 
 const LEVELS: readonly number[] = [1, 2, 3];
 const LIGHTNESS_TOLERANCE_DIGITS = 2; // toBeCloseTo(x, 2) ~= |diff| < 0.005
@@ -81,20 +83,21 @@ describe('elevationBackgroundHex', () => {
   });
 
   // catppuccin-frappe (darkTheme/lightTheme's shared token set) happens to
-  // hold the ceiling step on both mode directions -- asserted against
-  // resolveElevationStep, not the raw ceiling constant, so this keeps
-  // holding even if the built-in palette is retuned and its resolved step
-  // shrinks (see the `resolveElevationStep` describe block below for themes
-  // where it already does).
-  it('dark theme: lightness strictly increases level over level by the resolved step', () => {
+  // hold the ceiling step regardless of mode -- direction is universal now
+  // (Amendment 3.2), so both fixtures below share the same darken-when-
+  // raised formula. Asserted against resolveElevationStep, not the raw
+  // ceiling constant, so this keeps holding even if the built-in palette is
+  // retuned and its resolved step shrinks (see the `resolveElevationStep`
+  // describe block below for themes where it already does).
+  it('dark theme: lightness strictly decreases level over level by the resolved step', () => {
     const step = resolveElevationStep(darkTheme);
     const canvasLightness = oklchOf(darkTheme.tokens.canvas).l;
     let previous = canvasLightness;
 
     for (const level of LEVELS) {
       const lightness = oklchOf(elevationBackgroundHex(darkTheme, level)).l;
-      expect(lightness).toBeGreaterThan(previous);
-      expect(lightness).toBeCloseTo(canvasLightness + step * level, LIGHTNESS_TOLERANCE_DIGITS);
+      expect(lightness).toBeLessThan(previous);
+      expect(lightness).toBeCloseTo(canvasLightness - step * level, LIGHTNESS_TOLERANCE_DIGITS);
       previous = lightness;
     }
   });
@@ -156,17 +159,29 @@ describe('elevationBackgroundHex', () => {
     },
   );
 
-  it('clamps lightness at 1 instead of overshooting (dark theme, white canvas)', () => {
-    // Text tokens engineered dark-on-white so contrast holds at the ceiling
-    // step (verified: resolveElevationStep === 0.045 here) -- the boundary
-    // this exercises is the OKLCH lightness clamp, not a step-0 flatten.
-    // Unclamped level-3 target would be 1 + 3 * 0.045 = 1.135, impossible.
-    const whiteCanvasDark = withText(withCanvas(darkTheme, '#ffffff'), '#1a1a1a', '#333333');
-    expect(resolveElevationStep(whiteCanvasDark)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
+  it('clamps lightness at 0 instead of undershooting (dark theme, near-black canvas)', () => {
+    // Amendment 3.2: direction is universal darken now, so every level only
+    // ever subtracts lightness -- overshooting past 1 is no longer reachable
+    // in any mode, and the sole clamp boundary left is the floor at 0. Text
+    // tokens engineered light-on-near-black so contrast holds at the ceiling
+    // step (verified: resolveElevationStep === 0.045 here). The canvas has no
+    // room left to darken into, so rungs 1..3 all collide at the same floor
+    // value -- benign (a full collapse, not just an adjacent-pair one; see
+    // the "resolves the LOWEST level first" test below for that narrower
+    // case), never NaN, and deterministic across repeated calls.
+    const nearBlackCanvasDark = withText(withCanvas(darkTheme, '#020202'), '#f5f5f5', '#c8c8c8');
+    expect(resolveElevationStep(nearBlackCanvasDark)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
 
-    const lightness = oklchOf(elevationBackgroundHex(whiteCanvasDark, 3)).l;
-    expect(lightness).toBeLessThanOrEqual(1);
-    expect(lightness).toBeGreaterThan(0.9);
+    for (const level of LEVELS) {
+      const lightness = oklchOf(elevationBackgroundHex(nearBlackCanvasDark, level)).l;
+      expect(Number.isNaN(lightness)).toBe(false);
+      expect(lightness).toBeGreaterThanOrEqual(0);
+      expect(lightness).toBeLessThan(0.1);
+    }
+
+    expect(elevationBackgroundHex(nearBlackCanvasDark, 1)).toBe(
+      elevationBackgroundHex(nearBlackCanvasDark, 3),
+    );
   });
 
   it('clamps lightness at 0 instead of undershooting (light theme, black canvas)', () => {
@@ -186,7 +201,9 @@ describe('elevationBackgroundHex', () => {
 describe('resolveElevationStep', () => {
   // (a) A theme engineered so every rung keeps both floors clear at the
   // ceiling step -- confirms the candidate walk picks the largest one when
-  // nothing constrains it, in both mode directions.
+  // nothing constrains it. Direction is universal now (Amendment 3.2), so
+  // both fixtures below share the same darken-when-raised formula regardless
+  // of theme.mode.
   const GENEROUS_CASES: readonly [label: string, theme: PaletteTheme][] = [
     [
       'dark theme, vivid indigo canvas, dark-on-light-rung text',
@@ -204,24 +221,27 @@ describe('resolveElevationStep', () => {
       expect(resolveElevationStep(theme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
 
       const canvasOklch = oklchOf(theme.tokens.canvas);
-      const direction = theme.mode === 'dark' ? 1 : -1;
       for (const level of LEVELS) {
         const lightness = oklchOf(elevationBackgroundHex(theme, level)).l;
         expect(lightness).toBeCloseTo(
-          canvasOklch.l + direction * ELEVATION_LIGHTNESS_STEP * level,
+          canvasOklch.l - ELEVATION_LIGHTNESS_STEP * level,
           LIGHTNESS_TOLERANCE_DIGITS,
         );
       }
     },
   );
 
-  // (b) everforest-dark: at the ceiling step, level 3 drops text to ~4.23:1
-  // (below the 4.5 floor) -- the resolved step must shrink under 0.045 while
-  // keeping every rung readable.
-  it('shrinks below the ceiling for everforest-dark, keeping every rung readable', () => {
+  // (b) everforest-dark and ayu-mirage were the Amendment 3/3.1 motivators:
+  // under the retired lighten-in-dark-mode direction, raising elevation
+  // LIGHTENED an already-light-text theme's rungs, eroding text contrast --
+  // everforest-dark had to shrink its step below the ceiling to stay
+  // readable, and ayu-mirage (near-identical canvas/surface tokens) read
+  // visually flat regardless. Amendment 3.2 flips the direction to darken
+  // universally: darkening a rung INCREASES contrast for light text, so both
+  // themes now regain the full ceiling step instead of shrinking.
+  it('holds the ceiling step for everforest-dark now that darkening raises light-text contrast', () => {
     const step = resolveElevationStep(everforestDarkTheme);
-    expect(step).toBeLessThan(ELEVATION_LIGHTNESS_STEP);
-    expect(step).toBeGreaterThan(0);
+    expect(step).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
 
     for (const level of LEVELS) {
       const rungHex = elevationBackgroundHex(everforestDarkTheme, level);
@@ -232,6 +252,14 @@ describe('resolveElevationStep', () => {
         MUTED_CONTRAST_FLOOR,
       );
     }
+  });
+
+  it('regains a wide step for ayu-mirage, pinning the Amendment 3.2 widening', () => {
+    // Pinned above 0.015 (well above what the old, shrunk-under-lightening
+    // step would have been) so a future regression back to a lightening
+    // direction is caught here rather than silently re-flattening the ramp
+    // this amendment exists to fix.
+    expect(resolveElevationStep(ayuMirageTheme)).toBeGreaterThan(0.015);
   });
 
   // (c) A valid imported light-theme shape (#ffffff canvas / #767676 text,
@@ -287,6 +315,7 @@ describe('resolveElevationStep', () => {
     ...GENEROUS_CASES.map(([, theme]) => theme),
     withText(withCanvas(lightTheme, '#ffffff'), '#767676', '#949494'),
     withText(withCanvas(darkTheme, '#303030'), '#333333', '#363636'),
+    withText(withCanvas(darkTheme, '#020202'), '#f5f5f5', '#c8c8c8'),
   ];
 
   it.each(DETERMINISM_THEMES)('is deterministic for %o', (theme) => {
@@ -309,25 +338,30 @@ describe('elevationLevelForHex', () => {
   });
 
   it('is theme-scoped: the same derived hex need not resolve to the same level in a different theme', () => {
+    // Amendment 3.2 made lightTheme's ramp byte-identical to darkTheme's --
+    // both share the same catppuccin-frappe tokens and direction no longer
+    // depends on theme.mode. A theme with genuinely different tokens
+    // (everforest-dark) is needed to exercise theme-scoping now.
     const level2HexDark = elevationBackgroundHex(darkTheme, 2);
-    expect(elevationLevelForHex(lightTheme, level2HexDark)).not.toBe(2);
+    expect(elevationLevelForHex(everforestDarkTheme, level2HexDark)).not.toBe(2);
   });
 
   it('resolves the LOWEST level first when two (not all) levels clamp to the same hex', () => {
-    // Canvas lightness picked so level 1 (canvas + 1 step) stays under 1, but
-    // level 2 (canvas + 2 steps) and level 3 (canvas + 3 steps) both
-    // overshoot and clamp to the same value -- an adjacent-pair collision,
-    // not a collapse of every level, unlike a literal white canvas (where
-    // even level 1 already clamps). Requires the ceiling step to actually be
-    // in play, so text tokens are engineered dark-on-near-white (verified:
-    // resolveElevationStep === 0.045 here) rather than reusing
-    // catppuccinFrappe's light-on-dark text, which flattens this fixture to
-    // step 0 and collapses every level onto the same hex instead.
-    const canvasLightness = 1 - 1.5 * ELEVATION_LIGHTNESS_STEP;
+    // Amendment 3.2: direction is universal darken now, so the "two but not
+    // all collide" boundary sits near a DARK canvas instead of a near-white
+    // one (which the old lighten-in-dark-mode direction used to clamp toward
+    // 1). Canvas lightness picked so level 1 (canvas - 1 step) stays above 0,
+    // but level 2 (canvas - 2 steps) and level 3 (canvas - 3 steps) both
+    // undershoot and clamp to the same floor value -- an adjacent-pair
+    // collision, not a collapse of every level (see the near-black-canvas
+    // clamp test above for that full-collapse case). Requires the ceiling
+    // step to actually be in play, so text tokens are engineered
+    // light-on-near-black (verified: resolveElevationStep === 0.045 here).
+    const canvasLightness = 2.5 * ELEVATION_LIGHTNESS_STEP;
     const nearClampTheme = withText(
       withCanvas(darkTheme, toHex(oklchToRgba({ l: canvasLightness, c: 0, h: 0 }))),
-      '#1a1a1a',
-      '#333333',
+      '#f5f5f5',
+      '#c8c8c8',
     );
     expect(resolveElevationStep(nearClampTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
 
