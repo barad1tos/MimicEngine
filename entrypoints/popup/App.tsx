@@ -97,6 +97,17 @@ function PlanDiagnosticsPanel({ diagnostics }: Readonly<{ diagnostics: PlanDiagn
           {Math.round(diagnostics.coverage.ratio * 100)}%)
         </p>
       )}
+      {diagnostics.census && !diagnostics.census.complete && (
+        <p className="diagnostics-reason">
+          Census in progress — {diagnostics.census.signatureCount} signatures /{' '}
+          {diagnostics.census.elementsVisited} elements
+        </p>
+      )}
+      {diagnostics.census && diagnostics.census.droppedProperties > 0 && (
+        <p className="diagnostics-reason">
+          {diagnostics.census.droppedProperties} properties dropped as ambiguous
+        </p>
+      )}
     </section>
   );
 }

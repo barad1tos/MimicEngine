@@ -387,11 +387,22 @@ export function createPageThemeController(): PageThemeController {
     // but it keeps the guard's contract — abort before every listed side
     // effect, including diagnostics — true even if that changes later.
     if (generation !== applyGeneration) return;
+    const censusSnapshot = census?.snapshot();
     await writePlanDiagnostics({
       siteKey,
       plan,
       metrics,
       ...(coverage && { coverage }),
+      ...(censusSnapshot
+        ? {
+            census: {
+              complete: censusSnapshot.complete,
+              signatureCount: censusSnapshot.signatureCount,
+              elementsVisited: censusSnapshot.elementsVisited,
+              droppedProperties: censusSnapshot.droppedProperties,
+            },
+          }
+        : {}),
       updatedAt: new Date().toISOString(),
     });
   };
