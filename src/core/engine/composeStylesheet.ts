@@ -1,5 +1,5 @@
 import { buildOverrideRule } from '../injector/buildBaseStylesheet';
-import type { SiteSettings } from '../storage/settingsStore';
+import type { SiteOverride, SiteSettings } from '../storage/settingsStore';
 import type { PaletteTheme } from '../themes';
 import type { CoverageReport } from './coverage';
 import { planStrategies, type StrategyPlan } from './decisionTable';
@@ -13,6 +13,13 @@ function compareOverrides(
   b: SiteSettings['overrides'][number],
 ): number {
   return compareStrings(a.selector, b.selector) || compareStrings(a.property, b.property);
+}
+
+export function composeOverrideStylesheet(overrides: readonly SiteOverride[]): string {
+  return [...overrides]
+    .sort(compareOverrides)
+    .map((override) => buildOverrideRule(override))
+    .join('\n\n');
 }
 
 // Override-wins cascade contract: strategy blocks (authoredRemap,
@@ -38,11 +45,9 @@ export function composeStylesheet(
     .filter((engine) => selectedStrategies.includes(engine.id))
     .map((engine) => engine.produce(theme, siteSettings, facts, plan));
 
-  const overrideBlocks = [...siteSettings.overrides]
-    .sort(compareOverrides)
-    .map((override) => buildOverrideRule(override));
+  const overrideStylesheet = composeOverrideStylesheet(siteSettings.overrides);
 
-  const css = [tokenVariablesCss(theme), ...outputs.map((output) => output.css), ...overrideBlocks]
+  const css = [tokenVariablesCss(theme), ...outputs.map((output) => output.css), overrideStylesheet]
     .filter((block) => block.length > 0)
     .join('\n\n')
     .trim();
