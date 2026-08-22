@@ -44,6 +44,15 @@ const LEVEL_DECAY_RATIOS: readonly number[] = [1, 0.7, 0.5];
 // reaches this ceiling in practice: 0.045 * 2.2 = 0.099).
 export const CUMULATIVE_SHIFT_CEILING = 0.1;
 
+// Adjacent-contrast bounce (Amendment 3.5, 2026-08-22): decaying per-level
+// steps can compress the ΔL between two ADJACENT rungs below what's visually
+// distinguishable on a dark ground -- a raised island then drowns in its
+// parent's tone even with a shadow. `rungLightnessLadder` guarantees at
+// least this much OKLCH lightness delta between rung N and rung N-1; when
+// the canonical (darker) candidate would compress below it, rung N bounces
+// LIGHTER instead: `L(previous) + MIN_ADJACENT_DELTA`.
+export const MIN_ADJACENT_DELTA = 0.03;
+
 // Readability constrains depth (product priority #1): a fixed 0.045 step can
 // make elevated rungs unreadable for a theme's own text tokens (measured on
 // everforest-dark, ayu-mirage, and a valid imported light-theme shape). The
@@ -90,16 +99,16 @@ function canvasColor(theme: PaletteTheme): RgbaColor {
 }
 
 /**
- * The tonal ramp's cumulative OKLCH lightness shift for `level` (0..3) at a
- * given base `step` -- the SINGLE source both `elevatedRungHex` (emission)
- * and `stepKeepsTextReadable` (the constraint walk `resolveElevationStep`
- * runs) read through, so the per-level decay and the cumulative cap can
- * never drift apart between what's emitted and what's contrast-checked.
- * Each level's own increment is `step * LEVEL_DECAY_RATIOS[level - 1]`; the
- * running total is capped at `CUMULATIVE_SHIFT_CEILING` BEFORE the caller
- * clamps lightness into [0, 1] -- an unusually large base step compresses
- * the deepest rungs rather than pushing them past the theme's tonal family.
- * Pure and deterministic.
+ * The tonal ramp's CANONICAL cumulative OKLCH lightness shift for `level`
+ * (0..3) at a given base `step`, assuming an unbroken darkening progression
+ * from the canvas -- i.e. ignoring the adjacent-contrast bounce (Amendment
+ * 3.5). Each level's own increment is `step * LEVEL_DECAY_RATIOS[level - 1]`;
+ * the running total is capped at `CUMULATIVE_SHIFT_CEILING`. Pure and
+ * deterministic. Emission and the readability constraint walk no longer read
+ * through this closed form -- `rungLightnessLadder` derives the ACTUAL,
+ * bounce-aware rung sequence sequentially instead. This function remains a
+ * standalone, independently useful description of the decay+cap math on its
+ * own terms (and is exercised in isolation by its own tests).
  *
  * @example cumulativeElevationShift(0.045, 3) // ~0.099 -- ceiling not engaged
  */
@@ -111,9 +120,55 @@ export function cumulativeElevationShift(step: number, level: number): number {
   return Math.min(shift, CUMULATIVE_SHIFT_CEILING);
 }
 
+/**
+ * The tonal ramp's ACTUAL lightness for rungs 0..3 -- the ONE source
+ * `elevatedRungHex` (emission) and `stepKeepsTextReadable` (the constraint
+ * walk `resolveElevationStep` runs) both read through, so a bounce can never
+ * show up in emission without also being seen by the readability check.
+ *
+ * A SEQUENTIAL fold, not the closed-form `cumulativeElevationShift` curve:
+ * each rung N's canonical candidate is the decayed step for level N applied
+ * to rung N-1's ACTUAL lightness (not its canonical one), still capped so
+ * the total shift from canvas never exceeds `CUMULATIVE_SHIFT_CEILING` and
+ * clamped to [0, 1]. When that candidate's delta from rung N-1's ACTUAL
+ * lightness compresses below `MIN_ADJACENT_DELTA` -- decay, cap, or a
+ * floor/ceiling clamp all compress it the same way -- rung N BOUNCES lighter
+ * instead: `L(N-1) + MIN_ADJACENT_DELTA`, clamped to [0, 1] (a bounce that
+ * clamps at 1 keeps whatever delta the clamp leaves; degrades gracefully).
+ * A bounced rung derives every later rung in turn, so a bounce at level 2
+ * propagates into level 3's candidate -- level 3 may end up closer to its
+ * grandparent's tone (level 1) than to its immediate parent. Pure and
+ * deterministic.
+ *
+ * @example rungLightnessLadder(0.3, 0.045) // [0.3, 0.255, 0.2235, 0.2535] -- level
+ * 3's undamped candidate (0.201) would sit only 0.0225 below level 2, under
+ * `MIN_ADJACENT_DELTA`, so it bounces to 0.2235 + 0.03 instead.
+ */
+function rungLightnessLadder(canvasLightness: number, step: number): readonly number[] {
+  const lightness: number[] = [canvasLightness];
+
+  for (let level = 1; level <= MAX_ELEVATION_LEVEL; level += 1) {
+    const previous = lightness[level - 1] ?? canvasLightness;
+    const increment = step * (LEVEL_DECAY_RATIOS[level - 1] ?? 0);
+    const shiftSoFar = canvasLightness - previous;
+    const cappedShift = Math.min(shiftSoFar + increment, CUMULATIVE_SHIFT_CEILING);
+    const candidate = clampLightness(canvasLightness + ELEVATION_DIRECTION * cappedShift);
+
+    // increment === 0 only when step itself is 0 -- resolveElevationStep's
+    // deliberate "no candidate is readable" flatten. There was no darkening
+    // attempt to rescue in that case, so bounce must stay silent: every rung
+    // stays exactly the canvas, matching the readability check that verified
+    // step 0 (not step 0 plus a bounce) against theme text/textMuted.
+    const bounces = increment > 0 && Math.abs(candidate - previous) < MIN_ADJACENT_DELTA;
+    lightness.push(bounces ? clampLightness(previous + MIN_ADJACENT_DELTA) : candidate);
+  }
+
+  return lightness;
+}
+
 function elevatedRungHex(canvasOklch: Oklch, step: number, level: number): HexColor {
-  const shift = cumulativeElevationShift(step, level);
-  const lightness = clampLightness(canvasOklch.l + ELEVATION_DIRECTION * shift);
+  const ladder = rungLightnessLadder(canvasOklch.l, step);
+  const lightness = ladder[level] ?? canvasOklch.l;
   return toHex(oklchToRgba({ l: lightness, c: canvasOklch.c, h: canvasOklch.h }));
 }
 
@@ -159,6 +214,12 @@ export function resolveElevationStep(theme: PaletteTheme): number {
  * a cold pit unrelated to its palette. Raised surfaces are darker than their
  * ground in every mode (Amendment 3.2), hue and chroma preserved, lightness
  * clamped to [0, 1]. `level` clamps into 0..`ELEVATION_LEVELS - 1`.
+ *
+ * Adjacent-contrast bounce (Amendment 3.5): when decay/cap/clamp would
+ * compress a rung's delta from its immediate predecessor below
+ * `MIN_ADJACENT_DELTA`, that rung bounces LIGHTER instead of continuing to
+ * darken -- see `rungLightnessLadder`. Strict level-over-level darkening no
+ * longer holds; the guarantee is the adjacent delta, not the direction.
  *
  * @example elevationBackgroundHex(darkTheme, 2) // canvas darkened ~1.7 steps
  */
@@ -207,7 +268,12 @@ export function elevationShadowValue(theme: PaletteTheme, level: number): string
  * case; at a clamped extreme (a near-white canvas in light mode, a
  * near-black one in dark mode) two adjacent levels CAN legitimately render
  * the identical hex once lightness saturates at the [0, 1] bound -- ties
- * resolve first-wins, returning the LOWEST such level.
+ * resolve first-wins, returning the LOWEST such level. The adjacent-contrast
+ * bounce (Amendment 3.5) adds a second collision shape: a bounced rung is
+ * derived relative to its immediate predecessor, not the whole ladder, so it
+ * can land on the SAME hex as a NON-adjacent rung (its grandparent's tone)
+ * without every level in between collapsing too -- still resolved first-wins
+ * by this same linear scan, lowest level first.
  *
  * @example elevationLevelForHex(theme, elevationBackgroundHex(theme, 2)) // 2
  */
