@@ -13,7 +13,13 @@ import {
 import { guardContrast, repairTextTarget } from '../contrastGuard';
 import { coverageFromCounts } from '../coverage';
 import { planStrategies } from '../decisionTable';
-import { elevationLevelForHex, elevationVariable, shadowVariable } from '../elevationScale';
+import {
+  ELEVATION_LEVELS,
+  elevationBackgroundHex,
+  elevationLevelForHex,
+  elevationVariable,
+  shadowVariable,
+} from '../elevationScale';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
@@ -239,12 +245,27 @@ function buildSelectorGroups(
 // math against `mappedValue` while it was still a literal HEX (a `var()`
 // reference is opaque to contrast checks) — ColorMapping keeps storing real
 // hexes end to end, and only the CSS TEXT this strategy emits for a
-// background declaration switches to the matching `var(--pm-elevation-N)`
-// once its mapped hex is one of the theme's own derived elevation-ramp
-// colors (elevationLevelForHex). An accent-classified or preserved
-// background never resolves here (its mapped value, if any, is a theme
-// accent token, not a ladder rung) and is left as a literal hex, same as
-// today. Text and border values are never touched.
+// background declaration switches to the matching `var(--pm-elevation-N)`.
+//
+// Two paths, by whether the declaration itself carries a census-derived
+// elevation (post-review fix: Sourcery flagged the reverse hex->level lookup
+// as lossy on a ramp collision — Amendment 3.5's adjacent-contrast bounce
+// can render a non-adjacent rung's hex identically to this one, and
+// elevationLevelForHex, a linear scan, can only resolve that first-wins;
+// the two levels render identically either way, but the wrong `var()` name
+// was still a real mislabel):
+// - Elevation-carrying (the common case — assignLadder in colorMap.ts maps
+//   this exact declaration.elevation, clamped, onto elevationBackgroundHex):
+//   the level is already known, no search needed. Confirm the mapped hex
+//   still equals that rung's hex before substituting — an accent-classified
+//   background can carry an elevation too (partitionAccents pulls accents
+//   out before the ladder ever runs, see colorMap.ts), so its mapped value
+//   is a theme accent token, not a ladder rung, and must stay a literal hex.
+// - Elevation-less (authoredRemap's palette never carries one; any future
+//   hex-only producer): the hex is the only signal available, so the
+//   reverse lookup stays here, with the same collision caveat
+//   elevationLevelForHex's own docs describe.
+// Text and border values are never touched either way.
 function substituteElevationBackgrounds(
   resolved: readonly ResolvedNovelDeclaration[],
   theme: PaletteTheme,
@@ -254,8 +275,16 @@ function substituteElevationBackgrounds(
 
     const color = parseCssColor(item.mappedValue);
     if (!color) return item;
+    const hex = toHex(color);
 
-    const level = elevationLevelForHex(theme, toHex(color));
+    const { elevation } = item.declaration;
+    if (elevation !== undefined) {
+      const level = Math.min(elevation, ELEVATION_LEVELS - 1);
+      if (elevationBackgroundHex(theme, level) !== hex) return item;
+      return { ...item, mappedValue: `var(${elevationVariable(level)})` };
+    }
+
+    const level = elevationLevelForHex(theme, hex);
     if (level === null) return item;
 
     return { ...item, mappedValue: `var(${elevationVariable(level)})` };
