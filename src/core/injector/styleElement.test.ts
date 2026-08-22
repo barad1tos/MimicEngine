@@ -212,14 +212,13 @@ describe('apply(apply(page)) idempotency invariant', () => {
   // and visible only to the census — the manual computedFallback pick below
   // is the sole strategy in the plan, so this exercises the census-bootstrap
   // path through the determinism/idempotency invariants. Also carries the
-  // elevation-paired-guard plan's two new mechanisms, so the full pipeline
+  // positional-elevation and paired-guard mechanisms, so the full pipeline
   // (not just computedFallback.test.ts in isolation) proves them stable
-  // across a double run: `.ground`/`.card` share one raw background hex at
-  // two visual surface levels — elevation is a surface level, not a raw
-  // ancestor count, so `.card` also carries its own box-shadow: that's the
-  // real boundary that makes it a distinct surface from `.ground` despite
-  // the identical hex — the composite hex@elevation mapping key must route
-  // them to different surface tokens. `.pill` pairs a
+  // across a double run: `.ground`/`.card` share one raw background hex but
+  // `.card`'s own box-shadow makes it an island (census elevation 1) — its
+  // background and shadow must come from the POSITIONAL block (Amendment
+  // 3.7), while `.ground`, a surface-follower, reads the inherited
+  // `--pm-current-surface` with the ground rung as fallback. `.pill` pairs a
   // saturated green background with near-white text — the RAW site pair is
   // perfectly readable (~5.22:1). Remapping is what breaks it: the raw
   // background maps to the theme's accent-ish `success` token (`#a6d189`)
@@ -320,29 +319,24 @@ describe('apply(apply(page)) idempotency invariant', () => {
     // Sanity: the census path actually fired a rule, not a trivial empty match.
     expect(first.css).toContain('!important');
 
-    // Elevation ladder: .ground and .card share one raw background hex but
-    // .card's own box-shadow is a real surface boundary, putting them at two
-    // different elevations — the full pipeline must still emit two DIFFERENT
-    // `var(--pm-elevation-N)` values for them (Amendment 3: the ladder now
-    // targets the universal elevation ramp, substituted at render time —
-    // see computedFallback.ts), proving the composite hex@elevation mapping
-    // key survives collectPageFacts -> decide -> compose end to end, not
-    // just in computedFallback.produce called directly.
+    // Positional elevation (Amendment 3.7): .ground and .card share one raw
+    // background hex but .card's own box-shadow makes it an island — the
+    // full pipeline (not just computedFallback.produce in isolation) must
+    // route its background AND shadow through the positional block, while
+    // the follower .ground reads the inherited surface variable. No
+    // per-signature `:where(div.card)` group survives (background was its
+    // only declaration).
     const groundBlock = /:where\(div\.ground\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
-    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
-    const groundBg = /background-color: (var\(--pm-elevation-\d\))/.exec(groundBlock)?.[1];
-    const cardBg = /background-color: (var\(--pm-elevation-\d\))/.exec(cardBlock)?.[1];
-    expect(groundBg).toBeDefined();
-    expect(cardBg).toBeDefined();
-    expect(groundBg).not.toBe(cardBg);
-
-    // Island shadow: .card's own box-shadow is the elevation boundary that
-    // puts it at elevation >= 1, so the full pipeline (not just
-    // computedFallback.produce in isolation) must emit `box-shadow:
-    // var(--pm-shadow-1)` in the SAME rule block — the flat ground rung
-    // (elevation 0) casts none.
+    expect(groundBlock).toContain(
+      'background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;',
+    );
     expect(groundBlock).not.toContain('box-shadow');
-    expect(cardBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
+
+    expect(first.css).not.toMatch(/:where\(div\.card\) \{/);
+    const levelOneBlock = /:where\(:is\(div\.card\)\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
+    expect(levelOneBlock).toContain('background-color: var(--pm-elevation-1) !important;');
+    expect(levelOneBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
+    expect(levelOneBlock).toContain('--pm-current-surface: var(--pm-elevation-1) !important;');
 
     // Paired-override guard: .pill's raw site pair is readable (~5.22:1) —
     // remapping is what breaks it: the raw background maps to the theme's

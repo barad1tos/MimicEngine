@@ -16,7 +16,6 @@ import { planStrategies } from '../decisionTable';
 import {
   ELEVATION_LEVELS,
   elevationBackgroundHex,
-  elevationLevelForHex,
   elevationVariable,
   shadowVariable,
 } from '../elevationScale';
@@ -234,100 +233,115 @@ function buildSelectorGroups(
 
   const backgroundBySelector = buildBackgroundBySelector(declarations, mapping);
   const guarded = applyPairedTextGuard(resolved, backgroundBySelector, theme);
-  const withElevationVariables = substituteElevationBackgrounds(guarded, theme);
-  const islandShadows = buildIslandShadowDeclarations(guarded);
+  const { substituted, islandSelectors } = substituteElevationBackgrounds(guarded, theme);
 
-  return groupSelectors([...withElevationVariables, ...islandShadows]);
+  return [...buildPositionalGroups(islandSelectors), ...groupSelectors(substituted)];
 }
 
-// The "render-time" substitution the elevation-ramp design calls for:
+// Inherited by descendants, so a surface-following rule painted inside a
+// level-N island automatically reads that island's rung; unset outside
+// every island, where the follower substitution's fallback lands the
+// ground rung. Set only by the positional block below.
+const CURRENT_SURFACE_VARIABLE = '--pm-current-surface';
+
+type ElevationSubstitution = {
+  substituted: ResolvedNovelDeclaration[];
+  islandSelectors: ReadonlySet<string>;
+};
+
+// The "render-time" split positional elevation (Amendment 3.7) calls for:
 // guardContrast and the paired-text guard above already ran their contrast
 // math against `mappedValue` while it was still a literal HEX (a `var()`
 // reference is opaque to contrast checks) — ColorMapping keeps storing real
-// hexes end to end, and only the CSS TEXT this strategy emits for a
-// background declaration switches to the matching `var(--pm-elevation-N)`.
-//
-// Two paths, by whether the declaration itself carries a census-derived
-// elevation (post-review fix: Sourcery flagged the reverse hex->level lookup
-// as lossy on a ramp collision — Amendment 3.5's adjacent-contrast bounce
-// can render a non-adjacent rung's hex identically to this one, and
-// elevationLevelForHex, a linear scan, can only resolve that first-wins;
-// the two levels render identically either way, but the wrong `var()` name
-// was still a real mislabel):
-// - Elevation-carrying (the common case — assignLadder in colorMap.ts maps
-//   this exact declaration.elevation, clamped, onto elevationBackgroundHex):
-//   the level is already known, no search needed. Confirm the mapped hex
-//   still equals that rung's hex before substituting — an accent-classified
-//   background can carry an elevation too (partitionAccents pulls accents
-//   out before the ladder ever runs, see colorMap.ts), so its mapped value
-//   is a theme accent token, not a ladder rung, and must stay a literal hex.
-// - Elevation-less (authoredRemap's palette never carries one; any future
-//   hex-only producer): the hex is the only signal available, so the
-//   reverse lookup stays here, with the same collision caveat
-//   elevationLevelForHex's own docs describe.
-// Text and border values are never touched either way.
+// hexes end to end; only the emitted CSS changes shape here. A background
+// declaration is judged by its census-derived BINARY elevation against the
+// rung hex assignLadder (colorMap.ts) gave it:
+// - Island (elevation 1, mapped onto the rung-1 hex): REMOVED from the
+//   per-signature output entirely — its background and shadow are painted
+//   by the positional block, which is the only place depth exists now. Its
+//   selector joins the returned island set.
+// - Follower (elevation 0, mapped onto the ground rung): substituted to the
+//   inherited surface variable with the ground rung as fallback, so one
+//   signature reads the right tone at every depth.
+// - Anything else — accent-classified backgrounds (partitionAccents pulls
+//   accents out before the ladder runs, so their mapped value is a theme
+//   accent token, never a rung hex), preserved/unmapped values, text and
+//   border buckets: untouched.
+// Census background declarations always carry an elevation
+// (recordBackgroundExtras computes it for every opaque sample), so there is
+// no elevation-less background path left — the old reverse hex->level
+// lookup died with it.
 function substituteElevationBackgrounds(
   resolved: readonly ResolvedNovelDeclaration[],
   theme: PaletteTheme,
-): ResolvedNovelDeclaration[] {
-  return resolved.map((item) => {
-    if (item.declaration.bucket !== 'background') return item;
+): ElevationSubstitution {
+  const substituted: ResolvedNovelDeclaration[] = [];
+  const islandSelectors = new Set<string>();
 
-    const color = parseCssColor(item.mappedValue);
-    if (!color) return item;
-    const hex = toHex(color);
-
-    const { elevation } = item.declaration;
-    if (elevation !== undefined) {
-      const level = Math.min(elevation, ELEVATION_LEVELS - 1);
-      if (elevationBackgroundHex(theme, level) !== hex) return item;
-      return { ...item, mappedValue: `var(${elevationVariable(level)})` };
+  for (const item of resolved) {
+    const rung = mappedRungLevel(item, theme);
+    if (rung === null) {
+      substituted.push(item);
+      continue;
     }
 
-    const level = elevationLevelForHex(theme, hex);
-    if (level === null) return item;
+    if (rung >= 1) {
+      islandSelectors.add(item.declaration.selector);
+      continue;
+    }
 
-    return { ...item, mappedValue: `var(${elevationVariable(level)})` };
-  });
-}
-
-const MIN_ISLAND_ELEVATION = 1;
-
-// One synthetic `box-shadow` declaration per selector whose OWN background
-// declaration (a) actually resolved through `mapping` — an emitted
-// background rule; a preserved/unmapped background casts no shadow — and
-// (b) carries an elevation >= 1 (the ground rung, level 0, is flat). The
-// shadow's level mirrors the background's own clamped elevation, so an
-// island and its shadow always share the same rung; shadowVariable clamps
-// internally, so the raw census elevation is passed through unclamped here.
-// Deduped by (selector, conditions): a signature has at most one background
-// declaration in practice, but this stays correct even if that changes.
-// Read from `guarded` (post paired-guard, pre elevation-substitution) —
-// only `declaration.bucket`/`elevation` are read, never `mappedValue`, so
-// ordering relative to substituteElevationBackgrounds does not matter.
-function buildIslandShadowDeclarations(
-  guarded: readonly ResolvedNovelDeclaration[],
-): ResolvedNovelDeclaration[] {
-  const seenSelectors = new Set<string>();
-  const shadows: ResolvedNovelDeclaration[] = [];
-
-  for (const { declaration } of guarded) {
-    if (declaration.bucket !== 'background') continue;
-    const { elevation } = declaration;
-    if (elevation === undefined || elevation < MIN_ISLAND_ELEVATION) continue;
-
-    const dedupeKey = `${JSON.stringify(declaration.conditions)}|${declaration.selector}`;
-    if (seenSelectors.has(dedupeKey)) continue;
-    seenSelectors.add(dedupeKey);
-
-    shadows.push({
-      declaration: { ...declaration, property: 'box-shadow' },
-      mappedValue: `var(${shadowVariable(elevation)})`,
-      isSelectorHint: false,
+    substituted.push({
+      ...item,
+      mappedValue: `var(${CURRENT_SURFACE_VARIABLE}, var(${elevationVariable(0)}))`,
     });
   }
 
-  return shadows;
+  return { substituted, islandSelectors };
+}
+
+// The elevation level a background declaration's mapped value actually
+// occupies on the tonal ramp, or null when the substitution above must
+// leave it alone: not a background, no census elevation, or a mapped hex
+// that is not that level's rung (an accent-classified background carries an
+// elevation too, but its mapped value is an accent token, not a rung).
+function mappedRungLevel(item: ResolvedNovelDeclaration, theme: PaletteTheme): number | null {
+  if (item.declaration.bucket !== 'background') return null;
+  const { elevation } = item.declaration;
+  if (elevation === undefined) return null;
+
+  const color = parseCssColor(item.mappedValue);
+  if (!color) return null;
+
+  const level = Math.min(elevation, ELEVATION_LEVELS - 1);
+  return elevationBackgroundHex(theme, level) === toHex(color) ? level : null;
+}
+
+// The positional depth block (Amendment 3.7): level N is N nested
+// `:is(<sorted islands>)` hops, each rule painting background, shadow, and
+// the inherited surface variable for its rung. Emitted BEFORE the
+// per-signature groups, ascending so a deeper rule wins at equal (zero,
+// via the shared :where() gate wrap) specificity; nesting past level 3
+// keeps matching the level-3 rule — the natural cap. Empty island set
+// emits nothing, byte-stable with a no-island page.
+function buildPositionalGroups(islandSelectors: ReadonlySet<string>): SelectorGroup[] {
+  if (islandSelectors.size === 0) return [];
+
+  const islandList = `:is(${[...islandSelectors].sort(compareStrings).join(', ')})`;
+  const groups: SelectorGroup[] = [];
+
+  for (let level = 1; level < ELEVATION_LEVELS; level += 1) {
+    groups.push({
+      conditions: [],
+      selector: Array.from({ length: level }, () => islandList).join(' '),
+      declarations: new Map([
+        [CURRENT_SURFACE_VARIABLE, `var(${elevationVariable(level)})`],
+        ['background-color', `var(${elevationVariable(level)})`],
+        ['box-shadow', `var(${shadowVariable(level)})`],
+      ]),
+    });
+  }
+
+  return groups;
 }
 
 // A selector's paired background for the guard below: the MAPPED value when
