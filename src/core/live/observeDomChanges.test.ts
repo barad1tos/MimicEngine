@@ -87,6 +87,27 @@ describe('observeDomChanges', () => {
     observer.stop();
   });
 
+  it('fires when the page itself removes our generated style element (self-heal path)', async () => {
+    // A DOM sanitizer or aggressive page script stripping our style element
+    // is PAGE activity, not our own churn: the debounced re-apply is the
+    // only path that recreates the stylesheet, so this record must never be
+    // swallowed by the own-churn exemption (which is for the transition-kill
+    // element alone).
+    const styleElement = document.createElement('style');
+    styleElement.id = STYLE_ELEMENT_ID;
+    document.documentElement.append(styleElement);
+    await waitFor(SETTLE_MS);
+
+    const callback = vi.fn();
+    const observer = observeDomChanges(callback, DEBOUNCE_MS);
+
+    styleElement.remove();
+    await waitFor(SETTLE_MS);
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    observer.stop();
+  });
+
   it('stops observing and cancels a pending debounce after stop()', async () => {
     const callback = vi.fn();
     const observer = observeDomChanges(callback, DEBOUNCE_MS);
