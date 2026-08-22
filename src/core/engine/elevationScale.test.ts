@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { contrastRatio } from '../color/contrast';
 import { oklchToRgba, rgbaToOklch, type Oklch } from '../color/oklch';
-import { parseCssColor, toHex, type RgbaColor } from '../color/parseColor';
+import { parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
 import {
   ELEVATION_LEVELS,
@@ -320,22 +320,21 @@ describe('resolveElevationStep', () => {
   // (c) A valid imported light-theme shape (#ffffff canvas / #767676 text,
   // ~4.54:1 at rest) that the fixed 0.045 step would have dropped to ~3:1 by
   // level 3. Pre-Amendment-3.5, no step candidate kept every rung above 4.5,
-  // so the ramp flattened via step 0. Amendment 3.5 changes WHICH candidate
-  // survives here (not the outcome, which is byte-identical): at step 0.03
-  // level 1's full-strength decayed increment (0.03) would still just clear
-  // MIN_ADJACENT_DELTA and genuinely darken, eroding this theme's marginal
-  // contrast the same way the old fixed step did -- so 0.03 fails readability
-  // same as before. At step 0.025, EVERY level's decayed increment (0.025,
-  // 0.0175, 0.0125) sits below MIN_ADJACENT_DELTA, so all three rungs bounce;
-  // canvas is already lightness-clamped at 1 (pure white), so "bounce
-  // lighter" has nowhere to go and clamps right back to the canvas -- level 1
-  // through 3 land exactly on it, same as the theme's own at-rest contrast.
-  // 0.025 is the LARGEST candidate for which this all-bounce-clamp escape
-  // hatch applies, so resolveElevationStep picks it over the 0 fallback.
+  // so the ramp flattened via step 0. Amendment 3.5 (and its post-review
+  // round-tripped-lightness fix) changes WHICH candidate survives here, not
+  // the outcome, which is byte-identical (every rung == the canvas): at
+  // step 0.03, level 1's ideal candidate (canvas - 0.03) is real-darkening
+  // in principle, but canvas is already lightness-clamped at 1 (pure white)
+  // and 8-bit hex quantization shaves its round-tripped delta to just under
+  // 0.03 (~0.0298) -- so it bounces too, and "bounce lighter" has nowhere to
+  // go from white, landing right back on the canvas; levels 2-3 bounce the
+  // same way for the same reason. 0.03 is the LARGEST candidate for which
+  // this all-bounce-clamp escape hatch applies, so resolveElevationStep now
+  // picks it over 0.025 (still viable, just no longer the largest).
   it('flattens the ramp for a valid imported-light theme whose own contrast is marginal, via bounce-clamp at the canvas', () => {
     const importedLight = withText(withCanvas(lightTheme, '#ffffff'), '#767676', '#949494');
 
-    expect(resolveElevationStep(importedLight)).toBeCloseTo(0.025, 5);
+    expect(resolveElevationStep(importedLight)).toBeCloseTo(0.03, 5);
 
     const canvasHex = elevationBackgroundHex(importedLight, 0);
     for (const level of LEVELS) {
@@ -392,16 +391,19 @@ describe('resolveElevationStep', () => {
 });
 
 describe('adjacent-contrast bounce (Amendment 3.5)', () => {
-  it('cascades a floor-clamp bounce: level 2 clamps and bounces, then level 3 derives its candidate from the BOUNCED level 2 (not a re-clamped canonical value)', () => {
-    // A canvas dark enough that level 2's canonical candidate (cumulative
-    // shift 0.0765 from canvas) undershoots below 0 and floor-clamps, while
-    // level 1 (cumulative shift 0.045) stays comfortably positive. darkTheme's
-    // own canvas hue/chroma at a custom lightness -- the exact hexes below
-    // were confirmed by running the implementation, not hand-derived; pinned
-    // so a regression back to canvas-relative (non-sequential) derivation is
-    // caught here.
+  it('cascades a bounce: level 2 compresses under its predecessor and bounces, then level 3 derives its candidate from the BOUNCED level 2 (not the pre-bounce value)', () => {
+    // darkTheme's own canvas hue/chroma at a custom, low lightness. Level 1
+    // is a genuine, unbounced darkening. Level 2's IDEAL candidate is NOT
+    // floor-clamped in OKLCH terms (it stays positive) -- but this deep in
+    // the ramp, 8-bit sRGB quantization is coarse enough (post-review fix:
+    // the ladder now compares ROUND-TRIPPED, not ideal, lightness) that its
+    // REAL decoded delta from level 1 still lands under MIN_ADJACENT_DELTA,
+    // so it bounces anyway. Level 3 then derives its own candidate from
+    // level 2's BOUNCED (lighter) value, not the pre-bounce one -- the exact
+    // hexes below were confirmed by running the implementation against the
+    // real production functions, not hand-derived.
     const canvasOklch = oklchOf(darkTheme.tokens.canvas);
-    const deepDarkCanvas = toHex(oklchToRgba({ l: 0.066, c: canvasOklch.c, h: canvasOklch.h }));
+    const deepDarkCanvas = toHex(oklchToRgba({ l: 0.11, c: canvasOklch.c, h: canvasOklch.h }));
     const theme = withText(withCanvas(darkTheme, deepDarkCanvas), '#f5f5f5', '#c8c8c8');
 
     expect(resolveElevationStep(theme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
@@ -411,10 +413,10 @@ describe('adjacent-contrast bounce (Amendment 3.5)', () => {
     const level2Hex = elevationBackgroundHex(theme, 2);
     const level3Hex = elevationBackgroundHex(theme, 3);
 
-    expect(canvasHex).toBe('#000006');
-    expect(level1Hex).toBe('#000001');
-    expect(level2Hex).toBe('#000004');
-    expect(level3Hex).toBe('#000109');
+    expect(canvasHex).toBe('#03030f');
+    expect(level1Hex).toBe('#010006');
+    expect(level2Hex).toBe('#02020c');
+    expect(level3Hex).toBe('#050513');
 
     const canvasL = oklchOf(canvasHex).l;
     const level1 = oklchOf(level1Hex).l;
@@ -423,14 +425,13 @@ describe('adjacent-contrast bounce (Amendment 3.5)', () => {
 
     // Level 1: genuine darkening (canonical direction), no bounce.
     expect(level1).toBeLessThan(canvasL);
-    // Level 2 BOUNCES: lighter than level 1, not darker -- its canonical
-    // candidate would have undershot below 0 (floor-clamped).
+    // Level 2 BOUNCES: lighter than level 1, not darker.
     expect(level2).toBeGreaterThan(level1);
     // Level 3 also bounces, lighter than level 2 -- the sequential-fold claim
     // under test: it derives FROM level 2's bounced value. Had it instead
-    // re-derived from the pre-bounce canonical level 2 (clamped to exactly
-    // 0), its own candidate would ALSO floor-clamp to 0, tying it with level
-    // 2 instead of separating from it.
+    // re-derived from the pre-bounce level 2 candidate, level 3's own
+    // candidate would land somewhere else entirely (a darker rung much
+    // closer to level 1), not this hex.
     expect(level3).toBeGreaterThan(level2);
     expect(level3Hex).not.toBe(level2Hex);
   });
@@ -471,6 +472,83 @@ describe('adjacent-contrast bounce (Amendment 3.5)', () => {
       }
     },
   );
+
+  // Post-review fix (2026-08-22, Codex P2): the adjacent-delta check used to
+  // compare IDEAL OKLCH lightness values, but `oklchToRgba` clips channels
+  // outside the sRGB gamut -- for a saturated canvas the achievable chroma
+  // shrinks as lightness shifts toward the ramp's dark end, so an ideal
+  // candidate that clears MIN_ADJACENT_DELTA on paper could clip to a REAL
+  // emitted color that doesn't. The ladder now round-trips every candidate
+  // (and bounce target) through the exact emission path before comparing or
+  // chaining it.
+  it('keeps every adjacent delta as close to MIN_ADJACENT_DELTA as gamut clipping allows for a saturated canvas (#00005a, the exact shape from the finding), strictly better than the pre-fix computation', () => {
+    // #00005a: OKLCH ~{l: 0.211, c: 0.146, h: 264} -- a fully saturated,
+    // moderately dark blue. Using darkTheme's own DEFAULT text tokens (no
+    // synthetic override needed): this canvas alone is enough to trigger the
+    // bug. Pre-fix (verified by direct computation of the old, ideal-only
+    // algorithm against this exact canvas), the REAL (decoded) deltas the
+    // old code actually emitted were ~0.0215, ~0.0123, ~0.0123 -- every
+    // single adjacent pair broke the 0.03 promise, some by nearly half.
+    const theme = withCanvas(darkTheme, '#00005a');
+
+    expect(resolveElevationStep(theme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
+
+    const hexes = [0, 1, 2, 3].map((level) => elevationBackgroundHex(theme, level));
+    expect(hexes).toEqual(['#00005a', '#000c63', '#000059', '#000c63']);
+
+    const levels = hexes.map((hex) => oklchOf(hex).l);
+    const deltas = LEVELS.map((level) => Math.abs((levels[level] ?? 0) - (levels[level - 1] ?? 0)));
+
+    // Pairs 2 (level 1 -> 2) and 3 (level 2 -> 3): geometry allows clearing
+    // the guarantee, and the round-tripped fold delivers it.
+    expect(deltas[1]).toBeGreaterThanOrEqual(MIN_ADJACENT_DELTA);
+    expect(deltas[2]).toBeGreaterThanOrEqual(MIN_ADJACENT_DELTA);
+
+    // Pair 1 (canvas -> level 1): even the round-tripped BOUNCE target can't
+    // fully clear 0.03 at this chroma/hue -- residual clipping, accepted as
+    // best-achievable (single bounce attempt, no retry loop).
+    expect(deltas[0]).toBeLessThan(MIN_ADJACENT_DELTA);
+    expect(deltas[0]).toBeGreaterThan(0.025);
+
+    // Every pair strictly improves on what the pre-fix, ideal-lightness-only
+    // ladder actually emitted for this exact canvas.
+    const preFixDeltas = [0.0215, 0.0123, 0.0123];
+    deltas.forEach((delta, index) => {
+      expect(delta).toBeGreaterThan(preFixDeltas[index] ?? 0);
+    });
+  });
+
+  // Built-in themes are well inside the sRGB gamut at every rung, so the
+  // round-tripped-lightness fix should leave them alone -- verified against
+  // the exact hexes emitted before this fix (captured by running the
+  // pre-fix implementation). A single hex CAN legitimately drift by one
+  // 8-bit channel step (asserted via lightness closeness, not byte-for-byte
+  // hex equality): every rung past level 1 now derives from its
+  // predecessor's own round-tripped (quantized) lightness rather than an
+  // idealized float, so a rung with no bounce anywhere in its ancestry can
+  // still pick up a sub-0.001 lightness perturbation from that chaining --
+  // imperceptible, and never large enough to change a bounce/no-bounce
+  // decision for a theme this far from any gamut boundary.
+  const PRE_FIX_BUILT_IN_HEXES: ReadonlyMap<string, readonly HexColor[]> = new Map([
+    ['catppuccin-frappe', ['#303446', '#25293a', '#1d2132', '#25283a'] as HexColor[]],
+    ['everforest-dark', ['#2d353b', '#222a30', '#1b2228', '#22292f'] as HexColor[]],
+    ['ayu-mirage', ['#1f2430', '#151925', '#0e121d', '#141924'] as HexColor[]],
+  ]);
+  const BUILT_IN_UNCHANGED_TOLERANCE = 0.002;
+
+  it.each([...PRE_FIX_BUILT_IN_HEXES.entries()])(
+    "leaves %s's ramp lightness unchanged by the round-tripped-lightness fix",
+    (themeId, preFixHexes) => {
+      const theme = builtInThemes.find((candidate) => candidate.id === themeId);
+      if (!theme) throw new Error(`${themeId} missing from builtInThemes fixture`);
+
+      for (const level of [0, 1, 2, 3]) {
+        const preFixL = oklchOf(preFixHexes[level] ?? '#000000').l;
+        const currentL = oklchOf(elevationBackgroundHex(theme, level)).l;
+        expect(Math.abs(currentL - preFixL)).toBeLessThan(BUILT_IN_UNCHANGED_TOLERANCE);
+      }
+    },
+  );
 });
 
 describe('elevationLevelForHex', () => {
@@ -494,34 +572,26 @@ describe('elevationLevelForHex', () => {
   });
 
   it('resolves the LOWEST level first when a bounce lands a rung on its grandparent-adjacent (non-adjacent) hex', () => {
-    // Amendment 3.5 changes WHAT collides here, not just the direction: under
-    // the pre-bounce closed form, levels 2 and 3 both undershot below 0 and
-    // clamped to the same floor hex (an adjacent-pair collision). Under the
-    // sequential fold, level 2 still floor-clamps and bounces -- but level 3
-    // now derives its candidate from the BOUNCED level 2, and that candidate
-    // itself is comfortably positive (no floor clamp), so it ALSO bounces
-    // (0.0225 decayed increment < MIN_ADJACENT_DELTA). The result: level 3
-    // recovers close enough to level 1's tone that both round to the SAME
-    // hex, while level 2 (genuinely darker, floor-clamped) stays distinct --
-    // a NON-adjacent collision (1 and 3), not the old adjacent one (2 and 3).
-    // Requires the ceiling step to actually be in play, so text tokens are
-    // engineered light-on-near-black (verified: resolveElevationStep ===
-    // 0.045 here).
-    const canvasLightness = 2.5 * ELEVATION_LIGHTNESS_STEP;
-    const nearClampTheme = withText(
-      withCanvas(darkTheme, toHex(oklchToRgba({ l: canvasLightness, c: 0, h: 0 }))),
-      '#f5f5f5',
-      '#c8c8c8',
-    );
-    expect(resolveElevationStep(nearClampTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
+    // A vivid, dark-on-light-rung fixture where level 3 bounces enough to
+    // land back on level 1's exact tone (its grandparent, not its immediate
+    // parent), while level 2 stays genuinely distinct -- a NON-adjacent
+    // collision. Requires the ceiling step to actually be in play, so text
+    // tokens are engineered light-on-dark (verified: resolveElevationStep
+    // === 0.045 here). This fixture's hexes are stable across the
+    // round-tripped-lightness fix (post-review): its lightness/chroma
+    // combination stays comfortably in-gamut at every rung, so the collision
+    // it exercises is a genuine bounce-recovery coincidence, not a gamut- or
+    // quantization-driven artifact.
+    const collisionTheme = withText(withCanvas(darkTheme, '#101a3a'), '#f5f5f5', '#c8c8c8');
+    expect(resolveElevationStep(collisionTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
 
-    const level1Hex = elevationBackgroundHex(nearClampTheme, 1);
-    const level2Hex = elevationBackgroundHex(nearClampTheme, 2);
-    const level3Hex = elevationBackgroundHex(nearClampTheme, 3);
+    const level1Hex = elevationBackgroundHex(collisionTheme, 1);
+    const level2Hex = elevationBackgroundHex(collisionTheme, 2);
+    const level3Hex = elevationBackgroundHex(collisionTheme, 3);
 
     expect(level1Hex).toBe(level3Hex);
     expect(level2Hex).not.toBe(level1Hex);
-    expect(elevationLevelForHex(nearClampTheme, level1Hex)).toBe(1);
+    expect(elevationLevelForHex(collisionTheme, level1Hex)).toBe(1);
   });
 });
 
