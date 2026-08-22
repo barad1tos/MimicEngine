@@ -6,6 +6,7 @@ const baseMetrics: PageMetrics = {
   colorCustomPropertyCount: 0,
   domElementCount: 100,
   shadowRootCount: 0,
+  unreadableStylesheetCount: 0,
   unreadableStylesheetRatio: 0,
   authoredColorCount: 0,
   inlineStyleColorCount: 0,
@@ -108,17 +109,17 @@ describe('decideStrategies', () => {
     });
   });
 
-  it('selects style-starved only for a large DOM with at most three authored colors', () => {
+  it('selects style-starved when unreadable stylesheets leave at most three authored colors', () => {
     const styleStarvedPlan = decideStrategies(
-      { ...baseMetrics, authoredColorCount: 3, domElementCount: 1500 },
+      { ...baseMetrics, authoredColorCount: 3, unreadableStylesheetCount: 1 },
       'auto',
     );
     const authoredBoundaryPlan = decideStrategies(
-      { ...baseMetrics, authoredColorCount: 4, domElementCount: 1500 },
+      { ...baseMetrics, authoredColorCount: 4, unreadableStylesheetCount: 1 },
       'auto',
     );
-    const domBoundaryPlan = decideStrategies(
-      { ...baseMetrics, authoredColorCount: 3, domElementCount: 1499 },
+    const readableStylesPlan = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 3, unreadableStylesheetCount: 0 },
       'auto',
     );
 
@@ -129,12 +130,12 @@ describe('decideStrategies', () => {
       strategies: ['baseline', 'computedFallback'],
       reasons: [
         { metric: 'authoredColorCount', value: 3, condition: { lte: 3 } },
-        { metric: 'domElementCount', value: 1500, condition: { gte: 1500 } },
+        { metric: 'unreadableStylesheetCount', value: 1, condition: { gte: 1 } },
       ],
       tableVersion: TABLE_VERSION,
     });
     expect(planStrategies(authoredBoundaryPlan)).toEqual(['baseline']);
-    expect(planStrategies(domBoundaryPlan)).toEqual(['baseline']);
+    expect(planStrategies(readableStylesPlan)).toEqual(['baseline']);
   });
 
   it('boundary: colorCustomPropertyCount 8 selects calm-variables-rich, 7 falls through to default', () => {
@@ -265,7 +266,7 @@ describe('decideStrategies', () => {
         }, // mixed-visibility
         { ...baseMetrics, authoredColorCount: 12, mutationRate: 5 }, // authored-rich
         { ...baseMetrics, unreadableStylesheetRatio: 0.5 }, // opaque-styles
-        { ...baseMetrics, authoredColorCount: 3, domElementCount: 1500 }, // style-starved
+        { ...baseMetrics, authoredColorCount: 3, unreadableStylesheetCount: 1 }, // style-starved
         baseMetrics, // default
       ];
 

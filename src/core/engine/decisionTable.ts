@@ -9,7 +9,7 @@ export type DecisionRow = {
   strategies: StrategyId[];
 };
 
-export const TABLE_VERSION = 4;
+export const TABLE_VERSION = 5;
 
 export const DECISION_TABLE: readonly DecisionRow[] = [
   {
@@ -50,7 +50,7 @@ export const DECISION_TABLE: readonly DecisionRow[] = [
   },
   {
     name: 'style-starved',
-    when: { authoredColorCount: { lte: 3 }, domElementCount: { gte: 1500 } },
+    when: { authoredColorCount: { lte: 3 }, unreadableStylesheetCount: { gte: 1 } },
     strategies: ['baseline', 'computedFallback'],
   },
   { name: 'default', when: {}, strategies: ['baseline'] },

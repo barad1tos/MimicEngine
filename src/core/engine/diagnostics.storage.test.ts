@@ -43,6 +43,7 @@ function buildDiagnostics(siteKey: string): PlanDiagnostics {
       colorCustomPropertyCount: 0,
       domElementCount: 10,
       shadowRootCount: 0,
+      unreadableStylesheetCount: 0,
       unreadableStylesheetRatio: 0,
       authoredColorCount: 0,
       inlineStyleColorCount: 0,

@@ -42,6 +42,7 @@ describe('deriveMetrics', () => {
   it('computes unreadable ratio and passes counters through', () => {
     const metrics = deriveMetrics(base, { mutationRate: 0 });
     expect(metrics.unreadableStylesheetRatio).toBeCloseTo(0.25);
+    expect(metrics.unreadableStylesheetCount).toBe(1);
     expect(metrics.domElementCount).toBe(100);
     expect(metrics.shadowRootCount).toBe(2);
     expect(

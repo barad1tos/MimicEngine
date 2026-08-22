@@ -5,6 +5,7 @@ export type PageMetrics = {
   colorCustomPropertyCount: number;
   domElementCount: number;
   shadowRootCount: number;
+  unreadableStylesheetCount: number;
   unreadableStylesheetRatio: number;
   authoredColorCount: number;
   inlineStyleColorCount: number;
@@ -44,6 +45,7 @@ export function deriveMetrics(facts: PageFacts, runtime: RuntimeMetricsInput): P
     colorCustomPropertyCount,
     domElementCount: facts.domElementCount,
     shadowRootCount: facts.shadowRootCount,
+    unreadableStylesheetCount: facts.unreadableStylesheetCount,
     unreadableStylesheetRatio:
       facts.stylesheetCount === 0 ? 0 : facts.unreadableStylesheetCount / facts.stylesheetCount,
     authoredColorCount,

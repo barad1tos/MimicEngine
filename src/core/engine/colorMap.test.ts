@@ -419,13 +419,8 @@ describe('buildColorMapping — other bucket', () => {
 });
 
 describe('buildColorMapping — golden palette', () => {
-  // #26262e's rung (elevation level 2) shifted by exactly one 8-bit channel
-  // step (#1d2132 -> #1e2132, a ~0.0009 OKLCH lightness difference,
-  // imperceptible) when elevationScale.ts's rung ladder started chaining
-  // ROUND-TRIPPED (not ideal) lightness through every level, including
-  // non-bounced ones (post-review fix for saturated-canvas gamut clipping,
-  // see elevationScale.test.ts's "adjacent-contrast bounce" describe block).
-  // Re-pinned deliberately after confirming the drift is this negligible.
+  // Background roles map to the theme's authored semantic surface ladder,
+  // keeping color mapping aligned with emitted elevation variables.
   it('produces a stable full mapping for a fixed 10-color palette on catppuccinFrappe', () => {
     const palette = [
       entry('#101014', 'background', 50),
@@ -445,12 +440,12 @@ describe('buildColorMapping — golden palette', () => {
     expect(JSON.stringify(Object.fromEntries(mapping), null, 2)).toMatchInlineSnapshot(`
       "{
         "#101014": "#303446",
-        "#1c1c22": "#25293a",
-        "#26262e": "#1e2132",
+        "#1c1c22": "#414559",
+        "#26262e": "#51576d",
         "#f5f5f7": "#c6d0f5",
         "#c9c9d1": "#a5adce",
         "#3a3a44": "#626880",
-        "#7a7a82": "#303446",
+        "#7a7a82": "#51576d",
         "#4287f5": "#8caaee",
         "#27ae60": "#a6d189",
         "#c0392b": "#e78284"
