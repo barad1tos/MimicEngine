@@ -16,7 +16,7 @@ import {
   removeShadowStylesheets,
   syncShadowStylesheets,
 } from '../injector/shadowStyles';
-import { injectStylesheet, removeStylesheet } from '../injector/styleElement';
+import { injectStylesheet, isOwnElement, removeStylesheet } from '../injector/styleElement';
 import {
   observeDomChanges,
   SIGNIFICANT_ATTRIBUTES,
@@ -93,15 +93,21 @@ function cancelIdleWork(handle: number): void {
   }
 }
 
-// Flattens the direct top-level element additions out of a mutation batch.
-// A module-level function (rather than a closure nested inside the
+// Flattens the direct top-level element additions out of a mutation batch,
+// excluding our own elements (isOwnElement) — withStylesheetDisabled's
+// transition-kill element churns document.documentElement's childList around
+// every census read (advance/ingestAddedElements both wrap themselves in it),
+// and feeding that churn back into ingestAddedElements would recurse without
+// end: ingest calls withStylesheetDisabled itself, which churns the kill
+// element again, producing another batch for this same observer. A
+// module-level function (rather than a closure nested inside the
 // MutationObserver callback) so the census mutation observer below stays
 // within sonarjs' nesting-depth limit.
 function addedElementsFrom(records: readonly MutationRecord[]): Element[] {
   const elements: Element[] = [];
   for (const record of records) {
     for (const node of record.addedNodes) {
-      if (node instanceof Element) elements.push(node);
+      if (node instanceof Element && !isOwnElement(node)) elements.push(node);
     }
   }
   return elements;

@@ -13,6 +13,7 @@ import {
   injectStylesheet,
   removeStylesheet,
   STYLE_ELEMENT_ID,
+  TRANSITION_KILL_ELEMENT_ID,
   withStylesheetDisabled,
 } from './styleElement';
 
@@ -103,6 +104,50 @@ describe('withStylesheetDisabled', () => {
 
     expect(result).toBe('ran');
     expect(document.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+  });
+
+  it('adds a transition-kill element for the duration of fn and removes it after a normal return', () => {
+    injectStylesheet(':root { --pm-canvas: #000000; }');
+
+    let killElementDuringFn: Element | null = null;
+    withStylesheetDisabled(() => {
+      killElementDuringFn = document.getElementById(TRANSITION_KILL_ELEMENT_ID);
+    });
+
+    expect(killElementDuringFn).toBeInstanceOf(HTMLStyleElement);
+    expect((killElementDuringFn as HTMLStyleElement | null)?.textContent).toBe(
+      '* { transition: none !important; }',
+    );
+    expect(document.getElementById(TRANSITION_KILL_ELEMENT_ID)).toBeNull();
+  });
+
+  it('removes the transition-kill element and re-enables the sheet even when fn throws', () => {
+    injectStylesheet(':root { --pm-canvas: #000000; }');
+    const element = requireStyleElement();
+
+    let killElementDuringFn: Element | null = null;
+    expect(() =>
+      withStylesheetDisabled(() => {
+        killElementDuringFn = document.getElementById(TRANSITION_KILL_ELEMENT_ID);
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+
+    expect(killElementDuringFn).toBeInstanceOf(HTMLStyleElement);
+    expect(document.getElementById(TRANSITION_KILL_ELEMENT_ID)).toBeNull();
+    expect(element.disabled).toBe(false);
+  });
+
+  it('adds and removes the transition-kill element around fn even on the early-return path (no generated sheet present)', () => {
+    expect(document.getElementById(STYLE_ELEMENT_ID)).toBeNull();
+
+    let killElementDuringFn: Element | null = null;
+    withStylesheetDisabled(() => {
+      killElementDuringFn = document.getElementById(TRANSITION_KILL_ELEMENT_ID);
+    });
+
+    expect(killElementDuringFn).toBeInstanceOf(HTMLStyleElement);
+    expect(document.getElementById(TRANSITION_KILL_ELEMENT_ID)).toBeNull();
   });
 });
 
