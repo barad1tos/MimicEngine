@@ -99,46 +99,24 @@ function canvasColor(theme: PaletteTheme): RgbaColor {
 }
 
 /**
- * The tonal ramp's CANONICAL cumulative OKLCH lightness shift for `level`
- * (0..3) at a given base `step`, assuming an unbroken darkening progression
- * from the canvas -- i.e. ignoring the adjacent-contrast bounce (Amendment
- * 3.5). Each level's own increment is `step * LEVEL_DECAY_RATIOS[level - 1]`;
- * the running total is capped at `CUMULATIVE_SHIFT_CEILING`. Pure and
- * deterministic. Emission and the readability constraint walk no longer read
- * through this closed form -- `rungLightnessLadder` derives the ACTUAL,
- * bounce-aware rung sequence sequentially instead. This function remains a
- * standalone, independently useful description of the decay+cap math on its
- * own terms (and is exercised in isolation by its own tests).
- *
- * @example cumulativeElevationShift(0.045, 3) // ~0.099 -- ceiling not engaged
- */
-export function cumulativeElevationShift(step: number, level: number): number {
-  let shift = 0;
-  for (let index = 0; index < level; index += 1) {
-    shift += step * (LEVEL_DECAY_RATIOS[index] ?? 0);
-  }
-  return Math.min(shift, CUMULATIVE_SHIFT_CEILING);
-}
-
-/**
  * The tonal ramp's ACTUAL lightness for rungs 0..3 -- the ONE source
  * `elevatedRungHex` (emission) and `stepKeepsTextReadable` (the constraint
  * walk `resolveElevationStep` runs) both read through, so a bounce can never
  * show up in emission without also being seen by the readability check.
  *
- * A SEQUENTIAL fold, not the closed-form `cumulativeElevationShift` curve:
- * each rung N's canonical candidate is the decayed step for level N applied
- * to rung N-1's ACTUAL lightness (not its canonical one), still capped so
- * the total shift from canvas never exceeds `CUMULATIVE_SHIFT_CEILING` and
- * clamped to [0, 1]. When that candidate's delta from rung N-1's ACTUAL
- * lightness compresses below `MIN_ADJACENT_DELTA` -- decay, cap, or a
- * floor/ceiling clamp all compress it the same way -- rung N BOUNCES lighter
- * instead: `L(N-1) + MIN_ADJACENT_DELTA`, clamped to [0, 1] (a bounce that
- * clamps at 1 keeps whatever delta the clamp leaves; degrades gracefully).
- * A bounced rung derives every later rung in turn, so a bounce at level 2
- * propagates into level 3's candidate -- level 3 may end up closer to its
- * grandparent's tone (level 1) than to its immediate parent. Pure and
- * deterministic.
+ * A SEQUENTIAL fold (Amendment 3.5): each rung N's canonical candidate is
+ * the decayed step for level N (`step * LEVEL_DECAY_RATIOS[level - 1]`)
+ * applied to rung N-1's ACTUAL lightness (not a canvas-relative closed
+ * form), still capped so the total shift from canvas never exceeds
+ * `CUMULATIVE_SHIFT_CEILING` and clamped to [0, 1]. When that candidate's
+ * delta from rung N-1's ACTUAL lightness compresses below
+ * `MIN_ADJACENT_DELTA` -- decay, cap, or a floor/ceiling clamp all compress
+ * it the same way -- rung N BOUNCES lighter instead: `L(N-1) +
+ * MIN_ADJACENT_DELTA`, clamped to [0, 1] (a bounce that clamps at 1 keeps
+ * whatever delta the clamp leaves; degrades gracefully). A bounced rung
+ * derives every later rung in turn, so a bounce at level 2 propagates into
+ * level 3's candidate -- level 3 may end up closer to its grandparent's
+ * tone (level 1) than to its immediate parent. Pure and deterministic.
  *
  * @example rungLightnessLadder(0.3, 0.045) // [0.3, 0.255, 0.2235, 0.2535] -- level
  * 3's undamped candidate (0.201) would sit only 0.0225 below level 2, under
