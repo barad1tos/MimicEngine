@@ -238,7 +238,7 @@ function buildSelectorGroups(
   }
 
   const backgroundBySelector = buildBackgroundBySelector(declarations, mapping);
-  const guarded = applyPairedTextGuard(resolved, backgroundBySelector, theme);
+  const guarded = guardSurfaceText(resolved, declarations, backgroundBySelector, theme);
   const { substituted, islands, followers } = substituteElevationBackgrounds(guarded, theme);
 
   return [
@@ -426,23 +426,27 @@ function buildBackgroundBySelector(
   return backgroundBySelector;
 }
 
-// guardContrast (contrastGuard.ts) already repairs each text-bucket mapping
-// against an approximation of "the" page background (its heaviest
-// background-bucket entry) — a reasonable global default, but a signature's
-// OWN background can be a different, more saturated surface than that
-// approximation (an accent-colored pill, a badge), and the global repair
-// never sees that pairing. This is the per-selector second pass: when the
-// SAME census entry has a paired background (mapped or preserved-original,
-// see buildBackgroundBySelector) and a text-bucket mapped value, replace the
-// text mapping with pairedTextOverride's result whenever the pair itself
-// fails 4.5:1. Border declarations are untouched — only 'text' entries are
-// ever replaced. Pure: returns a new array, never mutates `resolved`.
-function applyPairedTextGuard(
+// guardContrast (contrastGuard.ts) supplies a global text default, but each
+// sampled surface still needs a local foreground. Existing text entries
+// are repaired against their own mapped/preserved background; a surface
+// whose text was removed by the authoredRemap stop-list receives a synthetic
+// text entry so inherited descendants resolve against that surface instead
+// of an unrelated outer control. Border declarations are untouched. Pure:
+// returns a new array, never mutates `resolved`.
+function guardSurfaceText(
   resolved: readonly ResolvedNovelDeclaration[],
+  declarations: readonly NovelDeclaration[],
   backgroundBySelector: ReadonlyMap<string, string>,
   theme: PaletteTheme,
 ): ResolvedNovelDeclaration[] {
-  return resolved.map((entry) => {
+  const textSelectors = new Set<string>();
+  const surfaces = new Map<string, NovelDeclaration>();
+  for (const declaration of declarations) {
+    if (declaration.bucket === 'text') textSelectors.add(declaration.selector);
+    if (declaration.bucket === 'background') surfaces.set(declaration.selector, declaration);
+  }
+
+  const guarded = resolved.map((entry) => {
     if (entry.declaration.bucket !== 'text') return entry;
     const mappedBackground = backgroundBySelector.get(entry.declaration.selector);
     if (mappedBackground === undefined) return entry;
@@ -450,6 +454,33 @@ function applyPairedTextGuard(
     const override = pairedTextOverride(entry.mappedValue, mappedBackground, theme);
     return override === null ? entry : { ...entry, mappedValue: override };
   });
+
+  const defaultText = themeTokenHex(theme, 'text');
+  const defaultTextColor = parseCssColor(defaultText);
+  if (!defaultTextColor) throw new Error(`invalid theme text token color: ${defaultText}`);
+
+  for (const [selector, surface] of surfaces) {
+    if (textSelectors.has(selector)) continue;
+    const mappedBackground = backgroundBySelector.get(selector);
+    if (mappedBackground === undefined) continue;
+    const mappedValue = pairedTextOverride(defaultText, mappedBackground, theme) ?? defaultText;
+
+    guarded.push({
+      declaration: {
+        signature: surface.signature,
+        selector,
+        property: 'color',
+        value: defaultText,
+        color: defaultTextColor,
+        bucket: 'text',
+        conditions: surface.conditions,
+      },
+      mappedValue,
+      isSelectorHint: false,
+    });
+  }
+
+  return guarded;
 }
 
 // null when the pair already clears 4.5:1, or when contrastRatio can't parse

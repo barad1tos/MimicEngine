@@ -323,16 +323,18 @@ describe('apply(apply(page)) idempotency invariant', () => {
     // background hex but .card's own box-shadow makes it an island — the
     // full pipeline (not just computedFallback.produce in isolation) must
     // route its background AND shadow through the positional block, while
-    // the follower .ground reads the inherited surface variable. No
-    // per-signature `:where(div.card)` group survives (background was its
-    // only declaration).
+    // the follower .ground reads the inherited surface variable. The
+    // per-signature `:where(div.card)` group retains only the local readable
+    // foreground; the positional block remains the sole background owner.
     const groundBlock = /:where\(div\.ground\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
     expect(groundBlock).toContain(
       'background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;',
     );
     expect(groundBlock).not.toContain('box-shadow');
 
-    expect(first.css).not.toMatch(/:where\(div\.card\) \{/);
+    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
+    expect(cardBlock).toContain('color:');
+    expect(cardBlock).not.toContain('background-color');
     const levelOneBlock = /:where\(:is\(div\.card\)\) \{[^}]*\}/.exec(first.css)?.[0] ?? '';
     expect(levelOneBlock).toContain('background-color: var(--pm-elevation-1) !important;');
     expect(levelOneBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');

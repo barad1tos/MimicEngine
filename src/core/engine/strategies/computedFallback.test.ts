@@ -14,6 +14,7 @@ import type { StrategyId } from '../strategyId';
 import { computedFallback } from './computedFallback';
 
 const catppuccinFrappe = builtInThemes[0];
+const ayuMirage = builtInThemes[1];
 
 const VISIBLE_RECT = {
   x: 0,
@@ -396,11 +397,13 @@ describe('computedFallback strategy', () => {
     );
     expect(groundBlock).not.toContain('box-shadow');
 
-    // The island's background left the per-signature groups entirely — no
-    // `:where(div.card)` group remains (background was its only
-    // declaration), and the level-1 positional rule now carries background,
-    // shadow, and the surface variable for followers painted inside it.
-    expect(css).not.toMatch(/:where\(div\.card\) \{/);
+    // The island's background left the per-signature group entirely; its
+    // local foreground remains so descendants inherit readable text. The
+    // level-1 positional rule carries background, shadow, and the surface
+    // variable for followers painted inside it.
+    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(cardBlock).toContain('color:');
+    expect(cardBlock).not.toContain('background-color');
     const levelOneBlock = /:where\(:is\(div\.card\)\) \{[^}]*\}/.exec(css)?.[0] ?? '';
     expect(levelOneBlock).toContain('background-color: var(--pm-elevation-1) !important;');
     expect(levelOneBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
@@ -451,6 +454,15 @@ describe('computedFallback strategy', () => {
 
       html[data-pm-active="true"] :where(div.ground) {
         background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;
+        color: #c6d0f5 !important;
+      }
+
+      html[data-pm-active="true"] :where(div.card) {
+        color: #c6d0f5 !important;
+      }
+
+      html[data-pm-active="true"] :where(div.aside) {
+        color: #c6d0f5 !important;
       }"
     `);
   });
@@ -495,13 +507,15 @@ describe('computedFallback strategy', () => {
     expect(css.indexOf(neutralizer)).toBeGreaterThan(css.indexOf(levelThree));
 
     // …and before the follower's own per-signature background group.
-    const followerBackground =
-      /:where\(div\.card\.flat\) \{\n {2}background-color: var\(--pm-current-surface, var\(--pm-elevation-0\)\) !important;\n\}/.exec(
-        css,
-      );
-    expect(followerBackground).not.toBeNull();
-    if (followerBackground === null) throw new Error('expected a follower background group');
-    expect(css.indexOf(neutralizer)).toBeLessThan(followerBackground.index);
+    const followerBlock = [...css.matchAll(/:where\(div\.card\.flat\) \{[^}]*\}/g)].find((match) =>
+      match[0].includes('background-color:'),
+    );
+    expect(followerBlock).toBeDefined();
+    if (followerBlock === undefined) throw new Error('expected a follower group');
+    expect(followerBlock[0]).toContain(
+      'background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;',
+    );
+    expect(css.indexOf(neutralizer)).toBeLessThan(followerBlock.index);
   });
 
   it('emits no neutralizer for followers whose class sets are not supersets of any island', () => {
@@ -584,6 +598,101 @@ describe('computedFallback strategy', () => {
     const pillBlock = /:where\(span\.pill\) \{[^}]*\}/.exec(css)?.[0] ?? '';
     expect(pillBlock).toMatch(/background-color: #\w{6} !important;/);
     expect(css).not.toContain(':is(');
+  });
+
+  it('emits a readable foreground for an accent surface whose text is inherited', () => {
+    document.head.innerHTML = `
+      <style>
+        .control { color: rgb(203, 204, 198); }
+        .surface { background-color: rgb(1, 117, 79); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <button class="control"><span class="surface"><span>Open to</span></span></button>
+    `;
+    censusFromCurrentDom();
+    const facts = factsWithAuthoredRule({
+      selector: '.control',
+      property: 'color',
+      value: 'rgb(203, 204, 198)',
+      color: { r: 203, g: 204, b: 198, a: 1 },
+      bucket: 'text',
+      conditions: [],
+    });
+
+    const { css } = computedFallback.produce(
+      ayuMirage,
+      anySiteSettings(),
+      facts,
+      planWithAuthoredRemap,
+    );
+
+    const surfaceBlock = /:where\(span\.surface\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const background = /background-color: (#\w{6})/.exec(surfaceBlock)?.[1];
+    const foreground = /(?<!background-)color: (#\w{6})/.exec(surfaceBlock)?.[1];
+
+    expect(background).toBe(ayuMirage.tokens.success);
+    expect(foreground).toBeDefined();
+    if (background === undefined || foreground === undefined)
+      throw new Error('expected both surface background and foreground');
+    expect(foreground).toBe(ayuMirage.tokens.canvas);
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('does not replace an explicit preserved foreground when guarding a surface', () => {
+    document.head.innerHTML = `
+      <style>
+        .badge { background-color: rgb(255, 255, 255); color: rgb(255, 255, 0); }
+      </style>
+    `;
+    document.body.innerHTML = '<span class="badge">New</span>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      ayuMirage,
+      anySiteSettings(true),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const badgeBlock = /:where\(span\.badge\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(badgeBlock).toContain('background-color:');
+    expect(/(?<!background-)color:/.test(badgeBlock)).toBe(false);
+  });
+
+  it('guards inherited text against a preserved brand surface', () => {
+    document.head.innerHTML = `
+      <style>
+        .control { color: rgb(203, 204, 198); }
+        .badge { background-color: rgb(255, 0, 0); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <button class="control"><span class="badge"><span>New</span></span></button>
+    `;
+    censusFromCurrentDom();
+    const facts = factsWithAuthoredRule({
+      selector: '.control',
+      property: 'color',
+      value: 'rgb(203, 204, 198)',
+      color: { r: 203, g: 204, b: 198, a: 1 },
+      bucket: 'text',
+      conditions: [],
+    });
+
+    const { css } = computedFallback.produce(
+      ayuMirage,
+      anySiteSettings(true),
+      facts,
+      planWithAuthoredRemap,
+    );
+
+    const badgeBlock = /:where\(span\.badge\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(badgeBlock).not.toContain('background-color:');
+    const foreground = /(?<!background-)color: (#\w{6})/.exec(badgeBlock)?.[1];
+    expect(foreground).toBeDefined();
+    if (foreground === undefined) throw new Error('expected a guarded foreground');
+    expect(contrastRatio(foreground, '#ff0000')).toBeGreaterThanOrEqual(4.5);
   });
 
   it('emits no positional block at all when the page has no islands', () => {
@@ -735,6 +844,7 @@ describe('computedFallback strategy', () => {
 
       html[data-pm-active="true"] :where(div.panel) {
         background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;
+        color: #c6d0f5 !important;
       }"
     `);
   });
