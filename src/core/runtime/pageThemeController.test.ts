@@ -725,30 +725,28 @@ describe('createPageThemeController — census lifecycle', () => {
     document.body.innerHTML = '';
   });
 
-  it('installs a census on start and clears it on stop', async () => {
+  it('keeps a synchronous census private through the settle window', async () => {
     const controller = createPageThemeController();
 
     await controller.start();
+    expect(installedCensus()).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(500);
+
     expect(installedCensus()).not.toBeNull();
 
     controller.stop();
     expect(installedCensus()).toBeNull();
   });
 
-  it('writes the live census snapshot into the diagnostics record and keeps it current across re-applies', async () => {
+  it('writes only a published census snapshot into diagnostics', async () => {
     document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800)
     seedComputedFallbackStrategy(); // so the chunk-completion reapply isn't withheld
     const controller = createPageThemeController();
 
     await controller.start();
-    const snapshotAfterInitialApply = installedCensus()?.snapshot();
-    expect(lastWrittenDiagnostics(siteKey).census).toEqual({
-      complete: snapshotAfterInitialApply?.complete,
-      signatureCount: snapshotAfterInitialApply?.signatureCount,
-      elementsVisited: snapshotAfterInitialApply?.elementsVisited,
-      droppedProperties: snapshotAfterInitialApply?.droppedProperties,
-    });
-    expect(lastWrittenDiagnostics(siteKey).census?.complete).toBe(false);
+    expect(installedCensus()).toBeNull();
+    expect(lastWrittenDiagnostics(siteKey).census).toBeUndefined();
 
     await vi.runAllTimersAsync(); // drains idle callbacks + the census debounce
 
@@ -771,9 +769,9 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    // The synchronous first chunk (800) cannot have finished walking a
-    // 1200+-element document yet.
-    expect(installedCensus()?.snapshot().complete).toBe(false);
+    // The synchronous first chunk (800) cannot finish this document, so the
+    // incomplete census stays private instead of feeding transient CSS.
+    expect(installedCensus()).toBeNull();
     const injectCountAfterInitialApply = injectSpy.mock.calls.length;
 
     await vi.runAllTimersAsync(); // drains idle callbacks + the census debounce
@@ -782,6 +780,122 @@ describe('createPageThemeController — census lifecycle', () => {
     // The census-driven debounced re-apply must have fired at least once
     // beyond the initial apply from start().
     expect(injectSpy.mock.calls.length).toBeGreaterThan(injectCountAfterInitialApply);
+
+    controller.stop();
+  });
+
+  it('withholds census re-apply until a slow multi-chunk walk completes', async () => {
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 500),
+    );
+    document.body.innerHTML = bigFixture(2500);
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const initialInjectCount = injectSpy.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(750);
+
+    expect(installedCensus()).toBeNull();
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount);
+
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount + 1);
+
+    controller.stop();
+  });
+
+  it('keeps the completed census published while a slow attribute refresh is incomplete', async () => {
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 500),
+    );
+    document.body.innerHTML = bigFixture(2500);
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+
+    const publishedCensus = installedCensus();
+    const injectCountBeforeRefresh = injectSpy.mock.calls.length;
+    expect(publishedCensus?.snapshot().complete).toBe(true);
+
+    document.querySelector('.rotating-a')?.classList.add('refreshed');
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(installedCensus()).toBe(publishedCensus);
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(injectCountBeforeRefresh);
+
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()).not.toBe(publishedCensus);
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(injectCountBeforeRefresh + 1);
+
+    controller.stop();
+  });
+
+  it('coalesces census completion with a late attribute refresh into one stylesheet update', async () => {
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 100),
+    );
+    document.body.innerHTML = bigFixture(1200);
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const initialInjectCount = injectSpy.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(400);
+    document.querySelector('.rotating-a')?.classList.add('refreshed');
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount + 1);
+
+    controller.stop();
+  });
+
+  it('publishes after the maximum settle window during a continuous attribute burst', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.body.innerHTML = '<span class="item">x</span>';
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const initialInjectCount = injectSpy.mock.calls.length;
+
+    for (const elapsed of [400, 800, 1200]) {
+      await vi.advanceTimersByTimeAsync(400);
+      document.querySelector('.item')?.classList.toggle(`at-${String(elapsed)}`);
+      await flushMicrotasks();
+      expect(installedCensus()).toBeNull();
+    }
+
+    await vi.advanceTimersByTimeAsync(299);
+    expect(installedCensus()).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount + 1);
 
     controller.stop();
   });
@@ -833,7 +947,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    expect(installedCensus()?.snapshot().complete).toBe(false);
+    expect(installedCensus()).toBeNull();
 
     // A page mutation fires the (mocked) live observer's callback before the
     // first scheduled idle timeout runs — this apply() bumps applyGeneration
@@ -860,6 +974,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
+    await vi.runAllTimersAsync();
     // Trip the cap through the mocked live-observer path (matches the
     // "mutation cap gating" describe block's own firing pattern).
     for (let firing = 1; firing <= MAX_REAPPLIES_PER_MINUTE + 1; firing++) {
@@ -1036,8 +1151,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    expect(installedCensus()).not.toBeNull();
-    expect(installedCensus()?.snapshot().complete).toBe(false); // the idle chunk hasn't run yet
+    expect(installedCensus()).toBeNull(); // the incomplete walk is still private
     const injectCountAfterInitialApply = injectSpy.mock.calls.length;
 
     // Disable the site mid-census, before the pending idle chunk fires.
@@ -1082,6 +1196,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
+    await vi.runAllTimersAsync();
     expect(installedCensus()).not.toBeNull();
 
     // Disable — tears the census down (Finding 4a).
@@ -1202,7 +1317,7 @@ describe('createPageThemeController — census lifecycle', () => {
 
   it('consumes a pending census-stale flag once the cap clears via a settings change (C-2 residual)', async () => {
     // Residual edge from the re-review: a significant attribute mutation
-    // during a cap-tripped window sets censusStale, but scheduleCensusReapply
+    // during a cap-tripped window sets censusStale, but scheduleCensusPublish
     // is gated on !capTripped so it's never called — the flag then sits
     // unconsumed forever unless some UNRELATED later mutation happens to
     // fire the census observer again. The settings-changed handler is the

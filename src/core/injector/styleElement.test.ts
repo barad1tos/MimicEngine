@@ -27,6 +27,26 @@ function requireStyleElement(): HTMLStyleElement {
   return element;
 }
 
+function styleMutationEvent(record: MutationRecord): string | null {
+  const addedKill = [...record.addedNodes].some(
+    (node) => node instanceof Element && node.id === TRANSITION_KILL_ELEMENT_ID,
+  );
+  if (addedKill) return 'lock-added';
+  if (
+    record.type === 'attributes' &&
+    record.target === document.documentElement &&
+    record.attributeName === 'data-pm-active'
+  ) {
+    return 'active-set';
+  }
+  if (record.target instanceof Element && record.target.id === STYLE_ELEMENT_ID)
+    return 'css-written';
+  const removedKill = [...record.removedNodes].some(
+    (node) => node instanceof Element && node.id === TRANSITION_KILL_ELEMENT_ID,
+  );
+  return removedKill ? 'lock-removed' : null;
+}
+
 describe('injectStylesheet / removeStylesheet', () => {
   it('creates the style element with the right id and marks documentElement active', () => {
     injectStylesheet(':root { --pm-canvas: #000000; }');
@@ -59,6 +79,27 @@ describe('injectStylesheet / removeStylesheet', () => {
     // Different css -> content updates.
     injectStylesheet(':root { --pm-canvas: #ffffff; }');
     expect(element?.textContent).toBe(':root { --pm-canvas: #ffffff; }');
+  });
+
+  it('wraps initial css activation in a transition lock', async () => {
+    const events: string[] = [];
+    const observer = new MutationObserver((records) => {
+      events.push(
+        ...records.map(styleMutationEvent).filter((event): event is string => event !== null),
+      );
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-pm-active'],
+    });
+
+    injectStylesheet(':root { --pm-canvas: #ffffff; }');
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    observer.disconnect();
+
+    expect(events).toEqual(['lock-added', 'css-written', 'active-set', 'lock-removed']);
   });
 });
 

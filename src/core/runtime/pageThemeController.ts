@@ -45,18 +45,19 @@ export type PageThemeController = {
 const MAX_REAPPLIES_PER_MINUTE = 12;
 const MUTATION_WINDOW_MS = 60_000;
 
-// Census chunk sizes: a synchronous first chunk before the very first apply()
-// so computedFallback's first produce() already sees real samples, then
-// idle-time chunks for the rest of the page. CENSUS_IDLE_TIMEOUT_MS bounds
-// how long a chunk can wait for an idle slot before running anyway.
+// Census chunk sizes: a synchronous first chunk identifies small pages that
+// can publish a complete census before the first apply. Larger pages keep the
+// incomplete walk private, then publish it after the remaining idle chunks
+// converge. CENSUS_IDLE_TIMEOUT_MS bounds how long an idle chunk can wait.
 const CENSUS_FIRST_CHUNK = 800;
 const CENSUS_IDLE_CHUNK = 1000;
 const CENSUS_IDLE_TIMEOUT_MS = 500;
-// Mirrors observeDomChanges' own debounce default (250ms) — kept as an
-// independent constant/timer here (censusReapplyTimer) because census
-// re-applies are our own work, never page activity, and must never pass
-// through registerMutationCallback/capTripped.
-const CENSUS_REAPPLY_DEBOUNCE_MS = 250;
+// A slightly wider settle window than observeDomChanges' 250ms debounce lets
+// a late loading burst invalidate a just-completed census before its CSS is
+// exposed. This remains an independent timer because census re-applies are
+// our own work and must never pass through the page-mutation rate recorder.
+const CENSUS_REAPPLY_DEBOUNCE_MS = 500;
+const CENSUS_MAX_SETTLE_MS = 1500;
 
 function needsLiveObserver(siteSettings: SiteSettings, plan: StrategyPlan): boolean {
   return siteSettings.strategy === 'auto' || planStrategies(plan).some((id) => id !== 'baseline');
@@ -160,6 +161,10 @@ export function createPageThemeController(): PageThemeController {
   // computedFallback.produce at apply() time) mirrors this exactly: installed
   // on start(), cleared on stop() — never left dangling for a dead instance.
   let census: SignatureCensus | null = null;
+  // The census currently visible to computedFallback. During an attribute-
+  // driven refresh, census points at the replacement walk while this keeps
+  // the last complete snapshot installed until the replacement converges.
+  let publishedCensus: SignatureCensus | null = null;
   // Dedicated cancellation token for the census idle-chunk loop — deliberately
   // separate from applyGeneration. Every apply() (including the census's own
   // 250ms debounced re-apply) bumps applyGeneration; piggybacking the chunk
@@ -173,11 +178,15 @@ export function createPageThemeController(): PageThemeController {
   // cancel it — a stale idle callback from a previous generation must never
   // resume census work after teardown.
   let censusIdleHandle: number | null = null;
-  // Own debounce timer for census-driven re-applies (scheduleCensusReapply),
+  // Own debounce timer for census publication (scheduleCensusPublish),
   // distinct from observeDomChanges' internal debounce: this one must never
   // touch registerMutationCallback/capTripped, since census progress is our
   // own work, not page activity.
   let censusReapplyTimer: number | undefined;
+  // Starts with the first publication request in a burst and survives every
+  // debounce reset. The hard ceiling prevents a continuously mutating page
+  // from withholding its completed census forever.
+  let censusSettleStartedAt: number | null = null;
   // A MutationObserver dedicated to census learning, independent of
   // domObserver: domObserver is only created (via ensureDomObserver) when the
   // current plan needs live re-theming, and its re-applies are mutation-rate
@@ -192,7 +201,7 @@ export function createPageThemeController(): PageThemeController {
   // descendant's COMPUTED color without adding or removing any node, and the
   // census's grow-only value Sets have no way to represent "this color
   // changed" — re-sampling in place would just look like divergence.
-  // scheduleCensusReapply's debounced callback is the only place this is
+  // scheduleCensusPublish's debounced callback is the only place this is
   // read; it discards and re-bootstraps the census (a fresh full walk)
   // instead of resuming the stale one, then clears the flag.
   let censusStale = false;
@@ -215,38 +224,55 @@ export function createPageThemeController(): PageThemeController {
     censusObserver = null;
   };
 
-  // Debounced re-apply for census progress alone. A dedicated timer (not
-  // observeDomChanges' internal one) so chunk completion never counts toward
-  // the per-minute mutation cap — the census converging is our own work, not
-  // page activity, and must never trip capTripped.
-  const scheduleCensusReapply = (): void => {
+  // Debounced publication for census progress alone. A dedicated timer (not
+  // observeDomChanges' internal one) keeps an incomplete census private and
+  // prevents convergence from counting toward the page-mutation cap.
+  const scheduleCensusPublish = (): void => {
+    const now = Date.now();
+    censusSettleStartedAt ??= now;
+    const elapsed = now - censusSettleStartedAt;
+    const delay = Math.min(CENSUS_REAPPLY_DEBOUNCE_MS, CENSUS_MAX_SETTLE_MS - elapsed);
     if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
-    censusReapplyTimer = window.setTimeout(() => {
-      censusReapplyTimer = undefined;
-      if (censusStale) {
-        // A significant attribute mutation invalidated the census's grow-only
-        // value Sets (see censusStale's declaration above) — the only correct
-        // recovery is to discard and re-bootstrap rather than resume the
-        // stale one.
-        if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
-        censusIdleHandle = null;
-        installCensus(null);
-        census = null;
-        bootstrapCensus();
-        censusStale = false;
-      }
-      apply().catch((error: unknown) => {
-        console.error('[Palette Mimicry] census re-apply failed', error);
-      });
-    }, CENSUS_REAPPLY_DEBOUNCE_MS);
+    censusReapplyTimer = window.setTimeout(
+      () => {
+        censusReapplyTimer = undefined;
+        if (censusStale) {
+          // A significant attribute mutation invalidated the census's grow-only
+          // value Sets (see censusStale's declaration above) — the only correct
+          // recovery is to discard and re-bootstrap rather than resume the
+          // stale one.
+          if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
+          censusIdleHandle = null;
+          census = null;
+          const refreshComplete = bootstrapCensus();
+          censusStale = false;
+          if (!refreshComplete) return;
+          scheduleCensusPublish();
+          return;
+        }
+        publishCensus();
+        censusSettleStartedAt = null;
+        if (!planIncludesComputedFallback()) return;
+        apply().catch((error: unknown) => {
+          console.error('[Palette Mimicry] census publish failed', error);
+        });
+      },
+      Math.max(0, delay),
+    );
   };
 
   // Recomposing after census progress is a guaranteed no-op unless the
   // current plan actually reads census output — computedFallback is the
-  // only strategy that does. Both the chunk-completion path and the
-  // ingest-learned path gate their reapply scheduling on this.
+  // only strategy that does. Publication still happens for every completed
+  // walk so a later plan switch never inherits an incomplete census.
   const planIncludesComputedFallback = (): boolean =>
     lastPlan !== null && planStrategies(lastPlan).includes('computedFallback');
+
+  const publishCensus = (): void => {
+    if (!census) return;
+    publishedCensus = census;
+    installCensus(census);
+  };
 
   // Drives the census to completion one idle-time chunk at a time. The
   // censusGeneration captured here (not applyGeneration — see its
@@ -264,18 +290,19 @@ export function createPageThemeController(): PageThemeController {
         censusIdleHandle = null;
         if (generation !== censusGeneration || !census) return;
         const done = census.advance(CENSUS_IDLE_CHUNK);
-        // Recompose is a no-op unless the current plan reads census output —
-        // see planIncludesComputedFallback above.
-        if (planIncludesComputedFallback()) scheduleCensusReapply();
+        // Publish one converged result instead of exposing every intermediate
+        // chunk as a visibly different stylesheet while the walk is ongoing.
+        if (done && !censusStale) scheduleCensusPublish();
         if (!done) scheduleCensusChunk();
       },
       { timeout: CENSUS_IDLE_TIMEOUT_MS },
     );
   };
 
-  // Creates a fresh census, walks its synchronous first chunk, installs it
-  // for computedFallback.produce() to read, and schedules the remaining
-  // idle-time chunks if the walk didn't finish synchronously. Called once
+  // Creates a fresh census, walks its synchronous first chunk, and schedules
+  // the remaining idle-time chunks if the walk didn't finish synchronously.
+  // The caller publishes a synchronous completion; async completion goes
+  // through scheduleCensusPublish's settle window. Called once
   // from start(), and again — lazily — from apply()'s enabled branch
   // whenever census is null: a site disabled mid-session tears the census
   // down entirely (see the disabled branch below), so re-enabling it later
@@ -284,13 +311,13 @@ export function createPageThemeController(): PageThemeController {
   // page load. Bumping censusGeneration (defense in depth, mirroring
   // stop()'s bump) invalidates any idle chunk a previous bootstrap on this
   // same instance might still have pending — harmless when there isn't one.
-  const bootstrapCensus = (): void => {
+  const bootstrapCensus = (): boolean => {
     censusGeneration += 1;
     census = createSignatureCensus();
     census.begin(document);
     const firstChunkComplete = census.advance(CENSUS_FIRST_CHUNK);
-    installCensus(census);
     if (!firstChunkComplete) scheduleCensusChunk();
+    return firstChunkComplete;
   };
 
   // Routes newly added elements through the census so it keeps learning
@@ -310,14 +337,14 @@ export function createPageThemeController(): PageThemeController {
       // descendant's COMPUTED color without adding or removing any node.
       // The census cannot re-sample in place (its grow-only value Sets have
       // no way to represent "this color changed"), so mark it stale instead
-      // of walking/ingesting the mutated targets — scheduleCensusReapply's
+      // of walking/ingesting the mutated targets — scheduleCensusPublish's
       // debounced callback resets to a fresh full walk once it actually
       // fires. Gated the same as the ingest-learned path below: only worth
       // scheduling when the cap isn't silencing reapplies and the current
       // plan would actually read the census.
       if (records.some((record) => record.type === 'attributes')) {
         censusStale = true;
-        if (!capTripped && planIncludesComputedFallback()) scheduleCensusReapply();
+        if (!capTripped && planIncludesComputedFallback()) scheduleCensusPublish();
       }
 
       const addedElements = addedElementsFrom(records);
@@ -330,7 +357,7 @@ export function createPageThemeController(): PageThemeController {
       // was permanently invisible to the census: apply() never re-ingests
       // anything on its own, so a later settings change clearing capTripped
       // does not recover what was skipped. Only recomposing
-      // (scheduleCensusReapply) touches the live page, which is why that
+      // (scheduleCensusPublish) touches the live page, which is why that
       // alone stays gated on capTripped — mirroring ensureDomObserver's own
       // cap gate, this observer must not become a side channel that keeps
       // recomposing during a storm the cap already decided to silence.
@@ -339,7 +366,9 @@ export function createPageThemeController(): PageThemeController {
       // new, the cap isn't currently silencing reapplies, AND the current
       // plan would actually read the census (computedFallback is the only
       // strategy that does — see planIncludesComputedFallback above).
-      if (learned && !capTripped && planIncludesComputedFallback()) scheduleCensusReapply();
+      if (learned && census === publishedCensus && !capTripped && planIncludesComputedFallback()) {
+        scheduleCensusPublish();
+      }
     });
     observer.observe(document.documentElement, {
       childList: true,
@@ -454,8 +483,10 @@ export function createPageThemeController(): PageThemeController {
       censusIdleHandle = null;
       if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
       censusReapplyTimer = undefined;
+      censusSettleStartedAt = null;
       installCensus(null);
       census = null;
+      publishedCensus = null;
       return;
     }
 
@@ -469,7 +500,7 @@ export function createPageThemeController(): PageThemeController {
     // assigned, but this keeps the guard's contract explicit even if that
     // changes later. Guarded by `!census` so an already-bootstrapped census
     // (the common case) is never recreated.
-    if (!census && !stopped) bootstrapCensus();
+    if (!census && !stopped && bootstrapCensus()) scheduleCensusPublish();
 
     const theme = resolveTheme(siteSettings.themeId, importedThemes);
     const facts = collectPageFacts(document);
@@ -508,7 +539,7 @@ export function createPageThemeController(): PageThemeController {
     // but it keeps the guard's contract — abort before every listed side
     // effect, including diagnostics — true even if that changes later.
     if (generation !== applyGeneration) return;
-    const censusSnapshot = census?.snapshot();
+    const censusSnapshot = publishedCensus?.snapshot();
     await writePlanDiagnostics({
       siteKey,
       plan,
@@ -531,12 +562,12 @@ export function createPageThemeController(): PageThemeController {
   return {
     async start() {
       // Synchronous setup, before the initial apply(): bootstrap the census
-      // (begin + its synchronous first chunk + install) so that first
-      // apply()'s computedFallback.produce() (reading installedCensus())
-      // already sees real samples, not an empty snapshot. The census
-      // mutation observer starts here too, before any await, so no page
-      // mutation during the settings read below can slip past it.
-      bootstrapCensus();
+      // (begin + its synchronous first chunk). Small pages publish a complete
+      // census immediately; larger pages keep their partial walk private so
+      // the first apply uses stable base rules instead of transient computed
+      // rules. The mutation observer starts before any await so no page
+      // mutation during the settings read can slip past it.
+      if (bootstrapCensus()) scheduleCensusPublish();
       censusObserver = observeCensusMutations();
 
       // A throwing initial apply() must not stop start() itself from
@@ -564,7 +595,7 @@ export function createPageThemeController(): PageThemeController {
           console.error('[Palette Mimicry] apply failed', error);
         });
         // A significant attribute mutation during a cap-tripped window sets
-        // censusStale, but scheduleCensusReapply is gated on !capTripped, so
+        // censusStale, but scheduleCensusPublish is gated on !capTripped, so
         // it was never called — the flag would otherwise sit unconsumed
         // until some unrelated mutation happens to fire the census observer
         // again, leaving computedFallback serving stale samples silently in
@@ -572,7 +603,7 @@ export function createPageThemeController(): PageThemeController {
         // point: route through the same reset path every other
         // census-stale trigger uses, gated the same way (only worth it when
         // the plan actually reads census output).
-        if (censusStale && planIncludesComputedFallback()) scheduleCensusReapply();
+        if (censusStale && planIncludesComputedFallback()) scheduleCensusPublish();
       });
     },
 
@@ -598,8 +629,10 @@ export function createPageThemeController(): PageThemeController {
       censusIdleHandle = null;
       if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
       censusReapplyTimer = undefined;
+      censusSettleStartedAt = null;
       installCensus(null);
       census = null;
+      publishedCensus = null;
       // BFCACHE SYMMETRY RULING: stop() deliberately leaves shadow styles in
       // place, same as it already leaves the document stylesheet and the
       // data-pm-active gate untouched. A bfcache-restored page shows a fully
