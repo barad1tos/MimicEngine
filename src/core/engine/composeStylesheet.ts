@@ -6,6 +6,7 @@ import { planStrategies, type StrategyPlan } from './decisionTable';
 import type { PageFacts } from './pageFacts';
 import { strategyRegistry } from './registry';
 import { compareStrings } from './sort';
+import { emitStylePlan, type StylePlan } from './stylePlan';
 import { tokenVariablesCss } from './tokenVariables';
 
 function compareOverrides(
@@ -46,13 +47,15 @@ export function composeStylesheet(
     .map((engine) => engine.produce(theme, siteSettings, facts, plan));
 
   const overrideStylesheet = composeOverrideStylesheet(siteSettings.overrides);
+  const stylePlan: StylePlan = {
+    sections: [
+      { css: tokenVariablesCss(theme) },
+      ...outputs.map((output) =>
+        output.coverage ? { css: output.css, coverage: output.coverage } : { css: output.css },
+      ),
+      { css: overrideStylesheet },
+    ],
+  };
 
-  const css = [tokenVariablesCss(theme), ...outputs.map((output) => output.css), overrideStylesheet]
-    .filter((block) => block.length > 0)
-    .join('\n\n')
-    .trim();
-
-  const coverages = outputs.flatMap((output) => (output.coverage ? [output.coverage] : []));
-
-  return { css, coverages };
+  return emitStylePlan(stylePlan);
 }
