@@ -7,7 +7,6 @@ import {
   ELEVATION_LEVELS,
   ELEVATION_LIGHTNESS_STEP,
   elevationBackgroundHex,
-  elevationLevelForHex,
   elevationShadowValue,
   elevationVariable,
   MIN_ADJACENT_DELTA,
@@ -549,50 +548,6 @@ describe('adjacent-contrast bounce (Amendment 3.5)', () => {
       }
     },
   );
-});
-
-describe('elevationLevelForHex', () => {
-  it.each([0, 1, 2, 3])('resolves the level whose ramp hex matches exactly (level %i)', (level) => {
-    const hex = elevationBackgroundHex(darkTheme, level);
-    expect(elevationLevelForHex(darkTheme, hex)).toBe(level);
-  });
-
-  it("returns null for a hex outside the theme's own elevation ramp", () => {
-    const foreignHex = toHex(requireColor('#ff00ff'));
-    expect(elevationLevelForHex(darkTheme, foreignHex)).toBeNull();
-  });
-
-  it('is theme-scoped: the same derived hex need not resolve to the same level in a different theme', () => {
-    // Amendment 3.2 made lightTheme's ramp byte-identical to darkTheme's --
-    // both share the same catppuccin-frappe tokens and direction no longer
-    // depends on theme.mode. A theme with genuinely different tokens
-    // (everforest-dark) is needed to exercise theme-scoping now.
-    const level2HexDark = elevationBackgroundHex(darkTheme, 2);
-    expect(elevationLevelForHex(everforestDarkTheme, level2HexDark)).not.toBe(2);
-  });
-
-  it('resolves the LOWEST level first when a bounce lands a rung on its grandparent-adjacent (non-adjacent) hex', () => {
-    // A vivid, dark-on-light-rung fixture where level 3 bounces enough to
-    // land back on level 1's exact tone (its grandparent, not its immediate
-    // parent), while level 2 stays genuinely distinct -- a NON-adjacent
-    // collision. Requires the ceiling step to actually be in play, so text
-    // tokens are engineered light-on-dark (verified: resolveElevationStep
-    // === 0.045 here). This fixture's hexes are stable across the
-    // round-tripped-lightness fix (post-review): its lightness/chroma
-    // combination stays comfortably in-gamut at every rung, so the collision
-    // it exercises is a genuine bounce-recovery coincidence, not a gamut- or
-    // quantization-driven artifact.
-    const collisionTheme = withText(withCanvas(darkTheme, '#101a3a'), '#f5f5f5', '#c8c8c8');
-    expect(resolveElevationStep(collisionTheme)).toBeCloseTo(ELEVATION_LIGHTNESS_STEP, 5);
-
-    const level1Hex = elevationBackgroundHex(collisionTheme, 1);
-    const level2Hex = elevationBackgroundHex(collisionTheme, 2);
-    const level3Hex = elevationBackgroundHex(collisionTheme, 3);
-
-    expect(level1Hex).toBe(level3Hex);
-    expect(level2Hex).not.toBe(level1Hex);
-    expect(elevationLevelForHex(collisionTheme, level1Hex)).toBe(1);
-  });
 });
 
 describe('elevationShadowValue', () => {

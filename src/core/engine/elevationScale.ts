@@ -294,30 +294,6 @@ export function elevationShadowValue(theme: PaletteTheme, level: number): string
   return `0 ${offsetY}px ${blur}px ${color}`;
 }
 
-/**
- * The elevation level (0..`ELEVATION_LEVELS - 1`) whose tonal-ramp background
- * exactly matches `hex` for this theme, or `null` when `hex` is not one of
- * the ramp's own derived colors -- e.g. an accent-classified or preserved
- * background never routes through here. Pure and injective in the common
- * case; at a clamped extreme (a near-white canvas in light mode, a
- * near-black one in dark mode) two adjacent levels CAN legitimately render
- * the identical hex once lightness saturates at the [0, 1] bound -- ties
- * resolve first-wins, returning the LOWEST such level. The adjacent-contrast
- * bounce (Amendment 3.5) adds a second collision shape: a bounced rung is
- * derived relative to its immediate predecessor, not the whole ladder, so it
- * can land on the SAME hex as a NON-adjacent rung (its grandparent's tone)
- * without every level in between collapsing too -- still resolved first-wins
- * by this same linear scan, lowest level first.
- *
- * @example elevationLevelForHex(theme, elevationBackgroundHex(theme, 2)) // 2
- */
-export function elevationLevelForHex(theme: PaletteTheme, hex: HexColor): number | null {
-  for (let level = MIN_ELEVATION_LEVEL; level <= MAX_ELEVATION_LEVEL; level += 1) {
-    if (elevationBackgroundHex(theme, level) === hex) return level;
-  }
-  return null;
-}
-
 /** The CSS custom property name for one elevation level's tonal background. */
 export function elevationVariable(level: number): string {
   return `--pm-elevation-${clampElevationLevel(level).toString()}`;

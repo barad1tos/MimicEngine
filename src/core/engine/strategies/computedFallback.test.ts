@@ -366,15 +366,14 @@ describe('computedFallback strategy', () => {
     expect(coverage).toEqual({ discovered: 0, mapped: 0, ratio: 0 });
   });
 
-  it('emits distinct elevation-variable backgrounds for the same hex at different elevations, and casts a shadow only on the raised island', () => {
-    // .card's box-shadow is the real elevation boundary here: same hex as
-    // .ground alone would now fold onto one visual surface (elevation 0
-    // for both) — the shadow is what makes .card a genuinely distinct
-    // surface at elevation 1. Both backgrounds render as `var(--pm-elevation-N)`
-    // (the "render-time" substitution — ColorMapping itself still stored real
-    // hexes, contrast math already ran against them); only .card, the
-    // elevation >= 1 island, additionally gets `box-shadow: var(--pm-shadow-1)`
-    // in the SAME rule block — the ground rung stays flat.
+  it('routes an island background into the positional block and a follower onto the inherited surface variable', () => {
+    // .card's box-shadow is the real island cue here: same hex as .ground
+    // alone would fold both onto one visual surface. The island's
+    // background and shadow no longer live in its per-signature group at
+    // all — the positional block paints every island by nesting depth
+    // (Amendment 3.7) — while the follower .ground reads the inherited
+    // `--pm-current-surface` so the same rule lands the right tone at any
+    // depth, falling back to the ground rung outside every island.
     document.head.innerHTML = `
       <style>
         .ground { background-color: rgb(255, 255, 255); }
@@ -392,24 +391,124 @@ describe('computedFallback strategy', () => {
     );
 
     const groundBlock = /:where\(div\.ground\) \{[^}]*\}/.exec(css)?.[0] ?? '';
-    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(css)?.[0] ?? '';
-    const groundBackground = /background-color: (var\(--pm-elevation-\d\))/.exec(groundBlock)?.[1];
-    const cardBackground = /background-color: (var\(--pm-elevation-\d\))/.exec(cardBlock)?.[1];
-
-    expect(groundBackground).toBe('var(--pm-elevation-0)');
-    expect(cardBackground).toBe('var(--pm-elevation-1)');
+    expect(groundBlock).toContain(
+      'background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;',
+    );
     expect(groundBlock).not.toContain('box-shadow');
-    expect(cardBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
+
+    // The island's background left the per-signature groups entirely — no
+    // `:where(div.card)` group remains (background was its only
+    // declaration), and the level-1 positional rule now carries background,
+    // shadow, and the surface variable for followers painted inside it.
+    expect(css).not.toMatch(/:where\(div\.card\) \{/);
+    const levelOneBlock = /:where\(:is\(div\.card\)\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(levelOneBlock).toContain('background-color: var(--pm-elevation-1) !important;');
+    expect(levelOneBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
+    expect(levelOneBlock).toContain('--pm-current-surface: var(--pm-elevation-1) !important;');
   });
 
-  it('keeps the paired guard operating on real hexes when the paired background is elevation-ramped (var-substituted only at render time)', () => {
+  it('golden: emits three ascending positional levels over the lexicographically sorted island list, before per-signature groups', () => {
+    // Two islands (.card by shadow cue, .aside by hex difference) and one
+    // follower (.ground). The positional block is depth-structural: level N
+    // is N nested `:is(<islands>)` hops, ascending so deeper wins at equal
+    // (zero) specificity; nesting past 3 keeps matching the level-3 rule.
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(240, 240, 240); }
+        .card { background-color: rgb(240, 240, 240); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+        .aside { background-color: rgb(200, 200, 200); }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="ground"><div class="card">x</div><div class="aside">y</div></div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).toMatchInlineSnapshot(`
+      "html[data-pm-active="true"] :where(:is(div.aside, div.card)) {
+        --pm-current-surface: var(--pm-elevation-1) !important;
+        background-color: var(--pm-elevation-1) !important;
+        box-shadow: var(--pm-shadow-1) !important;
+      }
+
+      html[data-pm-active="true"] :where(:is(div.aside, div.card) :is(div.aside, div.card)) {
+        --pm-current-surface: var(--pm-elevation-2) !important;
+        background-color: var(--pm-elevation-2) !important;
+        box-shadow: var(--pm-shadow-2) !important;
+      }
+
+      html[data-pm-active="true"] :where(:is(div.aside, div.card) :is(div.aside, div.card) :is(div.aside, div.card)) {
+        --pm-current-surface: var(--pm-elevation-3) !important;
+        background-color: var(--pm-elevation-3) !important;
+        box-shadow: var(--pm-shadow-3) !important;
+      }
+
+      html[data-pm-active="true"] :where(div.ground) {
+        background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;
+      }"
+    `);
+  });
+
+  it('keeps an accent-classified island background on its accent substitution, outside the positional block', () => {
+    // .pill is an island by hex difference, but its saturated background is
+    // accent-classified — mapped to a theme accent token, never a ladder
+    // rung. Accent-family backgrounds are NEVER positional islands: the
+    // literal accent hex stays in the per-signature group, and with no
+    // rung-mapped island on the page the positional block is absent
+    // entirely.
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .pill { background-color: rgb(1, 117, 79); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="ground"><span class="pill">x</span></div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const pillBlock = /:where\(span\.pill\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(pillBlock).toMatch(/background-color: #\w{6} !important;/);
+    expect(css).not.toContain(':is(');
+  });
+
+  it('emits no positional block at all when the page has no islands', () => {
+    // A single ground-level background: byte-stable with the pre-positional
+    // no-island output shape — nothing structural to paint.
+    document.head.innerHTML = '<style>.panel { background-color: rgb(200, 210, 220); }</style>';
+    document.body.innerHTML = '<div class="panel">x</div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).not.toContain(':is(');
+    expect(css).not.toContain('--pm-shadow');
+  });
+
+  it('keeps the paired guard operating on real hexes when the paired background is elevation-ramped (positional at render time)', () => {
     // .card's own background is low-chroma (not accent-classified), so it
-    // goes through the ladder and renders as `var(--pm-elevation-N)` in the
-    // final CSS -- but guardContrast/pairedTextOverride ran their contrast
-    // math against the underlying HEX before that substitution happened. If
-    // either ever compared against the literal string "var(--pm-elevation-N)"
-    // instead, contrastRatio would fail to parse it and silently skip the
-    // repair, and this assertion would fail.
+    // goes through the ladder onto the rung-1 hex and renders POSITIONALLY
+    // (the island's background lives in the positional block, not its
+    // per-signature group) -- but guardContrast/pairedTextOverride ran
+    // their contrast math against the underlying HEX before that removal
+    // happened. The guard's ceiling is the island's canonical rung (rung 1),
+    // so the emitted text must clear 4.5:1 against that rung's real hex.
     const cardBackgroundHex = toHex(oklchToRgba({ l: 0.5, c: 0.02, h: 250 }));
     document.head.innerHTML = `
       <style>
@@ -438,16 +537,15 @@ describe('computedFallback strategy', () => {
     ).css;
     expect(second).toBe(first);
 
+    // The island background moved to the positional block; the text stays
+    // in the per-signature group.
     const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(first)?.[0] ?? '';
-    const background = /background-color: (var\(--pm-elevation-\d\))/.exec(cardBlock)?.[1];
+    expect(cardBlock).not.toContain('background-color');
     const text = /(?<!background-)color: (#\w{6})/.exec(cardBlock)?.[1];
-    expect(background).toBeDefined();
     expect(text).toBeDefined();
-    if (background === undefined || text === undefined)
-      throw new Error('expected both a var() background and a hex text color');
+    if (text === undefined) throw new Error('expected a hex text color');
 
-    const level = Number(/--pm-elevation-(\d)/.exec(background)?.[1]);
-    const resolvedBackgroundHex = elevationBackgroundHex(catppuccinFrappe, level);
+    const resolvedBackgroundHex = elevationBackgroundHex(catppuccinFrappe, 1);
     expect(contrastRatio(text, resolvedBackgroundHex)).toBeGreaterThanOrEqual(4.5);
   });
 
@@ -533,7 +631,7 @@ describe('computedFallback strategy', () => {
       }
 
       html[data-pm-active="true"] :where(div.panel) {
-        background-color: var(--pm-elevation-0) !important;
+        background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;
       }"
     `);
   });

@@ -19,7 +19,8 @@ export type AuthoredColorDeclaration = {
   // The @media/@supports chain this declaration is nested inside, outermost
   // first (e.g. ['@media (min-width: 600px)']); empty for a top-level rule.
   conditions: string[];
-  // Stacking depth (signatureCensus's elevationOf) for a `bucket: 'background'`
+  // Binary island classification (signatureCensus's elevationOf, Amendment
+  // 3.7: 1 = island, 0 = surface-following) for a `bucket: 'background'`
   // declaration synthesized from the census — see colorMap.ts's SitePaletteEntry
   // and mappingKeyOf. Meaningless outside the background bucket: collectPageFacts'
   // own stylesheet/inline-style/SVG collectors never set it, and no other
