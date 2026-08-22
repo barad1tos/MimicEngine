@@ -108,6 +108,35 @@ describe('decideStrategies', () => {
     });
   });
 
+  it('selects style-starved only for a large DOM with at most three authored colors', () => {
+    const styleStarvedPlan = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 3, domElementCount: 1500 },
+      'auto',
+    );
+    const authoredBoundaryPlan = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 4, domElementCount: 1500 },
+      'auto',
+    );
+    const domBoundaryPlan = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 3, domElementCount: 1499 },
+      'auto',
+    );
+
+    expect(planStrategies(styleStarvedPlan)).toEqual(['baseline', 'computedFallback']);
+    expect(styleStarvedPlan.provenance).toEqual({
+      kind: 'auto',
+      rule: 'style-starved',
+      strategies: ['baseline', 'computedFallback'],
+      reasons: [
+        { metric: 'authoredColorCount', value: 3, condition: { lte: 3 } },
+        { metric: 'domElementCount', value: 1500, condition: { gte: 1500 } },
+      ],
+      tableVersion: TABLE_VERSION,
+    });
+    expect(planStrategies(authoredBoundaryPlan)).toEqual(['baseline']);
+    expect(planStrategies(domBoundaryPlan)).toEqual(['baseline']);
+  });
+
   it('boundary: colorCustomPropertyCount 8 selects calm-variables-rich, 7 falls through to default', () => {
     const atBoundary = decideStrategies({ ...baseMetrics, colorCustomPropertyCount: 8 }, 'auto');
     const belowBoundary = decideStrategies({ ...baseMetrics, colorCustomPropertyCount: 7 }, 'auto');
@@ -236,6 +265,7 @@ describe('decideStrategies', () => {
         }, // mixed-visibility
         { ...baseMetrics, authoredColorCount: 12, mutationRate: 5 }, // authored-rich
         { ...baseMetrics, unreadableStylesheetRatio: 0.5 }, // opaque-styles
+        { ...baseMetrics, authoredColorCount: 3, domElementCount: 1500 }, // style-starved
         baseMetrics, // default
       ];
 

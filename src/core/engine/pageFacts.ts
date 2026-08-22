@@ -81,7 +81,9 @@ export function collectPageFacts(
 ): PageFacts {
   const resolved = { ...DEFAULT_OPTIONS, ...options };
   const ownStyleSheets = getOwnStyleSheets(doc);
-  const sheets = Array.from(doc.styleSheets).filter((sheet) => !ownStyleSheets.includes(sheet));
+  const sheets = [...Array.from(doc.styleSheets), ...doc.adoptedStyleSheets].filter(
+    (sheet) => !ownStyleSheets.includes(sheet),
+  );
   const { declarations, usage, authoredRules, stylesheetCount, unreadableStylesheetCount } =
     collectFromSheets(sheets, {
       maxRules: resolved.maxRules,
