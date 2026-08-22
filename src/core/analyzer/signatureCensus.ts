@@ -42,12 +42,14 @@ type SignatureRecord = {
   // background slot (elevationOf is meaningless for text/border) and, like
   // `values`, is insertion-ordered — its first entry is the FIRST elevation
   // any representative landed for this property, the "first-wins" value
-  // snapshot() exposes as the property's single `elevation`. Two
-  // representatives disagreeing on elevation (same background hex, but one
-  // sits deeper in an opaque-ancestor stack than the other — see C-3) is
-  // divergence exactly like disagreeing on `values`: refineDivergentSignatures
-  // re-keys by parent context so each stacking depth gets its own record
-  // instead of silently collapsing onto whichever depth was sampled first.
+  // snapshot() exposes as the property's single `elevation`. Elevation is
+  // BINARY (Amendment 3.7): 1 = island (the element itself starts a
+  // surface), 0 = surface-following. Two representatives disagreeing on it
+  // (same background hex, but one is an island in its context and the
+  // other surface-following — see C-3) is divergence exactly like
+  // disagreeing on `values`: refineDivergentSignatures re-keys by parent
+  // context so each classification gets its own record instead of silently
+  // collapsing onto whichever was sampled first.
   // `hasOpaqueValue`/`hasTransparentRepresentative` are background-only
   // (Amendment 3.3): a representative whose OWN background is explicitly
   // `transparent`/`rgba(0, 0, 0, 0)` never enters `values` (that would
@@ -82,10 +84,30 @@ type PropertySlot = {
 };
 
 const BORDER_SIDES = [
-  { width: 'borderTopWidth', color: 'borderTopColor', cssProperty: 'border-top-color' },
-  { width: 'borderRightWidth', color: 'borderRightColor', cssProperty: 'border-right-color' },
-  { width: 'borderBottomWidth', color: 'borderBottomColor', cssProperty: 'border-bottom-color' },
-  { width: 'borderLeftWidth', color: 'borderLeftColor', cssProperty: 'border-left-color' },
+  {
+    width: 'borderTopWidth',
+    borderStyle: 'borderTopStyle',
+    color: 'borderTopColor',
+    cssProperty: 'border-top-color',
+  },
+  {
+    width: 'borderRightWidth',
+    borderStyle: 'borderRightStyle',
+    color: 'borderRightColor',
+    cssProperty: 'border-right-color',
+  },
+  {
+    width: 'borderBottomWidth',
+    borderStyle: 'borderBottomStyle',
+    color: 'borderBottomColor',
+    cssProperty: 'border-bottom-color',
+  },
+  {
+    width: 'borderLeftWidth',
+    borderStyle: 'borderLeftStyle',
+    color: 'borderLeftColor',
+    cssProperty: 'border-left-color',
+  },
 ] as const;
 
 export function createSignatureCensus(): SignatureCensus {
@@ -126,12 +148,13 @@ export function createSignatureCensus(): SignatureCensus {
     return isNewSignal;
   };
 
-  // Elevation is expensive (walks the ancestor chain), so it's computed
-  // lazily, only for a background declaration that just survived the
-  // relevance filter — but on EVERY representative, not just the first: two
-  // representatives can share the same background hex while sitting at
-  // different stacking depths (C-3), and that disagreement is only visible
-  // if every representative's own elevation gets recorded. `hasOpaqueValue`
+  // Island classification is expensive (walks up to the nearest opaque
+  // ancestor), so it's computed lazily, only for a background declaration
+  // that just survived the relevance filter — but on EVERY representative,
+  // not just the first: two representatives can share the same background
+  // hex while one is an island in its context and the other
+  // surface-following (C-3), and that disagreement is only visible if every
+  // representative's own classification gets recorded. `hasOpaqueValue`
   // is the other half of the Amendment 3.3 divergence signal, alongside
   // `hasTransparentRepresentative` above. Returns whether either reading was
   // genuinely new information.
@@ -236,9 +259,9 @@ export function createSignatureCensus(): SignatureCensus {
   // record still disagrees on VALUE, or is still an opaque/transparent mix,
   // the property is dropped and counted; elevation disagreement alone never
   // drops the property (see the drop loop below) — it degrades to
-  // first-wins instead, since an approximate stacking depth is still useful
-  // signal, unlike a wrong color or a guessed-opaque transparent element.
-  // Refined records are never refined again (depth cap).
+  // first-wins instead, since an approximate island classification is still
+  // useful signal, unlike a wrong color or a guessed-opaque transparent
+  // element. Refined records are never refined again (depth cap).
   // A signature is divergent when its representatives disagree on any
   // property's VALUE, on its ELEVATION (background slots only), or MIXED an
   // opaque background with an explicitly transparent one (Amendment 3.3).
@@ -324,10 +347,11 @@ export function createSignatureCensus(): SignatureCensus {
   };
 
   // Unlike soleValue, this never rejects on size > 1: an elevation slot that
-  // is STILL mixed after refinement (the depth-1 cap left two stacking
-  // depths sharing one record) degrades gracefully to first-wins rather than
-  // dropping the property outright (C-3) — `elevations` is insertion-ordered,
-  // so its first entry is exactly the first representative's own reading.
+  // is STILL mixed after refinement (the depth-1 cap left an island and a
+  // surface-follower sharing one record) degrades gracefully to first-wins
+  // rather than dropping the property outright (C-3) — `elevations` is
+  // insertion-ordered, so its first entry is exactly the first
+  // representative's own reading.
   const firstElevation = (elevations: Set<number>): number | undefined => {
     const first = elevations.values().next();
     return first.done ? undefined : first.value;
@@ -495,61 +519,85 @@ function isProbablyVisible(element: Element): boolean {
   return rect.width > 0 && rect.height > 0;
 }
 
-// Visual surface level, not a raw ancestor count: a row nested inside a
-// same-color card is still the SAME surface as the card, not a new layer —
-// real sites mark true elevation with a box-shadow, not by nesting depth
-// alone. Walks the opaque-background ancestor chain root-most first, then
-// folds the element's own node in last: the level bumps only when a node's
-// hex differs from the current surface's hex, or a qualifying box-shadow is
-// in play; a same-hex, shadow-less node is folded into the surface already
-// established by its predecessor. A non-opaque node (a transparent wrapper)
-// never itself starts or bumps a surface, but its OWN qualifying shadow is
-// still a real boundary — carried forward as `pendingShadowBoundary` and
-// consumed by the next opaque node the fold reaches, even across further
-// transparent nodes in between. A pending shadow with no opaque descendant
-// at all simply dies unused. Called only from inside the
+// Binary island classification (Amendments 3.6 + 3.7): elevation is no
+// longer a stacking DEPTH — depth beyond one level is expressed
+// positionally in emitted CSS (computedFallback's nested island rules), so
+// the census only decides whether the element ITSELF starts a surface (1,
+// an island) or follows the surface it sits on (0). The walk goes UP only
+// to the NEAREST opaque-background ancestor: the element is an island when
+// its hex differs from that ancestor's hex, when its own box-shadow
+// qualifies (hasElevationShadow), when it carries a full-perimeter visible
+// border (hasFullPerimeterBorder — the hairline cue native-dark sites draw
+// instead of a tonal change), or when a transparent wrapper between them
+// carries either cue (the pending-boundary carry; a pending cue with no
+// opaque node below it simply dies unused). No opaque ancestor at all means
+// the element IS the ground — 0 regardless of its own cues, since there is
+// no surface beneath it to be raised from. Called only from inside the
 // withStylesheetDisabled window sampleInto already runs in, so these
 // getComputedStyle reads see the page's authored colors, not ours.
-function elevationOf(element: Element): number {
-  const ancestors: Element[] = [];
+function elevationOf(element: Element): 0 | 1 {
+  const style = getComputedStyle(element);
+  let pendingWrapperCue = false;
+
   for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-    ancestors.push(ancestor);
-  }
-  ancestors.reverse();
-
-  let level = 0;
-  let currentSurfaceHex: HexColor | null = null;
-  let pendingShadowBoundary = false;
-
-  for (const node of [...ancestors, element]) {
-    const style = getComputedStyle(node);
-    const background = parseCssColor(style.backgroundColor);
+    const ancestorStyle = getComputedStyle(ancestor);
+    const background = parseCssColor(ancestorStyle.backgroundColor);
 
     if (!background || !isOpaque(background)) {
-      if (hasElevationShadow(style.boxShadow)) pendingShadowBoundary = true;
+      if (hasElevationShadow(ancestorStyle.boxShadow) || hasFullPerimeterBorder(ancestorStyle)) {
+        pendingWrapperCue = true;
+      }
       continue;
     }
 
-    const hex = toHex(background);
-    if (currentSurfaceHex === null) {
-      // The first opaque node always seeds the base surface unconditionally
-      // — nothing precedes it for a shadow to be a boundary FROM, so any
-      // pending shadow carried by an earlier transparent node is moot here.
-      currentSurfaceHex = hex;
-      pendingShadowBoundary = false;
-      continue;
-    }
-
-    const isBoundary =
-      hex !== currentSurfaceHex || hasElevationShadow(style.boxShadow) || pendingShadowBoundary;
-    if (isBoundary) {
-      level += 1;
-      currentSurfaceHex = hex;
-    }
-    pendingShadowBoundary = false;
+    return isIslandAgainst(style, toHex(background), pendingWrapperCue) ? 1 : 0;
   }
 
-  return level;
+  return 0;
+}
+
+// The island decision against the nearest opaque ancestor's surface hex.
+// The element's own background can still be translucent here
+// (isRelevantValue admits e.g. rgba(x, y, z, 0.5)); toHex is alpha-blind,
+// so the hex-difference cue only fires for a genuinely opaque element
+// background — the other cues judge the element's box, not its color, and
+// apply either way.
+function isIslandAgainst(
+  style: CSSStyleDeclaration,
+  surfaceHex: HexColor,
+  pendingWrapperCue: boolean,
+): boolean {
+  const background = parseCssColor(style.backgroundColor);
+  const hexDiffers =
+    background !== null && isOpaque(background) && toHex(background) !== surfaceHex;
+
+  return (
+    hexDiffers ||
+    hasElevationShadow(style.boxShadow) ||
+    hasFullPerimeterBorder(style) ||
+    pendingWrapperCue
+  );
+}
+
+// A full-perimeter visible border is an island cue (Amendment 3.6): all
+// four sides drawn (style set and not `none`, width > 0) in a color anyone
+// can see (alpha > 0 — translucent hairlines like LinkedIn post cards'
+// rgba(140, 140, 140, 0.25) COUNT). Single-sided borders are dividers and
+// never count — the over-splitting concern that originally excluded borders
+// stays addressed. A side color that doesn't parse (a keyword, the
+// currentColor default) can't be judged on alpha and is treated as visible,
+// same contract as isQualifyingShadowLayer.
+function hasFullPerimeterBorder(style: CSSStyleDeclaration): boolean {
+  return BORDER_SIDES.every((side) => {
+    const sideStyle = style[side.borderStyle];
+    if (sideStyle === '' || sideStyle === 'none') return false;
+    // NaN-safe drawn-width gate: an unset side computes to '' in happy-dom
+    // (NaN after parseFloat) and must fail exactly like a 0 width.
+    const width = Number.parseFloat(style[side.width]);
+    if (Number.isNaN(width) || width <= 0) return false;
+    const color = parseCssColor(style[side.color]);
+    return !color || color.a > 0;
+  });
 }
 
 // A box-shadow only marks a real elevation boundary when at least one of its

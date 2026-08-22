@@ -39,11 +39,12 @@ function fullCensus() {
   return census;
 }
 
-// Elevation is a VISUAL SURFACE LEVEL, not a raw ancestor count: a node only
-// starts a new surface when it either changes the background hex or a
-// qualifying box-shadow is in play. Same hex + no shadow means "still the
-// same surface as its parent" regardless of how many opaque ancestors sit
-// above it.
+// Elevation is BINARY island classification (Amendments 3.6 + 3.7): 1 when
+// the element itself starts a surface (hex differs from its nearest opaque
+// ancestor, a qualifying box-shadow, a full-perimeter visible border, or a
+// transparent wrapper carrying either cue), 0 when it follows the surface
+// it sits on. Depth beyond one level is positional — expressed in emitted
+// CSS, never in the census.
 function backgroundElevationOf(
   entries: CensusSnapshot['entries'],
   selector: string,
@@ -322,7 +323,7 @@ describe('divergence refinement', () => {
 });
 
 describe('background elevation', () => {
-  it('bumps elevation on a shadow boundary and on a color boundary, not on ancestor depth alone', () => {
+  it('classifies islands by their own boundary cue, not by ancestor depth', () => {
     document.head.innerHTML = `
       <style>
         .ground { background-color: rgb(255, 255, 255); }
@@ -339,9 +340,10 @@ describe('background elevation', () => {
     // new surface.
     expect(backgroundElevationOf(entries, 'div.ground')).toBe(0);
     expect(backgroundElevationOf(entries, 'section.card')).toBe(1);
-    // .chip has neither .card's hex nor its own shadow, but its DIFFERENT
-    // hex is itself a real boundary.
-    expect(backgroundElevationOf(entries, 'span.chip')).toBe(2);
+    // .chip differs from .card's hex — an island in its own right. Its
+    // depth (two surfaces up from the ground) is positional, so the census
+    // still reads 1, never 2.
+    expect(backgroundElevationOf(entries, 'span.chip')).toBe(1);
   });
 
   it('keeps same-hex, unshadowed nesting at one visual surface (the notifications wash-out regression)', () => {
@@ -494,6 +496,94 @@ describe('shadow boundary refinements (Codex P2s)', () => {
 
     const entries = fullCensus().snapshot().entries;
     expect(backgroundElevationOf(entries, 'section.card')).toBe(1);
+  });
+});
+
+describe('island cues (Amendments 3.6 + 3.7)', () => {
+  // One target element per case; expected is the census's BINARY island
+  // classification for its background sample. The hairline-border cue
+  // (Amendment 3.6) mirrors what native-dark sites actually draw: LinkedIn
+  // post cards delimit same-hex islands with a full 4-side
+  // `1px rgba(140, 140, 140, 0.25)` border, no tonal change at all.
+  const cases: {
+    name: string;
+    head: string;
+    body: string;
+    selector: string;
+    expected: 0 | 1;
+  }[] = [
+    {
+      name: 'a full-perimeter translucent hairline border makes a same-hex element an island',
+      head: `<style>
+        .ground { background-color: rgb(29, 34, 38); }
+        .card { background-color: rgb(29, 34, 38); border: 1px solid rgba(140, 140, 140, 0.25); }
+      </style>`,
+      body: '<div class="ground"><section class="card">x</section></div>',
+      selector: 'section.card',
+      expected: 1,
+    },
+    {
+      name: 'a single-sided border (divider) never counts — the element stays surface-following',
+      head: `<style>
+        .ground { background-color: rgb(29, 34, 38); }
+        .row { background-color: rgb(29, 34, 38); border-bottom: 1px solid rgba(140, 140, 140, 0.25); }
+      </style>`,
+      body: '<div class="ground"><section class="row">x</section></div>',
+      selector: 'section.row',
+      expected: 0,
+    },
+    {
+      name: 'same hex with no cue at all is surface-following',
+      head: `<style>
+        .ground { background-color: rgb(29, 34, 38); }
+        .inner { background-color: rgb(29, 34, 38); }
+      </style>`,
+      body: '<div class="ground"><section class="inner">x</section></div>',
+      selector: 'section.inner',
+      expected: 0,
+    },
+    {
+      name: 'a hex differing from the nearest opaque ancestor is an island',
+      head: `<style>
+        .ground { background-color: rgb(29, 34, 38); }
+        .panel { background-color: rgb(45, 50, 55); }
+      </style>`,
+      body: '<div class="ground"><section class="panel">x</section></div>',
+      selector: 'section.panel',
+      expected: 1,
+    },
+    {
+      name: 'a transparent wrapper carrying a full-perimeter border makes its opaque child an island',
+      head: `<style>
+        .ground { background-color: rgb(29, 34, 38); }
+        .frame { border: 1px solid rgba(140, 140, 140, 0.25); }
+        .child { background-color: rgb(29, 34, 38); }
+      </style>`,
+      body: '<div class="ground"><div class="frame"><div class="child">x</div></div></div>',
+      selector: 'div.child',
+      expected: 1,
+    },
+    {
+      name: 'no opaque ancestor at all means the element IS the ground — 0 despite its own cues',
+      head: `<style>
+        .floating {
+          background-color: rgb(29, 34, 38);
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+          border: 1px solid rgba(140, 140, 140, 0.25);
+        }
+      </style>`,
+      body: '<div class="floating">x</div>',
+      selector: 'div.floating',
+      expected: 0,
+    },
+  ];
+
+  it.each(cases)('$name', ({ head, body, selector, expected }) => {
+    document.head.innerHTML = head;
+    document.body.innerHTML = body;
+
+    const entries = fullCensus().snapshot().entries;
+    expect(backgroundElevationOf(entries, selector)).toBe(expected);
   });
 });
 
@@ -710,42 +800,39 @@ describe('background transparency divergence (Amendment 3.3)', () => {
 });
 
 describe('elevation divergence (C-3)', () => {
-  it('splits same-hex backgrounds at different elevations into separate refined records, without dropping', () => {
+  it('splits same-hex backgrounds with different island classification into separate refined records, without dropping', () => {
     // Two `.card` elements share tag+class AND the exact same background
-    // hex -- the color itself never diverges -- but sit at genuinely
-    // different visual surface levels: one is wrapped by a `.wrap` that
-    // carries its own box-shadow (a real elevation boundary between
-    // `.ground` and `.wrap`), the other sits directly on `.ground` with no
-    // shadow anywhere in between. Before the fix, elevation was only ever
-    // computed from the FIRST representative sampled into a signature
-    // record, so the second element's different elevation was silently
-    // discarded and both collapsed onto one broad rule at the wrong depth
-    // for one of them.
+    // hex -- the color itself never diverges -- but only one of them is an
+    // island: card A sits on a same-hex ground with no cue of its own
+    // (surface-following, 0), card B sits on a DIFFERENT-hex ground (the
+    // hex difference is its boundary cue, 1). Divergent island-ness across
+    // representatives goes through the standard refine-then-drop machinery:
+    // a split, never a silent first-wins collapse.
     document.head.innerHTML = `
       <style>
-        .ground { background-color: rgb(250, 250, 250); }
-        .wrap { background-color: rgb(250, 250, 250); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+        .groundLight { background-color: rgb(250, 250, 250); }
+        .groundDark { background-color: rgb(200, 200, 200); }
         .card { background-color: rgb(250, 250, 250); }
       </style>
     `;
     document.body.innerHTML = `
-      <div class="ground"><div class="wrap"><section class="card">A</section></div></div>
-      <div class="ground"><section class="card">B</section></div>
+      <div class="groundLight"><section class="card">A</section></div>
+      <div class="groundDark"><section class="card">B</section></div>
     `;
 
     const snapshot = fullCensus().snapshot();
     const selectors = snapshot.entries.map((entry) => entry.selector);
 
     // Refined into two parent-qualified selectors -- never one broad,
-    // elevation-blind `section.card` rule.
+    // island-blind `section.card` rule.
     expect(selectors).not.toContain('section.card');
-    expect(selectors).toContain('div.wrap > section.card');
-    expect(selectors).toContain('div.ground > section.card');
+    expect(selectors).toContain('div.groundLight > section.card');
+    expect(selectors).toContain('div.groundDark > section.card');
 
-    expect(backgroundElevationOf(snapshot.entries, 'div.wrap > section.card')).toBe(1);
-    expect(backgroundElevationOf(snapshot.entries, 'div.ground > section.card')).toBe(0);
+    expect(backgroundElevationOf(snapshot.entries, 'div.groundLight > section.card')).toBe(0);
+    expect(backgroundElevationOf(snapshot.entries, 'div.groundDark > section.card')).toBe(1);
 
-    // A split, not a drop: elevation disagreement degrades gracefully --
+    // A split, not a drop: island-ness disagreement degrades gracefully --
     // both refined records keep their background-color property intact.
     expect(snapshot.droppedProperties).toBe(0);
   });
