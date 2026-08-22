@@ -98,31 +98,79 @@ function canvasColor(theme: PaletteTheme): RgbaColor {
   return color;
 }
 
+// Round-trips an ideal (l, c, h) triple through the EXACT path a rung is
+// actually emitted through -- oklchToRgba (which clips channels that fall
+// outside the sRGB gamut) -> hex -> parseCssColor -> rgbaToOklch -- and
+// returns both the resulting hex and its decoded lightness. Post-review fix
+// (2026-08-22): `rungLightnessLadder`'s adjacent-delta check used to compare
+// IDEAL lightness values that were never actually reachable in sRGB for a
+// saturated canvas (the achievable chroma at a given hue shrinks near the
+// gamut's dark/light wings, so a candidate that clears MIN_ADJACENT_DELTA on
+// paper can clip to a real color that doesn't). Chroma and hue are always
+// the CALLER's original canvas values here, never a decoded/drifted one --
+// only lightness ever varies across rungs (hue/chroma preserved from canvas
+// throughout), so re-deriving from a previous rung's real lightness plus the
+// canvas's own c/h stays faithful to that invariant.
+// `toHex`/`parseCssColor` round-trip integer RGB losslessly, so this is
+// exactly what `elevatedRungHex` would independently compute for the same
+// (l, c, h) -- returning the hex here directly (rather than recomputing it
+// downstream) guarantees the delta check and the emitted color can never
+// diverge from a second, independent clip.
+function realRung(l: number, c: number, h: number): { hex: HexColor; lightness: number } {
+  const hex = toHex(oklchToRgba({ l, c, h }));
+  const rgba = parseCssColor(hex);
+  if (!rgba) {
+    // Unreachable: toHex always emits a well-formed 6-digit hex string that
+    // parseCssColor accepts -- a defensive invariant check, not a real
+    // failure mode.
+    throw new Error(`invalid round-trip hex: ${hex}`);
+  }
+  return { hex, lightness: rgbaToOklch(rgba).l };
+}
+
 /**
- * The tonal ramp's ACTUAL lightness for rungs 0..3 -- the ONE source
+ * The tonal ramp's ACTUAL hex for rungs 0..3 -- the ONE source
  * `elevatedRungHex` (emission) and `stepKeepsTextReadable` (the constraint
- * walk `resolveElevationStep` runs) both read through, so a bounce can never
- * show up in emission without also being seen by the readability check.
+ * walk `resolveElevationStep` runs) both read through, so a bounce -- and
+ * any gamut clipping -- can never show up in emission without also being
+ * seen by the readability check.
  *
  * A SEQUENTIAL fold (Amendment 3.5): each rung N's canonical candidate is
  * the decayed step for level N (`step * LEVEL_DECAY_RATIOS[level - 1]`)
- * applied to rung N-1's ACTUAL lightness (not a canvas-relative closed
- * form), still capped so the total shift from canvas never exceeds
- * `CUMULATIVE_SHIFT_CEILING` and clamped to [0, 1]. When that candidate's
- * delta from rung N-1's ACTUAL lightness compresses below
- * `MIN_ADJACENT_DELTA` -- decay, cap, or a floor/ceiling clamp all compress
- * it the same way -- rung N BOUNCES lighter instead: `L(N-1) +
- * MIN_ADJACENT_DELTA`, clamped to [0, 1] (a bounce that clamps at 1 keeps
- * whatever delta the clamp leaves; degrades gracefully). A bounced rung
- * derives every later rung in turn, so a bounce at level 2 propagates into
- * level 3's candidate -- level 3 may end up closer to its grandparent's
- * tone (level 1) than to its immediate parent. Pure and deterministic.
+ * applied to rung N-1's ACTUAL (real, round-tripped -- see below) lightness,
+ * not a canvas-relative closed form, still capped so the total shift from
+ * canvas never exceeds `CUMULATIVE_SHIFT_CEILING` and clamped to [0, 1].
  *
- * @example rungLightnessLadder(0.3, 0.045) // [0.3, 0.255, 0.2235, 0.2535] -- level
- * 3's undamped candidate (0.201) would sit only 0.0225 below level 2, under
- * `MIN_ADJACENT_DELTA`, so it bounces to 0.2235 + 0.03 instead.
+ * Every candidate is immediately round-tripped through `realRung` as soon as
+ * it's derived (post-review fix), and THAT real lightness -- never the
+ * ideal one -- feeds both the adjacent-delta check below and the next
+ * rung's derivation: `oklchToRgba` clips channels outside the sRGB gamut, so
+ * for a saturated canvas an ideal candidate that clears `MIN_ADJACENT_DELTA`
+ * on paper can clip to a real emitted lightness that doesn't. Comparing (and
+ * chaining) real values instead means the ladder can never promise a delta
+ * the actual emitted colors don't deliver.
+ *
+ * When that REAL candidate's delta from rung N-1's REAL lightness compresses
+ * below `MIN_ADJACENT_DELTA` -- decay, cap, clamp, or clipping all compress
+ * it the same way -- rung N BOUNCES lighter instead: the round-tripped
+ * `L(N-1) + MIN_ADJACENT_DELTA` (clamped to [0, 1] first). A SINGLE bounce
+ * attempt, no retry loop: if clipping ALSO compresses the round-tripped
+ * bounce target below the minimum (residual clipping at the bounce's own
+ * lightness/chroma combination), that is the best achievable result for this
+ * canvas and is accepted as-is -- still deterministic, and never worse than
+ * not bouncing at all. A bounced rung derives every later rung in turn, so a
+ * bounce at level 2 propagates into level 3's candidate -- level 3 may end
+ * up closer to its grandparent's tone (level 1) than to its immediate
+ * parent. Pure and deterministic.
+ *
+ * @example rungLightnessLadder({ l: 0.3, c: 0.02, h: 260 }, 0.045) // level 3's
+ * undamped candidate would sit only 0.0225 below level 2, under
+ * `MIN_ADJACENT_DELTA`, so it bounces lighter instead (real hexes, not the
+ * ideal lightness values -- see realRung).
  */
-function rungLightnessLadder(canvasLightness: number, step: number): readonly number[] {
+function rungLightnessLadder(canvasOklch: Oklch, step: number): readonly HexColor[] {
+  const { l: canvasLightness, c, h } = canvasOklch;
+  const hexes: HexColor[] = [toHex(oklchToRgba(canvasOklch))];
   const lightness: number[] = [canvasLightness];
 
   for (let level = 1; level <= MAX_ELEVATION_LEVEL; level += 1) {
@@ -130,24 +178,32 @@ function rungLightnessLadder(canvasLightness: number, step: number): readonly nu
     const increment = step * (LEVEL_DECAY_RATIOS[level - 1] ?? 0);
     const shiftSoFar = canvasLightness - previous;
     const cappedShift = Math.min(shiftSoFar + increment, CUMULATIVE_SHIFT_CEILING);
-    const candidate = clampLightness(canvasLightness + ELEVATION_DIRECTION * cappedShift);
+    const idealCandidate = clampLightness(canvasLightness + ELEVATION_DIRECTION * cappedShift);
+    const candidate = realRung(idealCandidate, c, h);
 
     // increment === 0 only when step itself is 0 -- resolveElevationStep's
     // deliberate "no candidate is readable" flatten. There was no darkening
     // attempt to rescue in that case, so bounce must stay silent: every rung
     // stays exactly the canvas, matching the readability check that verified
     // step 0 (not step 0 plus a bounce) against theme text/textMuted.
-    const bounces = increment > 0 && Math.abs(candidate - previous) < MIN_ADJACENT_DELTA;
-    lightness.push(bounces ? clampLightness(previous + MIN_ADJACENT_DELTA) : candidate);
+    const bounces = increment > 0 && Math.abs(candidate.lightness - previous) < MIN_ADJACENT_DELTA;
+    if (!bounces) {
+      hexes.push(candidate.hex);
+      lightness.push(candidate.lightness);
+      continue;
+    }
+
+    const bounce = realRung(clampLightness(previous + MIN_ADJACENT_DELTA), c, h);
+    hexes.push(bounce.hex);
+    lightness.push(bounce.lightness);
   }
 
-  return lightness;
+  return hexes;
 }
 
 function elevatedRungHex(canvasOklch: Oklch, step: number, level: number): HexColor {
-  const ladder = rungLightnessLadder(canvasOklch.l, step);
-  const lightness = ladder[level] ?? canvasOklch.l;
-  return toHex(oklchToRgba({ l: lightness, c: canvasOklch.c, h: canvasOklch.h }));
+  const ladder = rungLightnessLadder(canvasOklch, step);
+  return ladder[level] ?? toHex(oklchToRgba(canvasOklch));
 }
 
 function stepKeepsTextReadable(theme: PaletteTheme, canvasOklch: Oklch, step: number): boolean {

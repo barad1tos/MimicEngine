@@ -419,6 +419,13 @@ describe('buildColorMapping — other bucket', () => {
 });
 
 describe('buildColorMapping — golden palette', () => {
+  // #26262e's rung (elevation level 2) shifted by exactly one 8-bit channel
+  // step (#1d2132 -> #1e2132, a ~0.0009 OKLCH lightness difference,
+  // imperceptible) when elevationScale.ts's rung ladder started chaining
+  // ROUND-TRIPPED (not ideal) lightness through every level, including
+  // non-bounced ones (post-review fix for saturated-canvas gamut clipping,
+  // see elevationScale.test.ts's "adjacent-contrast bounce" describe block).
+  // Re-pinned deliberately after confirming the drift is this negligible.
   it('produces a stable full mapping for a fixed 10-color palette on catppuccinFrappe', () => {
     const palette = [
       entry('#101014', 'background', 50),
@@ -439,7 +446,7 @@ describe('buildColorMapping — golden palette', () => {
       "{
         "#101014": "#303446",
         "#1c1c22": "#25293a",
-        "#26262e": "#1d2132",
+        "#26262e": "#1e2132",
         "#f5f5f7": "#c6d0f5",
         "#c9c9d1": "#a5adce",
         "#3a3a44": "#626880",
