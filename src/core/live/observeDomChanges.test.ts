@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // src/core/live/observeDomChanges.test.ts
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { STYLE_ELEMENT_ID } from '../injector/styleElement';
+import { STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID } from '../injector/styleElement';
 import { observeDomChanges } from './observeDomChanges';
 
 const DEBOUNCE_MS = 10;
@@ -51,6 +51,35 @@ describe('observeDomChanges', () => {
     const observer = observeDomChanges(callback, DEBOUNCE_MS);
 
     styleElement.textContent = ':root { --pm-canvas: #000000; }';
+    document.body.setAttribute('class', 'changed');
+    await waitFor(SETTLE_MS);
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    observer.stop();
+  });
+
+  it('does not fire the callback when a batch is solely the transition-kill element being added and removed', async () => {
+    const callback = vi.fn();
+    const observer = observeDomChanges(callback, DEBOUNCE_MS);
+
+    const killElement = document.createElement('style');
+    killElement.id = TRANSITION_KILL_ELEMENT_ID;
+    document.documentElement.append(killElement);
+    killElement.remove();
+    await waitFor(SETTLE_MS);
+
+    expect(callback).not.toHaveBeenCalled();
+    observer.stop();
+  });
+
+  it('fires once when a batch mixes the transition-kill element churn with an unrelated page mutation', async () => {
+    const callback = vi.fn();
+    const observer = observeDomChanges(callback, DEBOUNCE_MS);
+
+    const killElement = document.createElement('style');
+    killElement.id = TRANSITION_KILL_ELEMENT_ID;
+    document.documentElement.append(killElement);
+    killElement.remove();
     document.body.setAttribute('class', 'changed');
     await waitFor(SETTLE_MS);
 

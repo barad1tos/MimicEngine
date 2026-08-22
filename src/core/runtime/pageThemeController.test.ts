@@ -6,7 +6,7 @@ import { installedCensus } from '../analyzer/signatureCensus';
 import { planStorageKey, type PlanDiagnostics } from '../engine/diagnostics';
 import * as shadowStylesModule from '../injector/shadowStyles';
 import * as styleElementModule from '../injector/styleElement';
-import { STYLE_ELEMENT_ID } from '../injector/styleElement';
+import { STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID } from '../injector/styleElement';
 import { observeDomChanges } from '../live/observeDomChanges';
 import { IMPORTED_THEMES_KEY, type ImportedTheme } from '../storage/importedThemesStore';
 import { createDefaultSiteSettings, STORAGE_KEY, type AppSettings } from '../storage/settingsStore';
@@ -915,6 +915,44 @@ describe('createPageThemeController — census lifecycle', () => {
     await vi.runAllTimersAsync();
 
     expect(injectSpy.mock.calls).toHaveLength(injectCountAfterInitialApply);
+
+    controller.stop();
+  });
+
+  it('excludes the transition-kill element from census ingestion, so its churn never reaches census.ingestAddedElements', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    // computedFallback so any reapply that WOULD fire (proving a leak) is
+    // actually observable through injectStylesheet, not silently withheld.
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+    const elementsVisitedBefore = installedCensus()?.snapshot().elementsVisited;
+    const injectCountBefore = injectSpy.mock.calls.length;
+
+    // Mirrors withStylesheetDisabled's own append-then-remove churn of its
+    // transition-kill element (id TRANSITION_KILL_ELEMENT_ID) without going
+    // through the function itself — isolates the census observer's own
+    // filtering from the wider recursive scenario the fix also prevents
+    // (ingestAddedElements calls withStylesheetDisabled internally, so an
+    // unfiltered ingest of this element would churn it again, feeding this
+    // same observer forever).
+    const killElement = document.createElement('style');
+    killElement.id = TRANSITION_KILL_ELEMENT_ID;
+    document.documentElement.append(killElement);
+    killElement.remove();
+
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    // visit() increments elementsVisited unconditionally, before any
+    // visibility check — so this count staying flat proves ingestAddedElements
+    // was never called for this batch, not merely that the element failed a
+    // downstream gate.
+    expect(installedCensus()?.snapshot().elementsVisited).toBe(elementsVisitedBefore);
+    expect(injectSpy.mock.calls).toHaveLength(injectCountBefore);
 
     controller.stop();
   });
