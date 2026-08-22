@@ -25,6 +25,31 @@ export function signatureToSelector(signature: string): string {
   return signature.split(REFINEMENT_SEPARATOR).map(partToSelector).join(REFINEMENT_SEPARATOR);
 }
 
+// True when `signature`'s leaf class set is a STRICT superset of `base`'s
+// on the same leaf tag: the selector derived from `base` then also matches
+// `signature`'s elements, so rules keyed on `base` bleed onto them.
+// Compared by leaf compound on both sides — an element matches a selector
+// through its own compound, never its refined parent prefix. Operates on
+// raw signatures because emitted selectors are CSS-escaped and unsafe to
+// parse back.
+export function isLeafClassSuperset(signature: string, base: string): boolean {
+  const [signatureTag, ...signatureClasses] = splitKeyParts(leafPart(signature));
+  const [baseTag, ...baseClasses] = splitKeyParts(leafPart(base));
+  if (signatureTag !== baseTag) return false;
+
+  const signatureSet = new Set(signatureClasses);
+  const baseSet = new Set(baseClasses);
+  if (signatureSet.size <= baseSet.size) return false;
+  return [...baseSet].every((className) => signatureSet.has(className));
+}
+
+// A class token can never contain whitespace, so the refinement separator
+// is unambiguous — no escaping interplay with splitKeyParts.
+function leafPart(signature: string): string {
+  const parts = signature.split(REFINEMENT_SEPARATOR);
+  return parts.at(-1) ?? signature;
+}
+
 function partToSelector(part: string): string {
   const [tag, ...classes] = splitKeyParts(part);
   return [tag, ...classes.map(escapeClass)].join('.');
