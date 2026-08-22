@@ -1,4 +1,4 @@
-import { isOwnElement, STYLE_ELEMENT_ID } from '../injector/styleElement';
+import { STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID } from '../injector/styleElement';
 
 export type DomChangeObserver = {
   stop: () => void;
@@ -17,17 +17,26 @@ export const SIGNIFICANT_ATTRIBUTES = ['class', 'style', 'data-theme', 'aria-hid
 // caller and passed in, rather than re-queried per record.
 //
 // A record is also "ours" when every one of its added and removed nodes is
-// one of our own elements (isOwnElement) — withStylesheetDisabled's
-// transition-kill element churns document.documentElement's own childList
-// (append, then remove) around every census read, which is neither a target
-// match nor a page mutation. A record that mixes our nodes with the page's
-// own is NOT ours: only the "target" branch above can classify those.
+// the TRANSITION-KILL element — withStylesheetDisabled churns it through
+// document.documentElement's childList (append, then remove) around every
+// census read, which is neither a target match nor a page mutation. The
+// exemption is deliberately THAT element only: the generated style element
+// being removed is page activity (a sanitizer stripping it), and this
+// debounced callback is the only path that recreates it — swallowing that
+// record would leave the page unthemed until an unrelated mutation. Our own
+// legitimate removal (the disabled-site path) never reaches here: the
+// observer is disconnected in the same task, which discards the queued
+// record. A record that mixes our churn with the page's own nodes is NOT
+// ours: only the "target" branch above can classify those.
 function isOwnStylesheetMutation(record: MutationRecord, styleElement: Element | null): boolean {
   if (styleElement && (styleElement === record.target || styleElement.contains(record.target))) {
     return true;
   }
   const churnedNodes = [...record.addedNodes, ...record.removedNodes];
-  return churnedNodes.length > 0 && churnedNodes.every(isOwnElement);
+  return (
+    churnedNodes.length > 0 &&
+    churnedNodes.every((node) => node instanceof Element && node.id === TRANSITION_KILL_ELEMENT_ID)
+  );
 }
 
 export function observeDomChanges(callback: () => void, debounceMs = 250): DomChangeObserver {
