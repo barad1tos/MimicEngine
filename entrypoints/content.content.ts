@@ -2,11 +2,9 @@ import { createPageThemeController } from '../src/core/runtime/pageThemeControll
 
 export default defineContentScript({
   matches: ['<all_urls>'],
-  runAt: 'document_idle',
+  runAt: 'document_start',
   async main() {
     const controller = createPageThemeController();
-    await controller.start();
-
     window.addEventListener(
       'pagehide',
       () => {
@@ -14,5 +12,7 @@ export default defineContentScript({
       },
       { once: true },
     );
+
+    await controller.start();
   },
 });

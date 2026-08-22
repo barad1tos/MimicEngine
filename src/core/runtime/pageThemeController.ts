@@ -4,6 +4,7 @@ import {
   installCensus,
   type SignatureCensus,
 } from '../analyzer/signatureCensus';
+import { buildBootstrapStylesheet } from '../engine/buildBootstrapStylesheet';
 import { collectPageFacts } from '../engine/pageFacts';
 import { composeStylesheet } from '../engine/composeStylesheet';
 import { aggregateCoverage } from '../engine/coverage';
@@ -36,6 +37,7 @@ import {
 } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
 import { resolveTheme } from '../themes';
+import { waitForDocumentReady } from './documentReady';
 
 export type PageThemeController = {
   start: () => Promise<void>;
@@ -152,11 +154,10 @@ export function createPageThemeController(): PageThemeController {
   // back to the cheap shadowStylesActive-guarded path. See
   // deactivateOrSweepShadowStyles below.
   let firstApplyCompleted = false;
-  // Set by stop(); checked by start() after its initial apply() settles, so
-  // a stop() that lands while that apply() is still stalled (e.g. on the
-  // settings read) stops start() from registering onSettingsChanged
-  // afterward and leaking a listener on an already-stopped controller.
+  // Set by stop(); checked across both asynchronous startup boundaries so a
+  // stopped controller never installs live observers or listeners afterward.
   let stopped = false;
+  const isStopped = (): boolean => stopped;
   // The live census this controller instance owns. installedCensus() (read by
   // computedFallback.produce at apply() time) mirrors this exactly: installed
   // on start(), cleared on stop() — never left dangling for a dead instance.
@@ -463,6 +464,20 @@ export function createPageThemeController(): PageThemeController {
     };
   };
 
+  const publishBootstrap = async (): Promise<void> => {
+    const generation = ++applyGeneration;
+    const { siteSettings, importedThemes } = await readApplyInputs();
+    if (generation !== applyGeneration || stopped) return;
+
+    if (!siteSettings.enabled) {
+      removeStylesheet();
+      return;
+    }
+
+    const theme = resolveTheme(siteSettings.themeId, importedThemes);
+    injectStylesheet(buildBootstrapStylesheet(theme, siteSettings));
+  };
+
   const apply = async (): Promise<void> => {
     const generation = ++applyGeneration;
     const { siteSettings, importedThemes } = await readApplyInputs();
@@ -559,51 +574,54 @@ export function createPageThemeController(): PageThemeController {
     });
   };
 
+  const startSettingsListener = (): void => {
+    stopSettingsListener = onSettingsChanged(() => {
+      capTripped = false;
+      mutationWindowStart = 0;
+      mutationCountInWindow = 0;
+      mutationRate = 0;
+      apply().catch((error: unknown) => {
+        console.error('[Palette Mimicry] apply failed', error);
+      });
+      // A significant attribute mutation during a cap-tripped window sets
+      // censusStale, but scheduleCensusPublish is gated on !capTripped, so
+      // it was never called — the flag would otherwise sit unconsumed
+      // until some unrelated mutation happens to fire the census observer
+      // again, leaving computedFallback serving stale samples silently in
+      // the meantime. The cap just cleared above, so this is the recovery
+      // point: route through the same reset path every other
+      // census-stale trigger uses, gated the same way (only worth it when
+      // the plan actually reads census output).
+      if (censusStale && planIncludesComputedFallback()) scheduleCensusPublish();
+    });
+  };
+
   return {
     async start() {
-      // Synchronous setup, before the initial apply(): bootstrap the census
-      // (begin + its synchronous first chunk). Small pages publish a complete
-      // census immediately; larger pages keep their partial walk private so
-      // the first apply uses stable base rules instead of transient computed
-      // rules. The mutation observer starts before any await so no page
-      // mutation during the settings read can slip past it.
+      await publishBootstrap().catch((error: unknown) => {
+        console.error('[Palette Mimicry] initial bootstrap failed', error);
+      });
+      if (isStopped()) return;
+
+      await waitForDocumentReady(document);
+      if (isStopped()) return;
+
+      // Register before the authoritative settings read so a change that
+      // lands during that read starts a newer generation instead of being
+      // missed between the initial snapshot and listener installation.
+      startSettingsListener();
+
+      // Live analysis begins only after the DOM is ready. Small pages publish
+      // a complete census after the settle window; larger pages keep their
+      // partial walk private until the idle chunks converge.
       if (bootstrapCensus()) scheduleCensusPublish();
       censusObserver = observeCensusMutations();
 
       // A throwing initial apply() must not stop start() itself from
-      // completing: the settings-changed listener below still needs to be
-      // registered, and (in the real content-script entry point) so does the
-      // pagehide listener registered right after `await controller.start()`
-      // returns — neither should be skipped just because the very first
-      // apply failed (e.g. a transient storage read error).
+      // completing: the already-registered settings listener must remain able
+      // to recover from a transient storage read error.
       await apply().catch((error: unknown) => {
         console.error('[Palette Mimicry] initial apply failed', error);
-      });
-      // LISTENER-AFTER-STOP: stop() may have run while the initial apply()
-      // above was still in flight (e.g. stalled on the settings read) — its
-      // generation guard already aborts that apply()'s own side effects, but
-      // without this check start() would still register the
-      // settings-changed listener afterward, leaking it on an
-      // already-stopped controller.
-      if (stopped) return;
-      stopSettingsListener = onSettingsChanged(() => {
-        capTripped = false;
-        mutationWindowStart = 0;
-        mutationCountInWindow = 0;
-        mutationRate = 0;
-        apply().catch((error: unknown) => {
-          console.error('[Palette Mimicry] apply failed', error);
-        });
-        // A significant attribute mutation during a cap-tripped window sets
-        // censusStale, but scheduleCensusPublish is gated on !capTripped, so
-        // it was never called — the flag would otherwise sit unconsumed
-        // until some unrelated mutation happens to fire the census observer
-        // again, leaving computedFallback serving stale samples silently in
-        // the meantime. The cap just cleared above, so this is the recovery
-        // point: route through the same reset path every other
-        // census-stale trigger uses, gated the same way (only worth it when
-        // the plan actually reads census output).
-        if (censusStale && planIncludesComputedFallback()) scheduleCensusPublish();
       });
     },
 
@@ -618,8 +636,7 @@ export function createPageThemeController(): PageThemeController {
       // after this bump, so no chunk survives stop() even though ordinary
       // apply() traffic never touches this counter.
       censusGeneration += 1;
-      // Set before start() can observe it — see the LISTENER-AFTER-STOP note
-      // on start() above.
+      // Set before start() crosses either asynchronous startup boundary.
       stopped = true;
       stopSettingsListener?.();
       stopSettingsListener = null;

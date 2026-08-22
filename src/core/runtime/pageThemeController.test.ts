@@ -147,6 +147,7 @@ function bigFixture(elementCount: number): string {
 beforeEach(() => {
   capturedObserverCallbacks.length = 0;
   observerStopSpy.mockClear();
+  vi.mocked(observeDomChanges).mockClear();
 });
 
 afterEach(() => {
@@ -220,34 +221,34 @@ describe('createPageThemeController — apply() generation guard', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(injectSpy).toHaveBeenCalledTimes(2);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
 
     // Stall the settings read the next settings-changed apply() will make —
-    // this becomes generation 2, and it never gets past this await.
+    // this becomes generation 3, and it never gets past this await.
     const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
     fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
 
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
-    // Generation 2 is stuck awaiting settings — nothing new injected or written yet.
-    expect(injectSpy).toHaveBeenCalledTimes(1);
+    // Generation 3 is stuck awaiting settings — nothing new injected or written yet.
+    expect(injectSpy).toHaveBeenCalledTimes(2);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
 
-    // Generation 3: a second settings change, resolving normally, becomes
-    // "the newest" — it injects and writes diagnostics while generation 2 is
+    // Generation 4: a second settings change, resolving normally, becomes
+    // "the newest" — it injects and writes diagnostics while generation 3 is
     // still stalled.
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
-    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(3);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
 
-    // Generation 2's stalled settings read finally resolves — it must abort
-    // instead of re-injecting/re-writing over generation 3's results.
+    // Generation 3's stalled settings read finally resolves — it must abort
+    // instead of re-injecting/re-writing over generation 4's results.
     stalledSettings.resolve({});
     await flushMicrotasks();
 
-    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(3);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
 
     controller.stop();
@@ -276,12 +277,15 @@ describe('createPageThemeController — stop() invalidates in-flight apply()', (
     delete document.documentElement.dataset.pmActive;
 
     const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
-    fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
+    fakeBrowser.storage.local.get
+      .mockResolvedValueOnce({ [STORAGE_KEY]: settings })
+      .mockImplementationOnce(() => stalledSettings.promise);
 
     const controller = createPageThemeController();
-    // start() calls apply(), which suspends synchronously at the settings
-    // read above — by the time this line returns, apply() is stalled.
+    // The provisional read resolves, then the authoritative apply suspends
+    // at its own settings read.
     const startPromise = controller.start();
+    await flushMicrotasks();
 
     controller.stop();
 
@@ -290,24 +294,19 @@ describe('createPageThemeController — stop() invalidates in-flight apply()', (
     await startPromise;
     await flushMicrotasks();
 
-    expect(injectSpy).not.toHaveBeenCalled();
+    expect(injectSpy).toHaveBeenCalledTimes(1);
     expect(syncSpy).not.toHaveBeenCalled();
-    expect(document.getElementById(styleElementModule.STYLE_ELEMENT_ID)).toBeNull();
-    expect(document.documentElement.dataset.pmActive).toBeUndefined();
+    expect(document.getElementById(styleElementModule.STYLE_ELEMENT_ID)).not.toBeNull();
+    expect(document.documentElement.dataset.pmActive).toBe('true');
     expect(errorSpy).not.toHaveBeenCalled();
 
-    // LISTENER-AFTER-STOP: start() only registers its settings-changed
-    // listener after its initial apply() settles — stop() ran while that
-    // apply() was still stalled, so start() must skip registration entirely
-    // once the stall resolves, rather than registering a listener on an
-    // already-stopped controller. A settings change here must therefore
-    // trigger nothing; this replaces the previous workaround of calling
-    // controller.stop() a second time just to silence the leaked listener
-    // for later tests.
+    // The two-phase start registers its settings listener before the
+    // authoritative apply. stop() must remove that listener while the apply
+    // is stalled, so a later settings change cannot start another generation.
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
 
-    expect(injectSpy).not.toHaveBeenCalled();
+    expect(injectSpy).toHaveBeenCalledTimes(1);
     expect(fakeBrowser.storage.session.set).not.toHaveBeenCalled();
   });
 });
@@ -351,8 +350,8 @@ describe('createPageThemeController — coverage gating', () => {
   });
 });
 
-describe('createPageThemeController — initial apply failure', () => {
-  it('start() with a throwing first apply still registers the settings-changed listener', async () => {
+describe('createPageThemeController — initial bootstrap failure', () => {
+  it('start() with a throwing bootstrap still registers the settings-changed listener', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     fakeBrowser.storage.local.get.mockImplementationOnce(() =>
       Promise.reject(new Error('storage read failed')),
@@ -362,7 +361,7 @@ describe('createPageThemeController — initial apply failure', () => {
     await expect(controller.start()).resolves.toBeUndefined();
 
     expect(errorSpy).toHaveBeenCalledWith(
-      '[Palette Mimicry] initial apply failed',
+      '[Palette Mimicry] initial bootstrap failed',
       expect.any(Error),
     );
     // The settings-changed listener registers via browser.storage.onChanged
@@ -372,20 +371,109 @@ describe('createPageThemeController — initial apply failure', () => {
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
 
-    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
+    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
 
     controller.stop();
   });
 });
 
+describe('createPageThemeController — two-phase start', () => {
+  const siteKey = normalizeHostname(window.location.hostname);
+
+  afterEach(() => {
+    styleElementModule.removeStylesheet();
+  });
+
+  it('publishes bootstrap css while loading and delays live analysis until DOMContentLoaded', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await flushMicrotasks();
+
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(injectSpy.mock.calls[0]?.[0]).not.toContain(
+      'html[data-pm-active="true"] :where(button, [role="button"], input, select, textarea) {\n  background-color:',
+    );
+    expect(vi.mocked(observeDomChanges)).not.toHaveBeenCalled();
+    expect(installedCensus()).toBeNull();
+
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(observeDomChanges)).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+  });
+
+  it('uses the latest settings for the authoritative phase', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    const initialSettings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: {},
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, initialSettings);
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await flushMicrotasks();
+    expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).toContain('#303446');
+
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, {
+      ...initialSettings,
+      sites: {
+        [siteKey]: createDefaultSiteSettings('ayu-mirage'),
+      },
+    });
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    const finalCss = document.getElementById(STYLE_ELEMENT_ID)?.textContent;
+    expect(finalCss).toContain('#1f2430');
+    expect(finalCss).not.toContain('#303446');
+
+    controller.stop();
+  });
+
+  it('does not start live analysis after stop while waiting for DOMContentLoaded', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await flushMicrotasks();
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(1);
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(observeDomChanges)).not.toHaveBeenCalled();
+    expect(installedCensus()).toBeNull();
+  });
+});
+
 describe('createPageThemeController — batched storage read', () => {
-  it('reads settings and imported themes in exactly one storage.get call carrying both keys', async () => {
+  it('reads one settings/imported-themes snapshot per startup phase', async () => {
     const controller = createPageThemeController();
 
     await controller.start();
 
-    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(1);
-    expect(fakeBrowser.storage.local.get).toHaveBeenCalledWith([STORAGE_KEY, IMPORTED_THEMES_KEY]);
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(2);
+    expect(fakeBrowser.storage.local.get).toHaveBeenNthCalledWith(1, [
+      STORAGE_KEY,
+      IMPORTED_THEMES_KEY,
+    ]);
+    expect(fakeBrowser.storage.local.get).toHaveBeenNthCalledWith(2, [
+      STORAGE_KEY,
+      IMPORTED_THEMES_KEY,
+    ]);
 
     controller.stop();
   });
@@ -408,12 +496,12 @@ describe('createPageThemeController — batched storage read', () => {
     const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
     const controller = createPageThemeController();
     await controller.start();
-    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(injectSpy).toHaveBeenCalledTimes(2);
 
     fakeBrowser.storage.emitChange({ [IMPORTED_THEMES_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
 
-    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(3);
 
     controller.stop();
   });
@@ -572,24 +660,24 @@ describe('createPageThemeController — shadow stylesheet lifecycle', () => {
     expect(syncSpy).toHaveBeenCalledTimes(1);
 
     // Stall the settings read the next settings-changed apply() will make —
-    // this becomes generation 2, and it never gets past this await.
+    // this becomes generation 3, and it never gets past this await.
     const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
     fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
 
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
-    // Generation 2 is stuck awaiting settings — no new shadow sync yet.
+    // Generation 3 is stuck awaiting settings — no new shadow sync yet.
     expect(syncSpy).toHaveBeenCalledTimes(1);
 
-    // Generation 3: a second settings change, resolving normally, becomes
-    // "the newest" — it syncs shadow stylesheets while generation 2 is still
+    // Generation 4: a second settings change, resolving normally, becomes
+    // "the newest" — it syncs shadow stylesheets while generation 3 is still
     // stalled.
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
     expect(syncSpy).toHaveBeenCalledTimes(2);
 
-    // Generation 2's stalled settings read finally resolves — it must abort
-    // instead of syncing shadow stylesheets over generation 3's results.
+    // Generation 3's stalled settings read finally resolves — it must abort
+    // instead of syncing shadow stylesheets over generation 4's results.
     stalledSettings.resolve({});
     await flushMicrotasks();
 
