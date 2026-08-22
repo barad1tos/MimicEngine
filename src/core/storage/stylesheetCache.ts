@@ -29,17 +29,33 @@ const MAX_ENTRIES = 32;
 const MAX_CSS_LENGTH = 65_536;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const UNSAFE_CSS_PATTERN = /@import|url\s*\(|<\/style/iu;
-let writeGeneration = 0;
+const MESSAGE_CHANNEL = STYLE_CACHE_KEY;
+let clientWriteGeneration = 0;
+// One service worker serves every tab. Serialize its read-modify-write cycle
+// so two routes cannot read the same old store and then overwrite each other.
+let pendingCacheWrite: Promise<void> = Promise.resolve();
+
+type CacheRequest =
+  | { channel: typeof MESSAGE_CHANNEL; operation: 'read'; fingerprint: string }
+  | { channel: typeof MESSAGE_CHANNEL; operation: 'write'; fingerprint: string; css: string };
+
+type CacheResponse =
+  | { channel: typeof MESSAGE_CHANNEL; operation: 'read'; css: string | null }
+  | { channel: typeof MESSAGE_CHANNEL; operation: 'write'; stored: boolean };
+
+type CacheResponder = (response: CacheResponse) => void;
 
 export async function readCachedStylesheet(context: StyleCacheContext): Promise<string | null> {
   if (!isCacheablePath(context.pathname)) return null;
 
   try {
     const fingerprint = await contextFingerprint(context);
-    const result = await browser.storage.session.get<Record<string, unknown>>(STYLE_CACHE_KEY);
-    const store = normalizeStore(result[STYLE_CACHE_KEY]);
-    const entry = store?.entries[fingerprint];
-    return entry && isFresh(entry, Date.now()) ? entry.css : null;
+    const response: unknown = await browser.runtime.sendMessage({
+      channel: MESSAGE_CHANNEL,
+      operation: 'read',
+      fingerprint,
+    } satisfies CacheRequest);
+    return readResponseCss(response);
   } catch {
     return null;
   }
@@ -51,12 +67,58 @@ export async function writeCachedStylesheet(
 ): Promise<void> {
   if (!isCacheablePath(context.pathname) || !isCacheableCss(css)) return;
 
-  const generation = ++writeGeneration;
+  const generation = ++clientWriteGeneration;
   try {
     const fingerprint = await contextFingerprint(context);
-    if (generation !== writeGeneration) return;
+    if (generation !== clientWriteGeneration) return;
+    await browser.runtime.sendMessage({
+      channel: MESSAGE_CHANNEL,
+      operation: 'write',
+      fingerprint,
+      css,
+    } satisfies CacheRequest);
+  } catch {
+    // Warm restore is advisory. Bootstrap and live analysis remain available.
+  }
+}
+
+export function routeStyleCache(message: unknown, respond: CacheResponder): boolean {
+  const request = normalizeRequest(message);
+  if (!request) return false;
+
+  if (request.operation === 'read') {
+    void readStoredStylesheet(request.fingerprint).then((css) => {
+      respond({ channel: MESSAGE_CHANNEL, operation: 'read', css });
+    });
+    return true;
+  }
+
+  void writeStoredStylesheet(request.fingerprint, request.css).then((stored) => {
+    respond({ channel: MESSAGE_CHANNEL, operation: 'write', stored });
+  });
+  return true;
+}
+
+async function readStoredStylesheet(fingerprint: string): Promise<string | null> {
+  try {
     const result = await browser.storage.session.get<Record<string, unknown>>(STYLE_CACHE_KEY);
-    if (generation !== writeGeneration) return;
+    const store = normalizeStore(result[STYLE_CACHE_KEY]);
+    const entry = store?.entries[fingerprint];
+    return entry && isFresh(entry, Date.now()) ? entry.css : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredStylesheet(fingerprint: string, css: string): Promise<boolean> {
+  const write = pendingCacheWrite.then(() => storeStylesheet(fingerprint, css));
+  pendingCacheWrite = write.then(() => undefined);
+  return write;
+}
+
+async function storeStylesheet(fingerprint: string, css: string): Promise<boolean> {
+  try {
+    const result = await browser.storage.session.get<Record<string, unknown>>(STYLE_CACHE_KEY);
     const stored = normalizeStore(result[STYLE_CACHE_KEY]);
     const now = Date.now();
     const entries = Object.fromEntries(
@@ -79,9 +141,37 @@ export async function writeCachedStylesheet(
     };
 
     await browser.storage.session.set({ [STYLE_CACHE_KEY]: nextStore });
+    return true;
   } catch {
-    // Warm restore is advisory. Bootstrap and live analysis remain available.
+    return false;
   }
+}
+
+function normalizeRequest(message: unknown): CacheRequest | null {
+  if (!isRecord(message) || message.channel !== MESSAGE_CHANNEL) return null;
+  if (typeof message.fingerprint !== 'string' || !DIGEST_PATTERN.test(message.fingerprint)) {
+    return null;
+  }
+
+  const fingerprint = message.fingerprint;
+  if (message.operation === 'read') {
+    return { channel: MESSAGE_CHANNEL, operation: 'read', fingerprint };
+  }
+  if (
+    message.operation === 'write' &&
+    typeof message.css === 'string' &&
+    isCacheableCss(message.css)
+  ) {
+    return { channel: MESSAGE_CHANNEL, operation: 'write', fingerprint, css: message.css };
+  }
+  return null;
+}
+
+function readResponseCss(response: unknown): string | null {
+  if (!isRecord(response)) return null;
+  if (response.channel !== MESSAGE_CHANNEL || response.operation !== 'read') return null;
+  if (response.css === null) return null;
+  return typeof response.css === 'string' && isCacheableCss(response.css) ? response.css : null;
 }
 
 function isCacheablePath(pathname: string): boolean {

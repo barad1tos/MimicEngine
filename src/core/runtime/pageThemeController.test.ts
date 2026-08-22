@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 // src/core/runtime/pageThemeController.test.ts
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { browser } from 'wxt/browser';
 import { installedCensus } from '../analyzer/signatureCensus';
-import { planStorageKey, type PlanDiagnostics } from '../engine/diagnostics';
+import { planStorageKey, routePlanDiagnostics, type PlanDiagnostics } from '../engine/diagnostics';
 import * as shadowStylesModule from '../injector/shadowStyles';
 import * as styleElementModule from '../injector/styleElement';
 import { STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID } from '../injector/styleElement';
@@ -11,7 +11,11 @@ import { observeDomChanges } from '../live/observeDomChanges';
 import { IMPORTED_THEMES_KEY, type ImportedTheme } from '../storage/importedThemesStore';
 import { createDefaultSiteSettings, STORAGE_KEY, type AppSettings } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
-import { readCachedStylesheet, writeCachedStylesheet } from '../storage/stylesheetCache';
+import {
+  readCachedStylesheet,
+  routeStyleCache,
+  writeCachedStylesheet,
+} from '../storage/stylesheetCache';
 import type { createStorageArea } from '../testing/storageArea';
 import { catppuccinFrappe } from '../themes/built-in/catppuccin';
 import { THEME_TOKEN_NAMES, type ThemeTokens } from '../themes';
@@ -77,6 +81,9 @@ vi.mock('wxt/browser', async () => {
 
   return {
     browser: {
+      runtime: {
+        sendMessage: vi.fn<(message: unknown) => Promise<unknown>>(),
+      },
       storage: {
         local: createStorageArea(),
         session: createStorageArea(),
@@ -93,6 +100,7 @@ vi.mock('wxt/browser', async () => {
 });
 
 const fakeBrowser = browser as unknown as {
+  runtime: { sendMessage: Mock<(message: unknown) => Promise<unknown>> };
   storage: {
     local: ReturnType<typeof createStorageArea>;
     session: ReturnType<typeof createStorageArea>;
@@ -150,11 +158,20 @@ beforeEach(() => {
   capturedObserverCallbacks.length = 0;
   observerStopSpy.mockClear();
   vi.mocked(observeDomChanges).mockClear();
+  fakeBrowser.runtime.sendMessage.mockImplementation(
+    (message: unknown) =>
+      new Promise((resolve) => {
+        if (routeStyleCache(message, resolve)) return;
+        if (routePlanDiagnostics(message, resolve)) return;
+        resolve(undefined);
+      }),
+  );
 });
 
 afterEach(() => {
   fakeBrowser.storage.local.data.clear();
   fakeBrowser.storage.session.data.clear();
+  fakeBrowser.runtime.sendMessage.mockReset();
   fakeBrowser.storage.local.get.mockReset();
   fakeBrowser.storage.local.set.mockClear();
   fakeBrowser.storage.session.set.mockClear();

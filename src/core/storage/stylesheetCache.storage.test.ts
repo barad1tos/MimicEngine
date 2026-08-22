@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { browser } from 'wxt/browser';
 import { createDefaultSiteSettings, type SiteSettings } from './settingsStore';
 import { ayuMirage } from '../themes/built-in/ayu';
 import type { createStorageArea } from '../testing/storageArea';
 import {
   readCachedStylesheet,
+  routeStyleCache,
   STYLE_CACHE_KEY,
   writeCachedStylesheet,
   type StyleCacheContext,
@@ -15,6 +16,9 @@ vi.mock('wxt/browser', async () => {
 
   return {
     browser: {
+      runtime: {
+        sendMessage: vi.fn<(message: unknown) => Promise<unknown>>(),
+      },
       storage: {
         session: createStorageArea(),
       },
@@ -23,6 +27,7 @@ vi.mock('wxt/browser', async () => {
 });
 
 const fakeBrowser = browser as unknown as {
+  runtime: { sendMessage: Mock<(message: unknown) => Promise<unknown>> };
   storage: { session: ReturnType<typeof createStorageArea> };
 };
 
@@ -41,6 +46,7 @@ function context(
 }
 
 afterEach(() => {
+  fakeBrowser.runtime.sendMessage.mockReset();
   fakeBrowser.storage.session.data.clear();
   fakeBrowser.storage.session.get.mockReset();
   fakeBrowser.storage.session.set.mockClear();
@@ -48,12 +54,54 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+beforeEach(() => {
+  fakeBrowser.runtime.sendMessage.mockImplementation(
+    (message: unknown) =>
+      new Promise((resolve) => {
+        const isHandled = routeStyleCache(message, resolve);
+        if (!isHandled) resolve(undefined);
+      }),
+  );
+});
+
 describe('stylesheetCache', () => {
   it('round-trips a valid stylesheet for the same context', async () => {
     await writeCachedStylesheet(context(), VALID_CSS);
 
     await expect(readCachedStylesheet(context())).resolves.toBe(VALID_CSS);
+    expect(fakeBrowser.runtime.sendMessage).toHaveBeenCalledTimes(2);
     expect(fakeBrowser.storage.session.get).toHaveBeenCalledWith(STYLE_CACHE_KEY);
+  });
+
+  it('keeps storage.session behind the background message boundary', async () => {
+    await writeCachedStylesheet(context(), VALID_CSS);
+    await expect(readCachedStylesheet(context())).resolves.toBe(VALID_CSS);
+
+    expect(fakeBrowser.runtime.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ operation: 'write' }),
+    );
+    expect(fakeBrowser.runtime.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ operation: 'read' }),
+    );
+  });
+
+  it('ignores malformed or unrelated background messages', () => {
+    const respond = vi.fn();
+
+    expect(routeStyleCache({ operation: 'read' }, respond)).toBe(false);
+    expect(routeStyleCache({ channel: 'other', operation: 'read' }, respond)).toBe(false);
+    expect(respond).not.toHaveBeenCalled();
+    expect(fakeBrowser.storage.session.get).not.toHaveBeenCalled();
+  });
+
+  it('degrades an unavailable background listener to a miss or no-op', async () => {
+    fakeBrowser.runtime.sendMessage.mockRejectedValue(new Error('receiving end does not exist'));
+
+    await expect(readCachedStylesheet(context())).resolves.toBeNull();
+    await expect(writeCachedStylesheet(context(), VALID_CSS)).resolves.toBeUndefined();
+    expect(fakeBrowser.storage.session.get).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -200,12 +248,36 @@ describe('stylesheetCache', () => {
       expect(fakeBrowser.storage.session.get).toHaveBeenCalledTimes(1);
     });
     const newerWrite = writeCachedStylesheet(context(), newerCss);
-    await newerWrite;
+    await vi.waitFor(() => {
+      expect(fakeBrowser.runtime.sendMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(fakeBrowser.storage.session.get).toHaveBeenCalledTimes(1);
 
     stalledRead.resolve({});
-    await olderWrite;
+    await Promise.all([olderWrite, newerWrite]);
 
     await expect(readCachedStylesheet(context())).resolves.toBe(newerCss);
+  });
+
+  it('serializes different-route writes without dropping either entry', async () => {
+    const stalledRead = Promise.withResolvers<Record<string, unknown>>();
+    fakeBrowser.storage.session.get.mockImplementationOnce(() => stalledRead.promise);
+
+    const firstWrite = writeCachedStylesheet(context('/first'), VALID_CSS);
+    await vi.waitFor(() => {
+      expect(fakeBrowser.storage.session.get).toHaveBeenCalledTimes(1);
+    });
+    const secondWrite = writeCachedStylesheet(context('/second'), VALID_CSS);
+    await vi.waitFor(() => {
+      expect(fakeBrowser.runtime.sendMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(fakeBrowser.storage.session.get).toHaveBeenCalledTimes(1);
+
+    stalledRead.resolve({});
+    await Promise.all([firstWrite, secondWrite]);
+
+    await expect(readCachedStylesheet(context('/first'))).resolves.toBe(VALID_CSS);
+    await expect(readCachedStylesheet(context('/second'))).resolves.toBe(VALID_CSS);
   });
 
   it('uses opaque digest keys instead of raw route or settings data', async () => {

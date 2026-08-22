@@ -20,6 +20,21 @@ export type PlanDiagnostics = {
 };
 
 export const PLAN_STORAGE_PREFIX = 'palette-mimicry:plan:';
+const MESSAGE_CHANNEL = 'palette-mimicry:plan-diagnostics';
+
+type DiagnosticsRequest = {
+  channel: typeof MESSAGE_CHANNEL;
+  operation: 'write';
+  diagnostics: PlanDiagnostics;
+};
+
+type DiagnosticsResponse = {
+  channel: typeof MESSAGE_CHANNEL;
+  operation: 'write';
+  stored: boolean;
+};
+
+type DiagnosticsResponder = (response: DiagnosticsResponse) => void;
 
 export function planStorageKey(siteKey: string): string {
   return `${PLAN_STORAGE_PREFIX}${siteKey}`;
@@ -63,22 +78,49 @@ async function setDiagnostics(diagnostics: PlanDiagnostics): Promise<void> {
   await browser.storage.session.set<Record<string, PlanDiagnostics>>({ [key]: diagnostics });
 }
 
+async function requestDiagnosticsWrite(diagnostics: PlanDiagnostics): Promise<void> {
+  const response: unknown = await browser.runtime.sendMessage({
+    channel: MESSAGE_CHANNEL,
+    operation: 'write',
+    diagnostics,
+  } satisfies DiagnosticsRequest);
+  if (!isDiagnosticsResponse(response) || !response.stored) {
+    throw new Error('background rejected plan diagnostics');
+  }
+}
+
 // Diagnostics are a debugging aid, never load-bearing for theming — a failed
 // write here must never surface as a theming failure, hence the swallow-and-warn.
-// The first write can race the background service worker's cold-start call to
-// `storage.session.setAccessLevel(...)`; one bounded retry after a short delay
-// covers that startup window without turning this into an unbounded retry loop.
+// A narrow runtime message keeps storage.session inside the trusted background
+// context. One bounded retry covers a transient worker startup failure without
+// turning this into an unbounded retry loop.
 export async function writePlanDiagnostics(diagnostics: PlanDiagnostics): Promise<void> {
   try {
-    await setDiagnostics(diagnostics);
+    await requestDiagnosticsWrite(diagnostics);
   } catch {
     try {
       await delay(1000);
-      await setDiagnostics(diagnostics);
+      await requestDiagnosticsWrite(diagnostics);
     } catch (error) {
       console.warn('[Palette Mimicry] failed to write plan diagnostics', error);
     }
   }
+}
+
+export function routePlanDiagnostics(message: unknown, respond: DiagnosticsResponder): boolean {
+  if (!isRecord(message) || message.channel !== MESSAGE_CHANNEL || message.operation !== 'write') {
+    return false;
+  }
+  if (!isPlanDiagnostics(message.diagnostics)) return false;
+
+  void setDiagnostics(message.diagnostics)
+    .then(() => {
+      respond({ channel: MESSAGE_CHANNEL, operation: 'write', stored: true });
+    })
+    .catch(() => {
+      respond({ channel: MESSAGE_CHANNEL, operation: 'write', stored: false });
+    });
+  return true;
 }
 
 export async function readPlanDiagnostics(siteKey: string): Promise<PlanDiagnostics | null> {
@@ -91,4 +133,17 @@ export async function readPlanDiagnostics(siteKey: string): Promise<PlanDiagnost
     console.warn('[Palette Mimicry] failed to read plan diagnostics', error);
     return null;
   }
+}
+
+function isDiagnosticsResponse(value: unknown): value is DiagnosticsResponse {
+  return (
+    isRecord(value) &&
+    value.channel === MESSAGE_CHANNEL &&
+    value.operation === 'write' &&
+    typeof value.stored === 'boolean'
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

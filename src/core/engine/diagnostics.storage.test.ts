@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { browser } from 'wxt/browser';
 import type { createStorageArea } from '../testing/storageArea';
 import {
   planStorageKey,
   readPlanDiagnostics,
+  routePlanDiagnostics,
   writePlanDiagnostics,
   type PlanDiagnostics,
 } from './diagnostics';
@@ -16,6 +17,9 @@ vi.mock('wxt/browser', async () => {
   const { createStorageArea } = await import('../testing/storageArea');
   return {
     browser: {
+      runtime: {
+        sendMessage: vi.fn<(message: unknown) => Promise<unknown>>(),
+      },
       storage: {
         session: createStorageArea(),
       },
@@ -24,6 +28,7 @@ vi.mock('wxt/browser', async () => {
 });
 
 const fakeBrowser = browser as unknown as {
+  runtime: { sendMessage: Mock<(message: unknown) => Promise<unknown>> };
   storage: { session: ReturnType<typeof createStorageArea> };
 };
 
@@ -55,10 +60,21 @@ function buildDiagnostics(siteKey: string): PlanDiagnostics {
 }
 
 afterEach(() => {
+  fakeBrowser.runtime.sendMessage.mockReset();
   fakeBrowser.storage.session.data.clear();
   fakeBrowser.storage.session.get.mockReset();
   fakeBrowser.storage.session.set.mockReset();
   vi.restoreAllMocks();
+});
+
+beforeEach(() => {
+  fakeBrowser.runtime.sendMessage.mockImplementation(
+    (message: unknown) =>
+      new Promise((resolve) => {
+        const isHandled = routePlanDiagnostics(message, resolve);
+        if (!isHandled) resolve(undefined);
+      }),
+  );
 });
 
 describe('writePlanDiagnostics', () => {
@@ -70,18 +86,16 @@ describe('writePlanDiagnostics', () => {
     expect(fakeBrowser.storage.session.data.get(planStorageKey('example.com'))).toEqual(
       diagnostics,
     );
+    expect(fakeBrowser.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'write', diagnostics }),
+    );
   });
 
-  // Covers the background service worker's cold-start race: the content
-  // script's first `apply()` can run before `storage.session.setAccessLevel`
-  // executes, so the very first write throws once and then succeeds.
-  it('retries once after a 1s delay and stores the value without warning when the retry succeeds', async () => {
+  it('retries once after a 1s delay when the first background request fails', async () => {
     vi.useFakeTimers();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const diagnostics = buildDiagnostics('example.com');
-    fakeBrowser.storage.session.set.mockImplementationOnce(() => {
-      throw new Error('storage unavailable during worker cold start');
-    });
+    fakeBrowser.runtime.sendMessage.mockRejectedValueOnce(new Error('background unavailable'));
 
     const writePromise = writePlanDiagnostics(diagnostics);
     await vi.advanceTimersByTimeAsync(1000);
@@ -97,9 +111,7 @@ describe('writePlanDiagnostics', () => {
   it('swallows the error and warns once when both the write and the retry throw', async () => {
     vi.useFakeTimers();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    fakeBrowser.storage.session.set.mockImplementation(() => {
-      throw new Error('storage unavailable');
-    });
+    fakeBrowser.runtime.sendMessage.mockRejectedValue(new Error('background unavailable'));
 
     const writePromise = writePlanDiagnostics(buildDiagnostics('example.com'));
     await vi.advanceTimersByTimeAsync(1000);
@@ -111,6 +123,15 @@ describe('writePlanDiagnostics', () => {
       expect.any(Error),
     );
     vi.useRealTimers();
+  });
+
+  it('ignores malformed or unrelated background messages', () => {
+    const respond = vi.fn();
+
+    expect(routePlanDiagnostics({ operation: 'write' }, respond)).toBe(false);
+    expect(routePlanDiagnostics({ channel: 'other', operation: 'write' }, respond)).toBe(false);
+    expect(respond).not.toHaveBeenCalled();
+    expect(fakeBrowser.storage.session.set).not.toHaveBeenCalled();
   });
 });
 
