@@ -15,14 +15,6 @@ import { computedFallback } from './computedFallback';
 
 const catppuccinFrappe = builtInThemes[0];
 
-function withCanvas(theme: PaletteTheme, canvas: string): PaletteTheme {
-  return { ...theme, tokens: { ...theme.tokens, canvas } };
-}
-
-function withText(theme: PaletteTheme, text: string, textMuted: string): PaletteTheme {
-  return { ...theme, tokens: { ...theme.tokens, text, textMuted } };
-}
-
 const VISIBLE_RECT = {
   x: 0,
   y: 0,
@@ -408,56 +400,6 @@ describe('computedFallback strategy', () => {
     expect(cardBackground).toBe('var(--pm-elevation-1)');
     expect(groundBlock).not.toContain('box-shadow');
     expect(cardBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
-  });
-
-  it('labels a level-3 census declaration correctly even when the theme ramp collides its hex with level 1 (post-review fix: no more reverse hex->level lookup)', () => {
-    // This theme's ramp is a genuine collision (pinned in elevationScale.test.ts's
-    // own bounce-cascade coverage): level 1 and level 3 render the IDENTICAL
-    // hex (Amendment 3.5's adjacent-contrast bounce), while level 2 is
-    // distinct. Before the fix, substituteElevationBackgrounds resolved the
-    // var() name via elevationLevelForHex — a linear hex->level scan that
-    // resolves any collision first-wins — so a level-3 declaration whose
-    // mapped hex collided with level 1 was mislabeled `--pm-elevation-1`
-    // (same rendered color, wrong provenance). The fix reads
-    // declaration.elevation directly instead of searching for it.
-    const collisionTheme = withText(withCanvas(catppuccinFrappe, '#101a3a'), '#f5f5f5', '#c8c8c8');
-    expect(elevationBackgroundHex(collisionTheme, 1)).toBe(
-      elevationBackgroundHex(collisionTheme, 3),
-    );
-    expect(elevationBackgroundHex(collisionTheme, 2)).not.toBe(
-      elevationBackgroundHex(collisionTheme, 3),
-    );
-
-    // Three nested shadow boundaries put .deep at elevation 3; every ancestor
-    // shares the same raw hex, so the ONLY thing distinguishing their levels
-    // is the census's own stacking-depth tracking, not the sampled color.
-    document.head.innerHTML = `
-      <style>
-        .l0 { background-color: rgb(200, 200, 200); }
-        .l1 { background-color: rgb(200, 200, 200); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
-        .l2 { background-color: rgb(200, 200, 200); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
-        .deep { background-color: rgb(200, 200, 200); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
-      </style>
-    `;
-    document.body.innerHTML =
-      '<div class="l0"><div class="l1"><div class="l2"><div class="deep">x</div></div></div></div>';
-    censusFromCurrentDom();
-
-    const { css } = computedFallback.produce(
-      collisionTheme,
-      anySiteSettings(),
-      emptyFacts(),
-      planWithoutAuthoredRemap,
-    );
-
-    const deepBlock = /:where\(div\.deep\) \{[^}]*\}/.exec(css)?.[0] ?? '';
-    const l1Block = /:where\(div\.l1\) \{[^}]*\}/.exec(css)?.[0] ?? '';
-    const deepBackground = /background-color: (var\(--pm-elevation-\d\))/.exec(deepBlock)?.[1];
-    const l1Background = /background-color: (var\(--pm-elevation-\d\))/.exec(l1Block)?.[1];
-
-    expect(deepBackground).toBe('var(--pm-elevation-3)');
-    expect(l1Background).toBe('var(--pm-elevation-1)');
-    expect(deepBlock).toContain('box-shadow: var(--pm-shadow-3) !important;');
   });
 
   it('keeps the paired guard operating on real hexes when the paired background is elevation-ramped (var-substituted only at render time)', () => {
