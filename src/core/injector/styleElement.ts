@@ -1,7 +1,10 @@
 export const STYLE_ELEMENT_ID = 'palette-mimicry-generated-style';
 export const TRANSITION_KILL_ELEMENT_ID = 'palette-mimicry-transition-kill';
 
-const OWN_ELEMENT_IDS = new Set([STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID]);
+// Exported so callers that need to enumerate our own ids (pageFacts.ts
+// excluding our own stylesheets from the authored-CSS walk) don't duplicate
+// this list — isOwnElement below covers the single-node membership check.
+export const OWN_ELEMENT_IDS = new Set([STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID]);
 
 // Shared by observeDomChanges' page-mutation debounce and
 // pageThemeController's census observer: both must recognize the exact same

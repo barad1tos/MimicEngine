@@ -957,6 +957,39 @@ describe('createPageThemeController — census lifecycle', () => {
     controller.stop();
   });
 
+  it('reaches census.ingestAddedElements with the real element when a batch mixes the transition-kill element with a genuine page addition', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    seedComputedFallbackStrategy();
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+
+    // Synchronous, no await in between, so both mutations land in the SAME
+    // MutationObserver batch — mirrors the own-only + mixed pair already
+    // covered for observeDomChanges' own filtering (see observeDomChanges.test.ts):
+    // a batch mixing our own churn with a genuine page mutation must still be
+    // treated as page activity for the part that IS page activity.
+    const killElement = document.createElement('style');
+    killElement.id = TRANSITION_KILL_ELEMENT_ID;
+    document.documentElement.append(killElement);
+    killElement.remove();
+    const realElement = document.createElement('span');
+    realElement.className = 'mixed-real-element';
+    document.body.append(realElement);
+
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    expect(
+      installedCensus()
+        ?.snapshot()
+        .entries.some((entry) => entry.selector === 'span.mixed-real-element'),
+    ).toBe(true);
+
+    controller.stop();
+  });
+
   it('does not schedule a census reapply when the current plan has no use for it (manual baseline strategy)', async () => {
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
     const settings: AppSettings = {
