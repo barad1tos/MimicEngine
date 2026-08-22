@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contrastRatio, passesContrast } from './contrast';
+import { compositeOverOpaque, contrastRatio, passesContrast } from './contrast';
 import { parseCssColor, toHex } from './parseColor';
 
 describe('parseCssColor', () => {
@@ -37,5 +37,13 @@ describe('contrastRatio', () => {
   it('returns null for a translucent background with an unknown backdrop', () => {
     expect(contrastRatio('#000000', 'rgba(255, 255, 255, 0.5)')).toBeNull();
     expect(contrastRatio('#000000', 'rgba(255, 255, 255, 0)')).toBeNull();
+  });
+});
+
+describe('compositeOverOpaque', () => {
+  it('resolves a translucent foreground against an opaque backdrop', () => {
+    expect(
+      toHex(compositeOverOpaque({ r: 0, g: 0, b: 0, a: 0.9 }, { r: 36, g: 41, b: 54, a: 1 })),
+    ).toBe('#040405');
   });
 });

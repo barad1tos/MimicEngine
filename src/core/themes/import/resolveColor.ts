@@ -11,6 +11,7 @@
 // that never carry alpha at all (kitty, Ghostty -- alacritty's quote- and
 // `0x`-stripping variant is genuinely different and stays local to it).
 
+import { compositeOverOpaque } from '../../color/contrast';
 import { parseCssColor, toHex, type RgbaColor } from '../../color/parseColor';
 import type { ImportError } from './importTypes';
 
@@ -38,16 +39,6 @@ export function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Standard "over" alpha compositing of a translucent foreground onto an opaque canvas. */
-export function compositeOverCanvas(foreground: RgbaColor, canvas: RgbaColor): RgbaColor {
-  return {
-    r: foreground.r * foreground.a + canvas.r * (1 - foreground.a),
-    g: foreground.g * foreground.a + canvas.g * (1 - foreground.a),
-    b: foreground.b * foreground.a + canvas.b * (1 - foreground.a),
-    a: 1,
-  };
-}
-
 /**
  * Turns a raw color literal into an opaque hex slot value. Fully transparent
  * yields nothing (absent, per the composite semantics adapters follow). A
@@ -63,5 +54,5 @@ export function resolveOpaqueHex(
   if (!rgba || rgba.a === 0) return undefined;
   if (rgba.a === 1) return toHex(rgba);
   if (!canvasRgba) return undefined;
-  return toHex(compositeOverCanvas(rgba, canvasRgba));
+  return toHex(compositeOverOpaque(rgba, canvasRgba));
 }

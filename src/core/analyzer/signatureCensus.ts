@@ -1,9 +1,11 @@
 // src/core/analyzer/signatureCensus.ts
+import { compositeOverOpaque } from '../color/contrast';
 import { type HexColor, isOpaque, parseCssColor, parseRgbColor, toHex } from '../color/parseColor';
 import { withStylesheetDisabled } from '../injector/styleElement';
 import { computeRefinedSignature, computeSignature, signatureToSelector } from './styleSignature';
 
 export const REPRESENTATIVES_PER_SIGNATURE = 3;
+const SURFACE_ALPHA_FLOOR = 0.85;
 
 export type CensusColor = {
   cssProperty: string;
@@ -218,7 +220,8 @@ export function createSignatureCensus(): SignatureCensus {
         continue;
       }
       if (!isRelevantValue(declaration.value)) continue;
-      if (recordRelevantValue(record, declaration, element)) sampledNewValue = true;
+      const normalized = normalizeSurface(declaration, element, style);
+      if (recordRelevantValue(record, normalized, element)) sampledNewValue = true;
     }
     record.representativeCount += 1;
     return sampledNewValue;
@@ -465,6 +468,51 @@ function isTransparentValue(value: string): boolean {
 
 function isRelevantValue(value: string): boolean {
   return Boolean(value) && !isTransparentValue(value);
+}
+
+// A nearly opaque background behaves as a painted surface rather than a
+// scrim: resolve the color users actually see over the nearest known opaque
+// ancestor, then let the ordinary opaque palette/elevation pipeline remap it.
+// Lower-alpha overlays remain untouched, as do image-backed or group-opacity
+// cases whose real backdrop cannot be derived from background-color alone.
+function normalizeSurface(
+  declaration: SampledDeclaration,
+  element: Element,
+  style: CSSStyleDeclaration,
+): SampledDeclaration {
+  if (declaration.bucket !== 'background') return declaration;
+
+  const foreground = parseCssColor(declaration.value);
+  if (!foreground || isOpaque(foreground) || foreground.a < SURFACE_ALPHA_FLOOR) {
+    return declaration;
+  }
+  if (hasUnknownBackdrop(style)) return declaration;
+
+  const backdrop = opaqueBackdropOf(element);
+  if (!backdrop) return declaration;
+
+  return { ...declaration, value: toHex(compositeOverOpaque(foreground, backdrop)) };
+}
+
+function opaqueBackdropOf(element: Element): ReturnType<typeof parseCssColor> {
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    if (hasUnknownBackdrop(style)) return null;
+
+    const background = parseCssColor(style.backgroundColor);
+    if (background && isOpaque(background)) return background;
+    if (background && background.a > 0) return null;
+  }
+
+  return null;
+}
+
+function hasUnknownBackdrop(style: CSSStyleDeclaration): boolean {
+  const opacity = Number.parseFloat(style.opacity);
+  return (
+    (style.backgroundImage !== '' && style.backgroundImage !== 'none') ||
+    (!Number.isNaN(opacity) && opacity < 1)
+  );
 }
 
 function emptyPropertySlot(bucket: CensusColor['bucket']): PropertySlot {
