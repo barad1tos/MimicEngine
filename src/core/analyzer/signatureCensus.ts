@@ -580,17 +580,19 @@ function isIslandAgainst(
 }
 
 // A full-perimeter visible border is an island cue (Amendment 3.6): all
-// four sides drawn (style set and not `none`, width > 0) in a color anyone
-// can see (alpha > 0 — translucent hairlines like LinkedIn post cards'
-// rgba(140, 140, 140, 0.25) COUNT). Single-sided borders are dividers and
-// never count — the over-splitting concern that originally excluded borders
-// stays addressed. A side color that doesn't parse (a keyword, the
-// currentColor default) can't be judged on alpha and is treated as visible,
-// same contract as isQualifyingShadowLayer.
+// four sides drawn (style set and neither `none` nor `hidden` — real
+// browsers zero a hidden side's used width, but happy-dom does not, so the
+// style gate must exclude it explicitly to match browser reality; width
+// > 0) in a color anyone can see (alpha > 0 — translucent hairlines like
+// LinkedIn post cards' rgba(140, 140, 140, 0.25) COUNT). Single-sided
+// borders are dividers and never count — the over-splitting concern that
+// originally excluded borders stays addressed. A side color that doesn't
+// parse (a keyword, the currentColor default) can't be judged on alpha and
+// is treated as visible, same contract as isQualifyingShadowLayer.
 function hasFullPerimeterBorder(style: CSSStyleDeclaration): boolean {
   return BORDER_SIDES.every((side) => {
     const sideStyle = style[side.borderStyle];
-    if (sideStyle === '' || sideStyle === 'none') return false;
+    if (sideStyle === '' || sideStyle === 'none' || sideStyle === 'hidden') return false;
     // NaN-safe drawn-width gate: an unset side computes to '' in happy-dom
     // (NaN after parseFloat) and must fail exactly like a 0 width.
     const width = Number.parseFloat(style[side.width]);

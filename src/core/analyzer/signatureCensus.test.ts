@@ -533,6 +533,16 @@ describe('island cues (Amendments 3.6 + 3.7)', () => {
       expected: 0,
     },
     {
+      name: 'a hidden border style never counts — browsers zero its used width',
+      head: `<style>
+        .ground { background-color: rgb(29, 34, 38); }
+        .ghost { background-color: rgb(29, 34, 38); border: 1px hidden rgba(140, 140, 140, 0.25); }
+      </style>`,
+      body: '<div class="ground"><section class="ghost">x</section></div>',
+      selector: 'section.ghost',
+      expected: 0,
+    },
+    {
       name: 'same hex with no cue at all is surface-following',
       head: `<style>
         .ground { background-color: rgb(29, 34, 38); }
