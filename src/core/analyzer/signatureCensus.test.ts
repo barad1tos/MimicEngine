@@ -78,6 +78,20 @@ describe('signatureCensus traversal', () => {
     expect(snapshot.elementsVisited).toBeGreaterThanOrEqual(50);
   });
 
+  it('carries the raw signature alongside the derived selector', () => {
+    // The raw census key survives into the snapshot because emitted
+    // selectors are CSS-escaped and unsafe to parse back — superset-bleed
+    // math (computedFallback) operates on signatures, never on selectors.
+    document.head.innerHTML = '<style>.card { background-color: rgb(1, 2, 3); }</style>';
+    document.body.innerHTML = '<div class="card">x</div>';
+
+    const entry = fullCensus()
+      .snapshot()
+      .entries.find((candidate) => candidate.selector === 'div.card');
+
+    expect(entry?.signature).toBe('div|card');
+  });
+
   it('is deterministic: two censuses of the same DOM produce equal snapshots', () => {
     document.head.innerHTML = '<style>.a { color: rgb(9, 9, 9); }</style>';
     document.body.innerHTML = '<p class="a">x</p><p class="a">y</p><div class="b">z</div>';

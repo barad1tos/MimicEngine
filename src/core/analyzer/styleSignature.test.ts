@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
 // src/core/analyzer/styleSignature.test.ts
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { computeRefinedSignature, computeSignature, signatureToSelector } from './styleSignature';
+import {
+  computeRefinedSignature,
+  computeSignature,
+  isLeafClassSuperset,
+  signatureToSelector,
+} from './styleSignature';
 
 function elementFromHtml(html: string): Element {
   document.body.innerHTML = html;
@@ -83,6 +88,42 @@ describe('computeSignature — C-3: pipe is a legal class character', () => {
 
     expect(selector.includes(' > ')).toBe(true);
     expect(document.querySelector(selector)).toBe(child);
+  });
+});
+
+describe('isLeafClassSuperset', () => {
+  it('accepts a strict class superset on the same leaf tag', () => {
+    expect(isLeafClassSuperset('div|card|flat', 'div|card')).toBe(true);
+  });
+
+  it('rejects equal class sets', () => {
+    expect(isLeafClassSuperset('div|card', 'div|card')).toBe(false);
+  });
+
+  it('rejects the subset direction', () => {
+    expect(isLeafClassSuperset('div|card', 'div|card|flat')).toBe(false);
+  });
+
+  it('rejects a disjoint class set', () => {
+    expect(isLeafClassSuperset('div|flat', 'div|card')).toBe(false);
+  });
+
+  it('rejects differing leaf tags even with a class superset', () => {
+    expect(isLeafClassSuperset('span|card|flat', 'div|card')).toBe(false);
+  });
+
+  it('treats an escaped-pipe class as one token, not two', () => {
+    expect(isLeafClassSuperset('div|foo\\|bar|x', 'div|foo\\|bar')).toBe(true);
+    expect(isLeafClassSuperset('div|bar|foo|x', 'div|foo\\|bar')).toBe(false);
+  });
+
+  it('compares refined forms by their leaf compound', () => {
+    expect(isLeafClassSuperset('div|row > div|card|flat', 'div|card')).toBe(true);
+    expect(isLeafClassSuperset('div|card|flat', 'section|wrap > div|card')).toBe(true);
+  });
+
+  it('never matches through the refined parent part alone', () => {
+    expect(isLeafClassSuperset('div|card|flat > button|btn', 'div|card')).toBe(false);
   });
 });
 

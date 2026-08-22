@@ -455,6 +455,109 @@ describe('computedFallback strategy', () => {
     `);
   });
 
+  it('golden: neutralizes island superset-bleed onto a follower with a strictly larger class set', () => {
+    // Island selectors do not enforce an exact class set: `div.card` also
+    // matches `<div class="card flat">`, whose own signature is
+    // surface-following. The follower's later background rule wins the
+    // background, but the positional rule's OTHER declarations would stay
+    // in force — a locally-set `--pm-current-surface` and an island shadow,
+    // a phantom island hop. The neutralizer group restores the inherited
+    // surface variable and the follower's sampled shadow reality (none — a
+    // qualifying shadow would have classified it island), between the
+    // positional block and the per-signature groups.
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+        .card.flat { box-shadow: none; }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="ground"><div class="card">x</div><div class="card flat">y</div></div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const neutralizer =
+      'html[data-pm-active="true"] :where(div.card.flat) {\n' +
+      '  --pm-current-surface: inherit !important;\n' +
+      '  box-shadow: none !important;\n' +
+      '}';
+    expect(css).toContain(neutralizer);
+
+    // After the deepest positional level…
+    const levelThree = ':where(:is(div.card) :is(div.card) :is(div.card))';
+    expect(css.indexOf(neutralizer)).toBeGreaterThan(css.indexOf(levelThree));
+
+    // …and before the follower's own per-signature background group.
+    const followerBackground =
+      /:where\(div\.card\.flat\) \{\n {2}background-color: var\(--pm-current-surface, var\(--pm-elevation-0\)\) !important;\n\}/.exec(
+        css,
+      );
+    expect(followerBackground).not.toBeNull();
+    if (followerBackground === null) throw new Error('expected a follower background group');
+    expect(css.indexOf(neutralizer)).toBeLessThan(followerBackground.index);
+  });
+
+  it('emits no neutralizer for followers whose class sets are not supersets of any island', () => {
+    // .ground (disjoint classes) and .flat (overlapping page, no island
+    // subset relation) both follow the surface; neither leaf class set
+    // contains .card's, so a bleed-free page emits zero extra bytes.
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+        .flat { background-color: rgb(255, 255, 255); }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="ground"><div class="card">x</div><div class="flat">y</div></div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    expect(css).not.toContain('inherit');
+  });
+
+  it('produces byte-identical css across repeated runs with a fired neutralizer', () => {
+    document.head.innerHTML = `
+      <style>
+        .ground { background-color: rgb(255, 255, 255); }
+        .card { background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+        .card.flat { box-shadow: none; }
+      </style>
+    `;
+    document.body.innerHTML =
+      '<div class="ground"><div class="card">x</div><div class="card flat">y</div></div>';
+    censusFromCurrentDom();
+
+    const first = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    ).css;
+    const second = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    ).css;
+
+    expect(second).toBe(first);
+    expect(first).toContain('inherit');
+  });
+
   it('keeps an accent-classified island background on its accent substitution, outside the positional block', () => {
     // .pill is an island by hex difference, but its saturated background is
     // accent-classified — mapped to a theme accent token, never a ladder

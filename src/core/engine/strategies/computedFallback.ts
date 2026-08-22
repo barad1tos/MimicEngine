@@ -1,4 +1,5 @@
 import { installedCensus, type CensusSnapshot } from '../../analyzer/signatureCensus';
+import { isLeafClassSuperset } from '../../analyzer/styleSignature';
 import { contrastRatio } from '../../color/contrast';
 import { isOpaque, parseCssColor, toHex, type HexColor } from '../../color/parseColor';
 import type { PaletteTheme } from '../../themes';
@@ -27,8 +28,12 @@ import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGrou
 // A census color only ever becomes a declaration once its value has parsed
 // to a color (see toNovelDeclarations), so `color` is narrowed non-null here
 // — same idiom variableRemap.ts uses for its own colored-property subtype.
+// `signature` is the raw census key the selector was derived from: emitted
+// selectors are CSS-escaped and unsafe to parse back, so the superset-bleed
+// math below operates on signatures.
 type NovelDeclaration = AuthoredColorDeclaration & {
   color: NonNullable<AuthoredColorDeclaration['color']>;
+  signature: string;
 };
 
 // The controller builds and installs a live SignatureCensus before
@@ -163,6 +168,7 @@ function toNovelDeclarations(
       if (authoredHexes.has(toHex(color))) continue;
 
       declarations.push({
+        signature: entry.signature,
         selector: entry.selector,
         property: censusColor.cssProperty,
         value: censusColor.value,
@@ -233,9 +239,13 @@ function buildSelectorGroups(
 
   const backgroundBySelector = buildBackgroundBySelector(declarations, mapping);
   const guarded = applyPairedTextGuard(resolved, backgroundBySelector, theme);
-  const { substituted, islandSelectors } = substituteElevationBackgrounds(guarded, theme);
+  const { substituted, islands, followers } = substituteElevationBackgrounds(guarded, theme);
 
-  return [...buildPositionalGroups(islandSelectors), ...groupSelectors(substituted)];
+  return [
+    ...buildPositionalGroups(new Set(islands.values())),
+    ...buildBleedNeutralizerGroups(islands, followers),
+    ...groupSelectors(substituted),
+  ];
 }
 
 // Inherited by descendants, so a surface-following rule painted inside a
@@ -244,9 +254,14 @@ function buildSelectorGroups(
 // ground rung. Set only by the positional block below.
 const CURRENT_SURFACE_VARIABLE = '--pm-current-surface';
 
+// `islands` and `followers` map raw signature -> emitted selector for the
+// background declarations the substitution below classified either way:
+// the signature side feeds the superset-bleed math (selectors are
+// CSS-escaped, unsafe to parse back), the selector side the emitted rules.
 type ElevationSubstitution = {
   substituted: ResolvedNovelDeclaration[];
-  islandSelectors: ReadonlySet<string>;
+  islands: ReadonlyMap<string, string>;
+  followers: ReadonlyMap<string, string>;
 };
 
 // The "render-time" split positional elevation (Amendment 3.7) calls for:
@@ -276,7 +291,8 @@ function substituteElevationBackgrounds(
   theme: PaletteTheme,
 ): ElevationSubstitution {
   const substituted: ResolvedNovelDeclaration[] = [];
-  const islandSelectors = new Set<string>();
+  const islands = new Map<string, string>();
+  const followers = new Map<string, string>();
 
   for (const item of resolved) {
     const rung = mappedRungLevel(item, theme);
@@ -286,17 +302,18 @@ function substituteElevationBackgrounds(
     }
 
     if (rung >= 1) {
-      islandSelectors.add(item.declaration.selector);
+      islands.set(item.declaration.signature, item.declaration.selector);
       continue;
     }
 
+    followers.set(item.declaration.signature, item.declaration.selector);
     substituted.push({
       ...item,
       mappedValue: `var(${CURRENT_SURFACE_VARIABLE}, var(${elevationVariable(0)}))`,
     });
   }
 
-  return { substituted, islandSelectors };
+  return { substituted, islands, followers };
 }
 
 // The elevation level a background declaration's mapped value actually
@@ -342,6 +359,44 @@ function buildPositionalGroups(islandSelectors: ReadonlySet<string>): SelectorGr
   }
 
   return groups;
+}
+
+// Superset-bleed neutralizer (Codex P1, PR #21): island selectors do not
+// enforce an exact class set — island `div.card` also matches
+// `<div class="card flat">`, whose own signature is surface-following. The
+// follower's later background rule wins the background, but the positional
+// rule's OTHER declarations stay in force on that element: its locally-set
+// surface variable and island shadow — a phantom island hop. For every
+// follower whose leaf class set is a STRICT superset of an emitted
+// island's (same leaf tag), one group between the positional block and the
+// per-signature groups undoes both: `inherit` on a custom property
+// explicitly restores the parent's value (at ground level it resolves to
+// the guaranteed-invalid initial, so the follower's own fallback still
+// lands the ground rung), and `box-shadow: none` is the follower's sampled
+// reality by definition — a qualifying shadow would have classified it
+// island. Bleed-free pages emit zero extra bytes; groups sort by follower
+// selector for deterministic output.
+function buildBleedNeutralizerGroups(
+  islands: ReadonlyMap<string, string>,
+  followers: ReadonlyMap<string, string>,
+): SelectorGroup[] {
+  const selectors: string[] = [];
+
+  for (const [followerSignature, followerSelector] of followers) {
+    const bleeds = [...islands.keys()].some((islandSignature) =>
+      isLeafClassSuperset(followerSignature, islandSignature),
+    );
+    if (bleeds) selectors.push(followerSelector);
+  }
+
+  return selectors.toSorted(compareStrings).map((selector) => ({
+    conditions: [],
+    selector,
+    declarations: new Map([
+      [CURRENT_SURFACE_VARIABLE, 'inherit'],
+      ['box-shadow', 'none'],
+    ]),
+  }));
 }
 
 // A selector's paired background for the guard below: the MAPPED value when

@@ -13,7 +13,11 @@ export type CensusColor = {
 };
 
 export type CensusSnapshot = {
-  entries: { selector: string; colors: CensusColor[] }[];
+  // `signature` is the raw census key the selector was derived from —
+  // emitted selectors are CSS-escaped and unsafe to parse back, so
+  // signature-level math (computedFallback's superset-bleed neutralizer)
+  // reads this field, never the selector.
+  entries: { signature: string; selector: string; colors: CensusColor[] }[];
   distinctColorsSeen: number;
   // Every opaque value the census has sampled, in insertion (first-seen)
   // order — the raw material computedFallback's coverage denominator parses
@@ -418,7 +422,7 @@ export function createSignatureCensus(): SignatureCensus {
             ...(elevation === undefined ? {} : { elevation }),
           });
         }
-        entries.push({ selector: signatureToSelector(signature), colors });
+        entries.push({ signature, selector: signatureToSelector(signature), colors });
       }
       return {
         entries,
