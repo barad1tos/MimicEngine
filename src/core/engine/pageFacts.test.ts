@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // src/core/engine/pageFacts.test.ts
 import { describe, expect, it } from 'vitest';
-import { STYLE_ELEMENT_ID } from '../injector/styleElement';
+import { STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID } from '../injector/styleElement';
 import { collectFromSheets, collectPageFacts } from './pageFacts';
 import { deriveMetrics } from './pageMetrics';
 
@@ -83,6 +83,35 @@ describe('collectPageFacts', () => {
     expect(facts.authoredRules).toHaveLength(1);
     expect(facts.authoredRules[0]?.selector).toBe('.foo');
     expect(facts.inlineStyleColors).toHaveLength(1);
+  });
+
+  // Amendment 3.8: withStylesheetDisabled's transition-kill element must be
+  // excluded from facts collection exactly like the generated style element —
+  // dormant today (collectPageFacts never runs inside that window), but spec
+  // fidelity, not current call-site topology, is what this locks in.
+  it('excludes the transition-kill element from domElementCount, shadowRootCount, and its own stylesheet from authoredRules', () => {
+    const bodyHtml = '<div><span></span><p>hi</p></div>';
+
+    const withoutKillElement = collectPageFacts(
+      buildDocument('.foo { color: #ff0000; }', bodyHtml),
+    );
+
+    // The kill element's own stylesheet carries a color declaration here
+    // (rather than the real '* { transition: none !important; }' payload) so
+    // that a leaking exclusion would surface as a SECOND authoredRules entry
+    // — asserting against its real content would pass vacuously either way,
+    // since 'transition: none' has no color for collectFromSheets to pick up.
+    document.head.innerHTML = `
+      <style>.foo { color: #ff0000; }</style>
+      <style id="${TRANSITION_KILL_ELEMENT_ID}">.bar { color: #00ff00; }</style>
+    `;
+    document.body.innerHTML = bodyHtml;
+    const withKillElement = collectPageFacts(document);
+
+    expect(withKillElement.domElementCount).toBe(withoutKillElement.domElementCount);
+    expect(withKillElement.shadowRootCount).toBe(withoutKillElement.shadowRootCount);
+    expect(withKillElement.authoredRules).toHaveLength(1);
+    expect(withKillElement.authoredRules[0]?.selector).toBe('.foo');
   });
 
   it('recurses into @media rules and collects authored color declarations', () => {

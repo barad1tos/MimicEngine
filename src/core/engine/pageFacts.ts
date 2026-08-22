@@ -1,5 +1,5 @@
 import { parseCssColor, type RgbaColor } from '../color/parseColor';
-import { STYLE_ELEMENT_ID } from '../injector/styleElement';
+import { isOwnElement, OWN_ELEMENT_IDS } from '../injector/styleElement';
 import { buildSelectorHint } from './selectorHint';
 import { compareStrings } from './sort';
 
@@ -79,8 +79,8 @@ export function collectPageFacts(
   options: Partial<CollectPageFactsOptions> = {},
 ): PageFacts {
   const resolved = { ...DEFAULT_OPTIONS, ...options };
-  const ownStyleSheet = getOwnStyleSheet(doc);
-  const sheets = Array.from(doc.styleSheets).filter((sheet) => sheet !== ownStyleSheet);
+  const ownStyleSheets = getOwnStyleSheets(doc);
+  const sheets = Array.from(doc.styleSheets).filter((sheet) => !ownStyleSheets.includes(sheet));
   const { declarations, usage, authoredRules, stylesheetCount, unreadableStylesheetCount } =
     collectFromSheets(sheets, {
       maxRules: resolved.maxRules,
@@ -115,9 +115,20 @@ export function collectPageFacts(
   };
 }
 
-function getOwnStyleSheet(doc: Document): CSSStyleSheet | null {
-  const ownElement = doc.getElementById(STYLE_ELEMENT_ID);
-  return ownElement instanceof HTMLStyleElement ? ownElement.sheet : null;
+// Excludes every element we mint (the generated stylesheet AND
+// withStylesheetDisabled's transition-kill element — see OWN_ELEMENT_IDS),
+// not just the generated one: collectPageFacts never actually runs inside a
+// withStylesheetDisabled window today, so the kill element is dormant here in
+// practice, but the exclusion is a spec requirement (Amendment 3.8: facts
+// collection must exclude our own elements exactly like the generated style
+// element), not merely a fix for a call site that happens to exist right now.
+function getOwnStyleSheets(doc: Document): CSSStyleSheet[] {
+  const sheets: CSSStyleSheet[] = [];
+  for (const id of OWN_ELEMENT_IDS) {
+    const element = doc.getElementById(id);
+    if (element instanceof HTMLStyleElement && element.sheet) sheets.push(element.sheet);
+  }
+  return sheets;
 }
 
 /**
@@ -395,7 +406,7 @@ function walkDom(
   const walker = doc.createTreeWalker(doc.documentElement, NodeFilter.SHOW_ELEMENT);
   while (walker.nextNode() && domElementCount < maxElements) {
     const element = walker.currentNode;
-    if (!(element instanceof Element) || element.id === STYLE_ELEMENT_ID) continue;
+    if (!(element instanceof Element) || isOwnElement(element)) continue;
     domElementCount += 1;
     if (element.shadowRoot) shadowRootCount += 1;
     collectInlineStyleColors(element, inlineStyleColors, maxAuthoredDeclarations);
