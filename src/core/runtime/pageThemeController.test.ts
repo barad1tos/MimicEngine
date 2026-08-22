@@ -11,7 +11,9 @@ import { observeDomChanges } from '../live/observeDomChanges';
 import { IMPORTED_THEMES_KEY, type ImportedTheme } from '../storage/importedThemesStore';
 import { createDefaultSiteSettings, STORAGE_KEY, type AppSettings } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
+import { readCachedStylesheet, writeCachedStylesheet } from '../storage/stylesheetCache';
 import type { createStorageArea } from '../testing/storageArea';
+import { catppuccinFrappe } from '../themes/built-in/catppuccin';
 import { THEME_TOKEN_NAMES, type ThemeTokens } from '../themes';
 import { createPageThemeController } from './pageThemeController';
 
@@ -285,7 +287,9 @@ describe('createPageThemeController — stop() invalidates in-flight apply()', (
     // The provisional read resolves, then the authoritative apply suspends
     // at its own settings read.
     const startPromise = controller.start();
-    await flushMicrotasks();
+    await vi.waitFor(() => {
+      expect(injectSpy).toHaveBeenCalledTimes(1);
+    });
 
     controller.stop();
 
@@ -390,9 +394,10 @@ describe('createPageThemeController — two-phase start', () => {
     const controller = createPageThemeController();
 
     const startPromise = controller.start();
-    await flushMicrotasks();
+    await vi.waitFor(() => {
+      expect(injectSpy).toHaveBeenCalledTimes(1);
+    });
 
-    expect(injectSpy).toHaveBeenCalledTimes(1);
     expect(injectSpy.mock.calls[0]?.[0]).not.toContain(
       'html[data-pm-active="true"] :where(button, [role="button"], input, select, textarea) {\n  background-color:',
     );
@@ -420,8 +425,9 @@ describe('createPageThemeController — two-phase start', () => {
     const controller = createPageThemeController();
 
     const startPromise = controller.start();
-    await flushMicrotasks();
-    expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).toContain('#303446');
+    await vi.waitFor(() => {
+      expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).toContain('#303446');
+    });
 
     fakeBrowser.storage.local.data.set(STORAGE_KEY, {
       ...initialSettings,
@@ -445,8 +451,9 @@ describe('createPageThemeController — two-phase start', () => {
     const controller = createPageThemeController();
 
     const startPromise = controller.start();
-    await flushMicrotasks();
-    expect(injectSpy).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(injectSpy).toHaveBeenCalledTimes(1);
+    });
 
     controller.stop();
     document.dispatchEvent(new Event('DOMContentLoaded'));
@@ -456,6 +463,85 @@ describe('createPageThemeController — two-phase start', () => {
     expect(injectSpy).toHaveBeenCalledTimes(1);
     expect(vi.mocked(observeDomChanges)).not.toHaveBeenCalled();
     expect(installedCensus()).toBeNull();
+  });
+});
+
+describe('createPageThemeController — warm stylesheet restore', () => {
+  const siteKey = normalizeHostname(window.location.hostname);
+  const cachedCss =
+    ':root {\n  --pm-canvas: #303446;\n}\nhtml[data-pm-active="true"] .cache-marker { color: #c6d0f5; }';
+
+  function cacheContext(settings = createDefaultSiteSettings(catppuccinFrappe.id)) {
+    return {
+      siteKey,
+      pathname: window.location.pathname,
+      theme: catppuccinFrappe,
+      settings,
+    };
+  }
+
+  afterEach(() => {
+    styleElementModule.removeStylesheet();
+    document.body.innerHTML = '';
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('publishes a cache hit provisionally and still replaces it from live analysis', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    await writeCachedStylesheet(cacheContext(), cachedCss);
+    fakeBrowser.storage.session.get.mockClear();
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await vi.waitFor(() => {
+      expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).toBe(cachedCss);
+    });
+    expect(installedCensus()).toBeNull();
+
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).not.toContain('cache-marker');
+    expect(vi.mocked(observeDomChanges)).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+  });
+
+  it('writes only a complete published computed-fallback stylesheet', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 0),
+    );
+    vi.stubGlobal('cancelIdleCallback', (handle: number) => {
+      window.clearTimeout(handle);
+    });
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.body.innerHTML = '<button class="warm-target">Open to</button>';
+    const settings = {
+      ...createDefaultSiteSettings(catppuccinFrappe.id),
+      strategy: 'computedFallback' as const,
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      globalThemeId: catppuccinFrappe.id,
+      sites: { [siteKey]: settings },
+    });
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await expect(readCachedStylesheet(cacheContext(settings))).resolves.toBeNull();
+
+    await vi.runAllTimersAsync();
+    await flushMicrotasks();
+
+    const liveCss = document.getElementById(STYLE_ELEMENT_ID)?.textContent;
+    expect(liveCss).toContain('.warm-target');
+    await expect(readCachedStylesheet(cacheContext(settings))).resolves.toBe(liveCss);
+
+    controller.stop();
   });
 });
 

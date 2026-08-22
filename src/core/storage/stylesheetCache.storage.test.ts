@@ -189,6 +189,25 @@ describe('stylesheetCache', () => {
     expect(fakeBrowser.storage.session.get).not.toHaveBeenCalled();
   });
 
+  it('keeps a newer same-context write authoritative when an older read is delayed', async () => {
+    const stalledRead = Promise.withResolvers<Record<string, unknown>>();
+    fakeBrowser.storage.session.get.mockImplementationOnce(() => stalledRead.promise);
+    const olderCss = ':root { --pm-canvas: #1f2430; } .version { color: #111111; }';
+    const newerCss = ':root { --pm-canvas: #1f2430; } .version { color: #222222; }';
+
+    const olderWrite = writeCachedStylesheet(context(), olderCss);
+    await vi.waitFor(() => {
+      expect(fakeBrowser.storage.session.get).toHaveBeenCalledTimes(1);
+    });
+    const newerWrite = writeCachedStylesheet(context(), newerCss);
+    await newerWrite;
+
+    stalledRead.resolve({});
+    await olderWrite;
+
+    await expect(readCachedStylesheet(context())).resolves.toBe(newerCss);
+  });
+
   it('uses opaque digest keys instead of raw route or settings data', async () => {
     await writeCachedStylesheet(context(), VALID_CSS);
 

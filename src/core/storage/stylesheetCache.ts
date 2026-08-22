@@ -29,6 +29,7 @@ const MAX_ENTRIES = 32;
 const MAX_CSS_LENGTH = 65_536;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const UNSAFE_CSS_PATTERN = /@import|url\s*\(|<\/style/iu;
+let writeGeneration = 0;
 
 export async function readCachedStylesheet(context: StyleCacheContext): Promise<string | null> {
   if (!isCacheablePath(context.pathname)) return null;
@@ -50,9 +51,12 @@ export async function writeCachedStylesheet(
 ): Promise<void> {
   if (!isCacheablePath(context.pathname) || !isCacheableCss(css)) return;
 
+  const generation = ++writeGeneration;
   try {
     const fingerprint = await contextFingerprint(context);
+    if (generation !== writeGeneration) return;
     const result = await browser.storage.session.get<Record<string, unknown>>(STYLE_CACHE_KEY);
+    if (generation !== writeGeneration) return;
     const stored = normalizeStore(result[STYLE_CACHE_KEY]);
     const now = Date.now();
     const entries = Object.fromEntries(

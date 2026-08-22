@@ -36,7 +36,12 @@ import {
   type SiteSettings,
 } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
-import { resolveTheme } from '../themes';
+import {
+  readCachedStylesheet,
+  writeCachedStylesheet,
+  type StyleCacheContext,
+} from '../storage/stylesheetCache';
+import { resolveTheme, type PaletteTheme } from '../themes';
 import { waitForDocumentReady } from './documentReady';
 
 export type PageThemeController = {
@@ -223,6 +228,17 @@ export function createPageThemeController(): PageThemeController {
   const stopCensusObserver = (): void => {
     censusObserver?.disconnect();
     censusObserver = null;
+  };
+
+  const clearCensus = (): void => {
+    if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
+    censusIdleHandle = null;
+    if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
+    censusReapplyTimer = undefined;
+    censusSettleStartedAt = null;
+    installCensus(null);
+    census = null;
+    publishedCensus = null;
   };
 
   // Debounced publication for census progress alone. A dedicated timer (not
@@ -464,6 +480,13 @@ export function createPageThemeController(): PageThemeController {
     };
   };
 
+  const cacheContext = (theme: PaletteTheme, settings: SiteSettings): StyleCacheContext => ({
+    siteKey,
+    pathname: window.location.pathname,
+    theme,
+    settings,
+  });
+
   const publishBootstrap = async (): Promise<void> => {
     const generation = ++applyGeneration;
     const { siteSettings, importedThemes } = await readApplyInputs();
@@ -475,7 +498,9 @@ export function createPageThemeController(): PageThemeController {
     }
 
     const theme = resolveTheme(siteSettings.themeId, importedThemes);
-    injectStylesheet(buildBootstrapStylesheet(theme, siteSettings));
+    const cachedCss = await readCachedStylesheet(cacheContext(theme, siteSettings));
+    if (generation !== applyGeneration || isStopped()) return;
+    injectStylesheet(cachedCss ?? buildBootstrapStylesheet(theme, siteSettings));
   };
 
   const apply = async (): Promise<void> => {
@@ -494,14 +519,7 @@ export function createPageThemeController(): PageThemeController {
       // can read its output while disabled, so mirror stop()'s census
       // teardown here rather than leaving the walk (and its idle chunks and
       // debounced reapplies) running for no reason.
-      if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
-      censusIdleHandle = null;
-      if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
-      censusReapplyTimer = undefined;
-      censusSettleStartedAt = null;
-      installCensus(null);
-      census = null;
-      publishedCensus = null;
+      clearCensus();
       return;
     }
 
@@ -555,6 +573,11 @@ export function createPageThemeController(): PageThemeController {
     // effect, including diagnostics — true even if that changes later.
     if (generation !== applyGeneration) return;
     const censusSnapshot = publishedCensus?.snapshot();
+    const shouldCacheStylesheet =
+      census === publishedCensus &&
+      censusSnapshot?.complete === true &&
+      planStrategies(plan).includes('computedFallback');
+    const currentCacheContext = cacheContext(theme, siteSettings);
     await writePlanDiagnostics({
       siteKey,
       plan,
@@ -572,6 +595,8 @@ export function createPageThemeController(): PageThemeController {
         : {}),
       updatedAt: new Date().toISOString(),
     });
+    if (generation !== applyGeneration || !shouldCacheStylesheet) return;
+    await writeCachedStylesheet(currentCacheContext, css);
   };
 
   const startSettingsListener = (): void => {
@@ -642,14 +667,7 @@ export function createPageThemeController(): PageThemeController {
       stopSettingsListener = null;
       stopDomObserver();
       stopCensusObserver();
-      if (censusIdleHandle !== null) cancelIdleWork(censusIdleHandle);
-      censusIdleHandle = null;
-      if (censusReapplyTimer !== undefined) window.clearTimeout(censusReapplyTimer);
-      censusReapplyTimer = undefined;
-      censusSettleStartedAt = null;
-      installCensus(null);
-      census = null;
-      publishedCensus = null;
+      clearCensus();
       // BFCACHE SYMMETRY RULING: stop() deliberately leaves shadow styles in
       // place, same as it already leaves the document stylesheet and the
       // data-pm-active gate untouched. A bfcache-restored page shows a fully
