@@ -163,9 +163,9 @@ export function createPageThemeController(): PageThemeController {
   // stopped controller never installs live observers or listeners afterward.
   let stopped = false;
   const isStopped = (): boolean => stopped;
-  // The live census this controller instance owns. installedCensus() (read by
-  // computedFallback.produce at apply() time) mirrors this exactly: installed
-  // on start(), cleared on stop() — never left dangling for a dead instance.
+  // The live census walk this controller instance owns. It remains private
+  // until publishCensus installs a complete snapshot for computedFallback and
+  // is cleared together with that published snapshot on stop().
   let census: SignatureCensus | null = null;
   // The census currently visible to computedFallback. During an attribute-
   // driven refresh, census points at the replacement walk while this keeps
@@ -173,7 +173,7 @@ export function createPageThemeController(): PageThemeController {
   let publishedCensus: SignatureCensus | null = null;
   // Dedicated cancellation token for the census idle-chunk loop — deliberately
   // separate from applyGeneration. Every apply() (including the census's own
-  // 250ms debounced re-apply) bumps applyGeneration; piggybacking the chunk
+  // 500ms debounced re-apply) bumps applyGeneration; piggybacking the chunk
   // loop on it meant the loop could self-strand after its own reapply fired
   // before the next idle callback (reproduced: a 2500-element walk stopping
   // dead at ~801 elements, complete forever false). Only stop() and a fresh

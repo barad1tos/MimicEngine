@@ -49,7 +49,11 @@ describe('computed surface alpha normalization', () => {
       '<div class="surface">content</div>',
     );
 
-    expect(backgroundValue(snapshot, 'div.surface')).toBe('#040405');
+    const surface = snapshot.entries
+      .find((entry) => entry.selector === 'div.surface')
+      ?.colors.find((color) => color.bucket === 'background');
+
+    expect(surface).toMatchObject({ value: '#040405', elevation: 1 });
     expect(snapshot.opaqueValuesSeen).toContain('#040405');
   });
 
