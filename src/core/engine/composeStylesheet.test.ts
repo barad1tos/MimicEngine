@@ -210,7 +210,15 @@ describe('composeStylesheet', () => {
           color: { r: 0x1f, g: 0x24, b: 0x30, a: 1 },
           references: [],
           usage: { background: 1, text: 0, border: 0, other: 0 },
-          uses: [],
+          uses: [
+            {
+              selector: '.page',
+              property: 'background-color',
+              value: 'var(--page-bg)',
+              bucket: 'background',
+              conditions: [],
+            },
+          ],
         },
       ],
       svgPresentationColors: [
@@ -226,7 +234,7 @@ describe('composeStylesheet', () => {
     );
 
     const baselineMarker = css.indexOf('::selection');
-    const variableRemapMarker = css.indexOf('--page-bg: var(--pm-elevation-0)');
+    const variableRemapMarker = css.indexOf('--pm-bg--page-bg: var(--pm-elevation-0)');
     const deepRemapMarker = css.indexOf(':is(svg, svg *)[fill=');
 
     expect(baselineMarker).toBeGreaterThanOrEqual(0);

@@ -4,10 +4,10 @@ import { isOpaque, type RgbaColor } from '../../color/parseColor';
 import type { ThemeTokenName } from '../../themes';
 import { BRAND_CHROMA_THRESHOLD } from '../colorMap';
 import { ELEVATION_LEVELS, elevationVariable } from '../elevationScale';
-import type { CustomPropertyFact } from '../pageFacts';
+import type { CustomPropertyFact, CustomPropertyUse } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
-import type { StyleRule } from '../stylePlan';
+import { groupSelectors, type StyleRule } from '../stylePlan';
 import { tokenToCssVariableSuffix } from '../tokenVariables';
 
 type DirectToken = Exclude<ThemeTokenName, 'canvas' | 'surface1' | 'surface2' | 'surface3'>;
@@ -19,13 +19,13 @@ type Classification = DirectToken | 'surface-group';
 // does the same; see assignLadder there).
 type Assignment = DirectToken | number;
 type ColoredProperty = CustomPropertyFact & { color: RgbaColor };
-type UsageKey = keyof CustomPropertyFact['usage'];
 type NameTableEntry = { pattern: RegExp; token: Classification };
 type SurfaceCandidate = {
   property: ColoredProperty;
   isCanvasFamily: boolean;
   isStrongCanvas: boolean;
 };
+type ColorRole = 'background' | 'text' | 'border';
 
 // Surface-group entries whose name matched this pattern outrank other
 // surface-group entries for the ladder's `canvas` slot (see
@@ -58,55 +58,160 @@ const NAME_TABLE: readonly NameTableEntry[] = [
   { pattern: /surface|panel|card|elevated/i, token: 'surface-group' },
 ];
 
-const USAGE_TOKEN_MAP: Record<'background' | 'text' | 'border', Classification> = {
-  background: 'surface-group',
-  text: 'text',
-  border: 'border',
-};
-
 export const variableRemap: PaletteEngine = {
   id: 'variableRemap',
   label: 'Site variables',
   produce(theme, siteSettings, facts) {
-    const assignments = assignTokens(
+    const aliases = deriveRoleAliases(
       facts.customProperties,
       theme.mode,
       siteSettings.preserveBrandColors,
     );
+    const rules = buildUseRules(facts.customProperties, aliases);
     return {
       content: {
         kind: 'rules',
-        rules: assignments.size === 0 ? [] : [buildRule(assignments)],
+        rules: aliases.size === 0 ? [] : [buildAliasRule(aliases), ...rules],
       },
     };
   },
 };
 
-export function assignTokens(
+export function deriveRoleAliases(
   properties: CustomPropertyFact[],
   mode: 'dark' | 'light',
   preserveBrandColors: boolean,
-): Map<string, Assignment> {
-  const assignments = new Map<string, Assignment>();
+): Map<string, string> {
+  const rolesByProperty = collectRequestedRoles(properties);
+  const directAssignments = new Map<string, Assignment>();
   const surfaceGroup: SurfaceCandidate[] = [];
 
   for (const property of properties.filter(hasOpaqueColor)) {
     if (isBrandProtected(property, preserveBrandColors)) continue;
 
-    const nameMatch = matchNameTableEntry(property.name);
-    const classification = nameMatch?.token ?? classifyUsage(property.usage);
-    if (classification === 'surface-group') {
-      const isCanvasFamily = nameMatch?.pattern === CANVAS_FAMILY_PATTERN;
-      const isStrongCanvas = isCanvasFamily && isStrongCanvasName(property.name);
-      surfaceGroup.push({ property, isCanvasFamily, isStrongCanvas });
-    } else if (classification !== null) {
-      assignments.set(property.name, classification);
+    for (const role of rolesByProperty.get(property.name) ?? []) {
+      const classification = classifyRole(property, role);
+      if (classification === 'surface-group') {
+        const nameMatch = matchNameTableEntry(property.name);
+        const isCanvasFamily = nameMatch?.pattern === CANVAS_FAMILY_PATTERN;
+        const isStrongCanvas = isCanvasFamily && isStrongCanvasName(property.name);
+        surfaceGroup.push({ property, isCanvasFamily, isStrongCanvas });
+      } else {
+        directAssignments.set(roleAlias(role, property.name), classification);
+      }
     }
   }
 
-  assignSurfaceLadder(surfaceGroup, mode, assignments);
+  assignSurfaceLadder(surfaceGroup, mode, directAssignments, (property) =>
+    roleAlias('background', property.name),
+  );
+  return resolveRoleAliases(properties, rolesByProperty, directAssignments);
+}
 
-  return assignments;
+function collectRequestedRoles(
+  properties: readonly CustomPropertyFact[],
+): Map<string, Set<ColorRole>> {
+  const roles = new Map<string, Set<ColorRole>>();
+  const propertiesByName = new Map(properties.map((property) => [property.name, property]));
+  const queue: { name: string; role: ColorRole }[] = [];
+
+  for (const property of properties) {
+    for (const use of property.uses) {
+      if (use.bucket !== 'other') queue.push({ name: property.name, role: use.bucket });
+    }
+  }
+
+  while (queue.length > 0) {
+    const request = queue.shift();
+    if (!request) break;
+    const requested = roles.get(request.name) ?? new Set<ColorRole>();
+    if (requested.has(request.role)) continue;
+    requested.add(request.role);
+    roles.set(request.name, requested);
+
+    for (const reference of propertiesByName.get(request.name)?.references ?? []) {
+      queue.push({ name: reference, role: request.role });
+    }
+  }
+
+  return roles;
+}
+
+function classifyRole(property: ColoredProperty, role: ColorRole): Classification {
+  const nameToken = matchNameTableEntry(property.name)?.token;
+  if (
+    nameToken &&
+    nameToken !== 'surface-group' &&
+    nameToken !== 'text' &&
+    nameToken !== 'textMuted' &&
+    nameToken !== 'border'
+  ) {
+    return nameToken;
+  }
+  if (role === 'background') return nameToken === 'surface-group' ? nameToken : 'surface-group';
+  if (role === 'border') return nameToken === 'border' ? nameToken : 'border';
+  if (nameToken === 'textMuted') return nameToken;
+  return 'text';
+}
+
+function roleAlias(role: ColorRole, name: string): string {
+  const prefix = role === 'background' ? 'bg' : role;
+  return `--pm-${prefix}${name}`;
+}
+
+function resolveRoleAliases(
+  properties: readonly CustomPropertyFact[],
+  rolesByProperty: ReadonlyMap<string, ReadonlySet<ColorRole>>,
+  directAssignments: ReadonlyMap<string, Assignment>,
+): Map<string, string> {
+  const propertiesByName = new Map(properties.map((property) => [property.name, property]));
+  const aliases = new Map<string, string>();
+
+  const resolve = (
+    name: string,
+    role: ColorRole,
+    stack: Set<string>,
+    pending: Map<string, string>,
+  ): string | null => {
+    const alias = roleAlias(role, name);
+    if (aliases.has(alias) || pending.has(alias)) return alias;
+    const directAssignment = directAssignments.get(alias);
+    if (directAssignment !== undefined) {
+      pending.set(alias, `var(${cssVariableFor(directAssignment)})`);
+      return alias;
+    }
+
+    const property = propertiesByName.get(name);
+    if (!property || property.references.length === 0 || stack.has(alias)) return null;
+    stack.add(alias);
+    const referencesResolved = property.references.every(
+      (reference) => resolve(reference, role, stack, pending) !== null,
+    );
+    stack.delete(alias);
+    if (!referencesResolved) return null;
+
+    const availableAliases = new Map([...aliases, ...pending]);
+    pending.set(alias, replaceRoleReferences(property.value, role, availableAliases));
+    return alias;
+  };
+
+  for (const property of properties) {
+    for (const role of consumerRoles(property)) {
+      const pending = new Map<string, string>();
+      if (resolve(property.name, role, new Set(), pending) === null) continue;
+      for (const [alias, value] of pending) aliases.set(alias, value);
+    }
+  }
+
+  return aliases;
+}
+
+function consumerRoles(property: CustomPropertyFact): ColorRole[] {
+  const roles = new Set<ColorRole>();
+  for (const use of property.uses) {
+    if (use.bucket !== 'other') roles.add(use.bucket);
+  }
+  return [...roles];
 }
 
 // Same opacity gate M2 gives authoredRemap/computedFallback: a translucent
@@ -135,26 +240,6 @@ function isStrongCanvasName(name: string): boolean {
   return STRONG_CANVAS_PATTERN.test(bareName);
 }
 
-function classifyUsage(usage: CustomPropertyFact['usage']): Classification | null {
-  const counts: readonly [UsageKey, number][] = [
-    ['background', usage.background],
-    ['text', usage.text],
-    ['border', usage.border],
-    ['other', usage.other],
-  ];
-  const max = Math.max(...counts.map(([, count]) => count));
-  if (max === 0) return null;
-
-  const winners = counts.filter(([, count]) => count === max);
-  if (winners.length !== 1) return null;
-
-  const winner = winners[0];
-  if (winner === undefined) return null;
-
-  const [key] = winner;
-  return key === 'other' ? null : USAGE_TOKEN_MAP[key];
-}
-
 // The single ground slot (elevation 0) goes to the top (by luminance)
 // candidate from the highest-priority non-empty tier: STRONG_CANVAS_PATTERN
 // names first (--page-bg over a --panel-bg/--card-bg sibling, even though all
@@ -167,6 +252,7 @@ function assignSurfaceLadder(
   surfaceGroup: readonly SurfaceCandidate[],
   mode: 'dark' | 'light',
   assignments: Map<string, Assignment>,
+  assignmentName: (property: ColoredProperty) => string = (property) => property.name,
 ): void {
   const canvasWinner = pickCanvasWinner(surfaceGroup, mode);
 
@@ -176,7 +262,7 @@ function assignSurfaceLadder(
 
   const ordered = canvasWinner ? [canvasWinner, ...remaining] : remaining;
   ordered.forEach(({ property }, index) => {
-    assignments.set(property.name, clampSurfaceLevel(index));
+    assignments.set(assignmentName(property), clampSurfaceLevel(index));
   });
 }
 
@@ -214,12 +300,53 @@ function cssVariableFor(assignment: Assignment): string {
     : `--pm-${tokenToCssVariableSuffix(assignment)}`;
 }
 
-function buildRule(assignments: Map<string, Assignment>): StyleRule {
+function buildAliasRule(aliases: ReadonlyMap<string, string>): StyleRule {
   return {
     conditions: [],
     selector: 'html',
-    declarations: new Map(
-      [...assignments].map(([name, assignment]) => [name, `var(${cssVariableFor(assignment)})`]),
-    ),
+    declarations: new Map(aliases),
   };
+}
+
+const CUSTOM_PROPERTY_PATTERN = /var\((\s*)(--[\w-]+)/gi;
+
+function buildUseRules(
+  properties: readonly CustomPropertyFact[],
+  aliases: ReadonlyMap<string, string>,
+): StyleRule[] {
+  const declarations = new Map<string, CustomPropertyUse>();
+  for (const property of properties) {
+    for (const use of property.uses) {
+      const key = `${JSON.stringify(use.conditions)}|${use.selector}|${use.property}|${use.value}`;
+      declarations.set(key, use);
+    }
+  }
+
+  const resolved = [...declarations.values()].flatMap((declaration) => {
+    if (declaration.bucket === 'other') return [];
+    const mappedValue = declaration.value.replace(
+      CUSTOM_PROPERTY_PATTERN,
+      (match, whitespace: string, name: string) => {
+        const alias = roleAlias(declaration.bucket as ColorRole, name);
+        if (!aliases.has(alias)) return match;
+        return `var(${whitespace}${alias}`;
+      },
+    );
+    return mappedValue === declaration.value
+      ? []
+      : [{ declaration, mappedValue, isSelectorHint: false }];
+  });
+
+  return groupSelectors(resolved);
+}
+
+function replaceRoleReferences(
+  value: string,
+  role: ColorRole,
+  aliases: ReadonlyMap<string, string>,
+): string {
+  return value.replace(CUSTOM_PROPERTY_PATTERN, (match, whitespace: string, name: string) => {
+    const alias = roleAlias(role, name);
+    return aliases.has(alias) ? `var(${whitespace}${alias}` : match;
+  });
 }
