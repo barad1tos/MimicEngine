@@ -4,7 +4,12 @@ import { contrastRatio } from '../color/contrast';
 import { oklchToRgba, rgbaToOklch } from '../color/oklch';
 import { parseCssColor, toHex, type HexColor, type RgbaColor } from '../color/parseColor';
 import { builtInThemes, type PaletteTheme } from '../themes';
-import { buildColorMapping, type ColorMapping, type SitePaletteEntry } from './colorMap';
+import {
+  buildColorMapping,
+  mappingKeyOf,
+  type ColorMapping,
+  type SitePaletteEntry,
+} from './colorMap';
 import { guardContrast, repairTextTarget, type GuardedMapping } from './contrastGuard';
 
 const catppuccinFrappe = builtInThemes[0];
@@ -26,6 +31,10 @@ function entry(hexValue: string, bucket: SitePaletteEntry['bucket'], weight = 1)
   return { hex: hex(hexValue), color: requireColor(hexValue), weight, bucket };
 }
 
+function mappingKey(hexValue: string, bucket: SitePaletteEntry['bucket']): string {
+  return mappingKeyOf(entry(hexValue, bucket));
+}
+
 // Every "one background entry, one text entry" test shares this exact shape:
 // only the two hex values under test differ.
 function buildSingleTextFixture(
@@ -35,8 +44,8 @@ function buildSingleTextFixture(
   return {
     palette: [entry('#111111', 'background', 10), entry('#222222', 'text', 5)],
     mapping: new Map([
-      [hex('#111111'), hex(backgroundHex)],
-      [hex('#222222'), hex(textTargetHex)],
+      [mappingKey('#111111', 'background'), hex(backgroundHex)],
+      [mappingKey('#222222', 'text'), hex(textTargetHex)],
     ]),
   };
 }
@@ -70,7 +79,7 @@ describe('guardContrast', () => {
     const { mapping: repaired, adjustments } = guardSingleTextFixture(canvas, failingTarget);
 
     expect(adjustments).toBe(1);
-    expect(repaired.get(hex('#222222'))).toBe(catppuccinFrappe.tokens.text);
+    expect(repaired.get(mappingKey('#222222', 'text'))).toBe(catppuccinFrappe.tokens.text);
   });
 
   it('performs a genuine stepped repair when the background leaves enough headroom', () => {
@@ -84,7 +93,7 @@ describe('guardContrast', () => {
 
     const { mapping: repaired, adjustments } = guardSingleTextFixture(backgroundHex, failingTarget);
 
-    const repairedTarget = repaired.get(hex('#222222'));
+    const repairedTarget = repaired.get(mappingKey('#222222', 'text'));
     expect(adjustments).toBe(1);
     expect(repairedTarget).toBe('#636363');
     expect(repairedTarget).not.toBe(failingTarget);
@@ -105,7 +114,7 @@ describe('guardContrast', () => {
 
     const { mapping: repaired, adjustments } = guardSingleTextFixture(backgroundHex, failingTarget);
 
-    const repairedTarget = repaired.get(hex('#222222'));
+    const repairedTarget = repaired.get(mappingKey('#222222', 'text'));
     expect(adjustments).toBe(1);
     expect(repairedTarget).toBe('#808080');
     expect(repairedTarget).not.toBe(catppuccinFrappe.tokens.text);
@@ -122,7 +131,7 @@ describe('guardContrast', () => {
 
     const { mapping: repaired } = guardSingleTextFixture(backgroundHex, failingTarget);
 
-    const repairedTarget = repaired.get(hex('#222222'));
+    const repairedTarget = repaired.get(mappingKey('#222222', 'text'));
     expect(repairedTarget).toBeDefined();
     const repairedL = rgbaToOklch(requireColor(repairedTarget ?? '')).l;
     expect(repairedL).toBeLessThan(0.75);
@@ -140,9 +149,9 @@ describe('guardContrast', () => {
       entry('#333333', 'border', 3),
     ];
     const mapping: ColorMapping = new Map([
-      [hex('#111111'), hex(canvas)],
-      [hex('#222222'), hex(passingTarget)],
-      [hex('#333333'), hex(catppuccinFrappe.tokens.border)],
+      [mappingKey('#111111', 'background'), hex(canvas)],
+      [mappingKey('#222222', 'text'), hex(passingTarget)],
+      [mappingKey('#333333', 'border'), hex(catppuccinFrappe.tokens.border)],
     ]);
 
     const { mapping: repaired, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
@@ -160,14 +169,31 @@ describe('guardContrast', () => {
       entry('#333333', 'border', 3),
     ];
     const mapping: ColorMapping = new Map([
-      [hex('#111111'), hex(canvas)],
-      [hex('#333333'), hex(borderTarget)],
+      [mappingKey('#111111', 'background'), hex(canvas)],
+      [mappingKey('#333333', 'border'), hex(borderTarget)],
     ]);
 
     const { mapping: repaired, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
 
     expect(adjustments).toBe(0);
-    expect(repaired.get(hex('#333333'))).toBe(borderTarget);
+    expect(repaired.get(mappingKey('#333333', 'border'))).toBe(borderTarget);
+  });
+
+  it('guards text independently when it shares its source hex with the background', () => {
+    const sharedHex = '#777777';
+    const palette = [entry(sharedHex, 'background', 10), entry(sharedHex, 'text', 5)];
+    const mapping = buildColorMapping(palette, catppuccinFrappe, {
+      preserveBrandColors: false,
+    });
+
+    const { mapping: guarded } = guardContrast(mapping, palette, catppuccinFrappe);
+    const background = guarded.get(mappingKey(sharedHex, 'background'));
+    const text = guarded.get(mappingKey(sharedHex, 'text'));
+
+    expect(background).toBeDefined();
+    expect(text).toBeDefined();
+    expect(text).not.toBe(background);
+    expect(contrastRatio(text ?? '', background ?? '')).toBeGreaterThanOrEqual(4.5);
   });
 
   it('repairs a brand-preserved text entry that fails contrast, stepping lightness only (hue preserved, finding 5)', () => {
@@ -181,12 +207,12 @@ describe('guardContrast', () => {
     const palette: SitePaletteEntry[] = [entry(brandTextHex, 'text', 1)];
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
-    expect(mapping.has(hex(brandTextHex))).toBe(false);
+    expect(mapping.has(mappingKey(brandTextHex, 'text'))).toBe(false);
 
     const { mapping: guarded, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
 
     expect(adjustments).toBe(1);
-    const repairedHex = guarded.get(hex(brandTextHex));
+    const repairedHex = guarded.get(mappingKey(brandTextHex, 'text'));
     expect(repairedHex).toBeDefined();
     expect(contrastRatio(repairedHex ?? '', canvas)).toBeGreaterThanOrEqual(4.5);
 
@@ -202,12 +228,12 @@ describe('guardContrast', () => {
     const palette: SitePaletteEntry[] = [entry(passingBrandTextHex, 'text', 1)];
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
-    expect(mapping.has(hex(passingBrandTextHex))).toBe(false);
+    expect(mapping.has(mappingKey(passingBrandTextHex, 'text'))).toBe(false);
 
     const { mapping: guarded, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
 
     expect(adjustments).toBe(0);
-    expect(guarded.has(hex(passingBrandTextHex))).toBe(false);
+    expect(guarded.has(mappingKey(passingBrandTextHex, 'text'))).toBe(false);
   });
 
   it('warns and falls back to the theme text token when the mapped target is unparseable', () => {
@@ -221,14 +247,14 @@ describe('guardContrast', () => {
       entry('#222222', 'text', 5),
     ];
     const mapping: ColorMapping = new Map([
-      [hex('#111111'), hex(canvas)],
-      [hex('#222222'), 'not-a-color' as HexColor],
+      [mappingKey('#111111', 'background'), hex(canvas)],
+      [mappingKey('#222222', 'text'), 'not-a-color' as HexColor],
     ]);
 
     const { mapping: repaired, adjustments } = guardContrast(mapping, palette, catppuccinFrappe);
 
     expect(adjustments).toBe(1);
-    expect(repaired.get(hex('#222222'))).toBe(catppuccinFrappe.tokens.text);
+    expect(repaired.get(mappingKey('#222222', 'text'))).toBe(catppuccinFrappe.tokens.text);
     expect(warnSpy).toHaveBeenCalledWith(
       '[Palette Mimicry] unparseable color in contrast repair',
       expect.objectContaining({ targetHex: 'not-a-color' }),

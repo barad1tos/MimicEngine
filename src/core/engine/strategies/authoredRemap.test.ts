@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { contrastRatio } from '../../color/contrast';
 import { oklchToRgba } from '../../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../../color/parseColor';
 import type { SiteSettings } from '../../storage/settingsStore';
@@ -106,6 +107,30 @@ describe('authoredRemap strategy', () => {
         border-color: #626880 !important;
       }"
     `);
+  });
+
+  it('maps one source hex independently when a surface also uses it for text', () => {
+    const pageFacts = facts([
+      decl('.card', 'background-color', '#777777', 'background'),
+      decl('.card', 'color', '#777777', 'text'),
+    ]);
+
+    const { css } = authoredRemap.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      pageFacts,
+      anyPlan(),
+    );
+    const background = /background-color: (#[\da-f]{6})/.exec(css)?.[1];
+    const foreground = /(?<!background-)color: (#[\da-f]{6})/.exec(css)?.[1];
+
+    expect(background).toBeDefined();
+    expect(foreground).toBeDefined();
+    expect(foreground).not.toBe(background);
+    if (background === undefined || foreground === undefined) {
+      throw new Error('expected mapped surface and text colors');
+    }
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('marks every emitted declaration !important', () => {

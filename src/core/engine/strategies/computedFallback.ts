@@ -110,12 +110,11 @@ function collectAuthoredHexes(facts: PageFacts): Set<HexColor> {
 }
 
 // Coverage's numerator: the count of DISTINCT RAW HEXES represented in
-// `mapping` — not the count of composite (hex@elevation) keys. Elevation
-// splits one color into multiple emitted RULES; it does not discover more
-// colors, so two same-hex backgrounds mapped at different elevations must
-// still count as ONE mapped color against the hex-deduped `discovered`
-// denominator below — otherwise mapped can exceed discovered and the ratio
-// escapes [0,1] (e.g. one white sampled at two elevations reporting "2/1").
+// `mapping` — not the count of role/elevation keys. Roles and elevations
+// split one color into multiple emitted RULES; they do not discover more
+// colors, so same-hex entries must still count as ONE mapped color against
+// the hex-deduped `discovered` denominator below — otherwise mapped can
+// exceed discovered and the ratio escapes [0,1].
 function mappedHexCount(palette: readonly SitePaletteEntry[], mapping: ColorMapping): number {
   const hexes = new Set<HexColor>();
 
@@ -208,12 +207,12 @@ type ResolvedNovelDeclaration = {
   isSelectorHint: false;
 };
 
-// The ColorMapping identity a raw census declaration occupies — same
-// composite hex@elevation rule mappingKeyOf documents, just applied to a
+// The ColorMapping identity a raw census declaration occupies, applied to a
 // NovelDeclaration's own parsed color instead of a SitePaletteEntry.
 function declarationMappingKey(declaration: NovelDeclaration): string {
   return mappingKeyOf({
     hex: toHex(declaration.color),
+    bucket: declaration.bucket,
     ...(declaration.elevation === undefined ? {} : { elevation: declaration.elevation }),
   });
 }

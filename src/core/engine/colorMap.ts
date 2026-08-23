@@ -9,10 +9,9 @@ export type SitePaletteEntry = {
   hex: HexColor;
   color: RgbaColor;
   weight: number;
-  // Dominant declaration context this entry was extracted from — decides
-  // which colorMap assignment path (background ladder, text, border, other)
-  // it flows into. Not "how it's used" in a CSS sense; a coarse win-by-count
-  // bucket over the possible origins (see dominantBucket).
+  // Declaration context is part of the site's color identity: one source hex
+  // can legitimately be both a surface and text, and those uses must map to
+  // different theme tokens.
   bucket: AuthoredColorDeclaration['bucket'];
   // Background-bucket only: stacking depth from signatureCensus's
   // elevationOf. Two background entries sharing a hex at different
@@ -21,19 +20,20 @@ export type SitePaletteEntry = {
   elevation?: number;
 };
 
-// Site identity (hex, or composite hex+elevation for a layered background —
-// see mappingKeyOf) -> target CSS value. Values are theme token HEX
+// Site identity (hex + declaration role + optional background elevation) ->
+// target CSS value. Values are theme token HEX
 // literals, never `var(--pm-token)`: the contrast guard needs literal pairs
 // to verify against, not indirections.
 export type ColorMapping = Map<string, HexColor>;
 
-// The identity a SitePaletteEntry occupies in a ColorMapping: entries with a
-// numeric elevation (background-bucket only) get a composite `hex@elevation`
-// key so two same-hex backgrounds at different stacking depths land on
-// different ladder rungs instead of colliding; every other entry degrades to
-// its plain hex, identical to the pre-elevation behavior.
-export function mappingKeyOf(entry: Pick<SitePaletteEntry, 'hex' | 'elevation'>): string {
-  return entry.elevation === undefined ? entry.hex : `${entry.hex}@${entry.elevation.toString()}`;
+// The identity a SitePaletteEntry occupies in a ColorMapping. Bucket keeps a
+// shared source hex from collapsing across CSS roles; numeric elevation keeps
+// same-hex background surfaces on their own ladder rungs.
+export function mappingKeyOf(
+  entry: Pick<SitePaletteEntry, 'hex' | 'bucket' | 'elevation'>,
+): string {
+  const roleKey = `${entry.hex}|${entry.bucket}`;
+  return entry.elevation === undefined ? roleKey : `${roleKey}@${entry.elevation.toString()}`;
 }
 
 // A theme token's own configured CSS value, converted to HexColor. Every
@@ -50,9 +50,6 @@ export function themeTokenHex(theme: PaletteTheme, token: ThemeTokenName): HexCo
   return toHex(color);
 }
 
-type PaletteBucket = AuthoredColorDeclaration['bucket'];
-
-const BUCKET_PRIORITY: readonly PaletteBucket[] = ['background', 'text', 'border', 'other'];
 const ACCENT_TOKEN_ORDER: readonly ThemeTokenName[] = [
   'accent',
   'link',
@@ -74,10 +71,10 @@ function comparePaletteEntries(a: SitePaletteEntry, b: SitePaletteEntry): number
 
 type PaletteAccumulator = {
   hex: HexColor;
+  bucket: AuthoredColorDeclaration['bucket'];
   elevation?: number;
   color: RgbaColor;
   weight: number;
-  bucketCounts: Record<PaletteBucket, number>;
 };
 
 function isCustomPropertyDeclaration(declaration: AuthoredColorDeclaration): boolean {
@@ -106,38 +103,28 @@ function accumulatePaletteEntries(
 
     const hex = toHex(declaration.color);
     const elevation = backgroundElevationOf(declaration);
-    // Every declaration's accumulator identity is its plain hex, EXCEPT a
-    // background-bucket declaration carrying a numeric elevation: that one
-    // dedupes by mappingKeyOf's composite `hex@elevation` instead, so it
-    // never merges with — and can never be dominant-bucket-tied against — a
-    // non-background declaration of the same hex. A background declaration
-    // without elevation (every declaration collectPageFacts itself produces,
-    // today) degrades to the plain hex, identical to pre-elevation behavior.
-    const key = mappingKeyOf({ hex, ...(elevation === undefined ? {} : { elevation }) });
+    const key = mappingKeyOf({
+      hex,
+      bucket: declaration.bucket,
+      ...(elevation === undefined ? {} : { elevation }),
+    });
 
     const accumulator = accumulators.get(key) ?? {
       hex,
+      bucket: declaration.bucket,
       ...(elevation === undefined ? {} : { elevation }),
       color: declaration.color,
       weight: 0,
-      bucketCounts: { background: 0, text: 0, border: 0, other: 0 },
     };
     accumulator.weight += 1;
-    accumulator.bucketCounts[declaration.bucket] += 1;
     accumulators.set(key, accumulator);
   }
 }
 
-function dominantBucket(bucketCounts: Record<PaletteBucket, number>): PaletteBucket {
-  const max = Math.max(...BUCKET_PRIORITY.map((bucket) => bucketCounts[bucket]));
-  return BUCKET_PRIORITY.find((bucket) => bucketCounts[bucket] === max) ?? 'other';
-}
-
-// Dedupe by hex, weight = total occurrence count across both source arrays,
-// dominant bucket wins ties by background > text > border > other, sorted by
-// weight desc then hex asc (codepoint compare). Custom-property declarations
-// (`property` starting with `--`) belong to the variableRemap path, not the
-// literal palette.
+// Dedupe by role-aware mapping identity, weight = occurrence count across both
+// source arrays, sorted by weight desc then hex asc (codepoint compare).
+// Custom-property declarations (`property` starting with `--`) belong to the
+// variableRemap path, not the literal palette.
 export function extractSitePalette(facts: PageFacts): SitePaletteEntry[] {
   const accumulators = new Map<string, PaletteAccumulator>();
   accumulatePaletteEntries(facts.authoredRules, accumulators);
@@ -147,7 +134,7 @@ export function extractSitePalette(facts: PageFacts): SitePaletteEntry[] {
     hex: accumulator.hex,
     color: accumulator.color,
     weight: accumulator.weight,
-    bucket: dominantBucket(accumulator.bucketCounts),
+    bucket: accumulator.bucket,
     ...(accumulator.elevation === undefined ? {} : { elevation: accumulator.elevation }),
   }));
 
@@ -205,7 +192,7 @@ export function mapAccent(
 // entry is either an accent or a bucket member, never both. Keyed via
 // mappingKeyOf — an accent-classified background entry can still carry an
 // elevation, and buildColorMapping's final assembly always looks this map
-// up by mappingKeyOf(entry), never the plain hex.
+// up by mappingKeyOf(entry), never a role-blind hex.
 function partitionAccents(
   palette: readonly SitePaletteEntry[],
   theme: PaletteTheme,
@@ -258,8 +245,8 @@ type LadderResult = {
 //   dark mode, descending for light) among themselves, ties broken by hex
 //   asc, walked onto elevation levels 0, 1, 2, 3, 3... in order.
 // Both branches target the same derived hex space and are assigned via
-// mappingKeyOf, so a census entry's composite `hex@elevation` key never
-// collides with an elevation-less entry's plain hex key.
+// mappingKeyOf, so a census entry's elevated background key never collides
+// with an elevation-less background key or another declaration role.
 function assignLadder(entries: readonly SitePaletteEntry[], theme: PaletteTheme): LadderResult {
   const direction = theme.mode === 'dark' ? 1 : -1;
   const assignments = new Map<string, HexColor>();
@@ -298,13 +285,13 @@ function assignLadder(entries: readonly SitePaletteEntry[], theme: PaletteTheme)
 function assignTextBucket(
   entries: readonly SitePaletteEntry[],
   theme: PaletteTheme,
-): Map<HexColor, HexColor> {
+): Map<string, HexColor> {
   const sorted = [...entries].sort(comparePaletteEntries);
-  const assignments = new Map<HexColor, HexColor>();
+  const assignments = new Map<string, HexColor>();
   const textHex = themeTokenHex(theme, 'text');
   const textMutedHex = themeTokenHex(theme, 'textMuted');
   sorted.forEach((entry, index) => {
-    assignments.set(entry.hex, index === 0 ? textHex : textMutedHex);
+    assignments.set(mappingKeyOf(entry), index === 0 ? textHex : textMutedHex);
   });
   return assignments;
 }
@@ -312,11 +299,11 @@ function assignTextBucket(
 function assignBorderBucket(
   entries: readonly SitePaletteEntry[],
   theme: PaletteTheme,
-): Map<HexColor, HexColor> {
-  const assignments = new Map<HexColor, HexColor>();
+): Map<string, HexColor> {
+  const assignments = new Map<string, HexColor>();
   const borderHex = themeTokenHex(theme, 'border');
   for (const entry of entries) {
-    assignments.set(entry.hex, borderHex);
+    assignments.set(mappingKeyOf(entry), borderHex);
   }
   return assignments;
 }
@@ -355,14 +342,14 @@ function assignOtherBucket(
   entries: readonly SitePaletteEntry[],
   theme: PaletteTheme,
   ladder: LadderResult,
-): Map<HexColor, HexColor> {
-  const assignments = new Map<HexColor, HexColor>();
+): Map<string, HexColor> {
+  const assignments = new Map<string, HexColor>();
   if (entries.length === 0) return assignments;
 
   if (ladder.assignedLevels.length === 0) {
     const surface1Hex = themeTokenHex(theme, 'surface1');
     for (const entry of entries) {
-      assignments.set(entry.hex, surface1Hex);
+      assignments.set(mappingKeyOf(entry), surface1Hex);
     }
     return assignments;
   }
@@ -375,7 +362,7 @@ function assignOtherBucket(
   for (const entry of entries) {
     const entryL = rgbaToOklch(entry.color).l;
     const nearestLevel = nearestByLightness(levelLightness, entryL);
-    assignments.set(entry.hex, elevationBackgroundHex(theme, nearestLevel));
+    assignments.set(mappingKeyOf(entry), elevationBackgroundHex(theme, nearestLevel));
   }
 
   return assignments;
@@ -405,10 +392,8 @@ export function buildColorMapping(
     ...assignOtherBucket(otherEntries, theme, ladder),
   ]);
 
-  // Insert in palette order (weight desc, hex asc) so identical inputs
-  // always produce the same Map iteration order. Keyed via mappingKeyOf
-  // throughout: it degrades to the plain hex for every entry outside the
-  // elevation-bearing background ladder, so this is a no-op for those.
+  // Insert in palette order (weight desc, hex asc) so identical inputs always
+  // produce the same Map iteration order.
   const mapping: ColorMapping = new Map();
   for (const entry of palette) {
     const target = targetsByKey.get(mappingKeyOf(entry));

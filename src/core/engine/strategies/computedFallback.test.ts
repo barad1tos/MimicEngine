@@ -871,6 +871,34 @@ describe('computedFallback strategy', () => {
     expectReadablePair(block);
   });
 
+  it('maps one sampled hex independently when a signature uses it for surface and text', () => {
+    document.head.innerHTML = `
+      <style>
+        .card { background-color: rgb(119, 119, 119); color: rgb(119, 119, 119); }
+      </style>
+    `;
+    document.body.innerHTML = '<div class="card">text</div>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const block = /:where\(div\.card\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    expect(block).toContain(
+      'background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;',
+    );
+    const text = /(?<!background-)color: (#[\da-f]{6})/.exec(block)?.[1];
+    expect(text).toBeDefined();
+    if (text === undefined) throw new Error('expected a mapped text color');
+    expect(contrastRatio(text, elevationBackgroundHex(catppuccinFrappe, 0))).toBeGreaterThanOrEqual(
+      4.5,
+    );
+  });
+
   it("leaves a readable pair's text color identical to the plain text-bucket mapping", () => {
     // .card maps to theme surface+text which already clears 4.5:1 — no
     // override should fire. Proven via a control comparison: the SAME text

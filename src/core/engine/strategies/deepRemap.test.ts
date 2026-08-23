@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { contrastRatio } from '../../color/contrast';
 import { oklchToRgba } from '../../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../../color/parseColor';
 import type { SiteSettings } from '../../storage/settingsStore';
@@ -149,6 +150,42 @@ describe('deepRemap strategy', () => {
     const { css } = deepRemap.produce(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
 
     expect(css).toBe('');
+  });
+
+  it('maps one inline source hex independently when it is both surface and text', () => {
+    const pageFacts = facts(
+      [],
+      [
+        {
+          selector: 'div.card',
+          property: 'background-color',
+          value: '#777777',
+          color: requireColor('#777777'),
+          bucket: 'background',
+          conditions: [],
+        },
+        {
+          selector: 'div.card',
+          property: 'color',
+          value: '#777777',
+          color: requireColor('#777777'),
+          bucket: 'text',
+          conditions: [],
+        },
+      ],
+    );
+
+    const { css } = deepRemap.produce(catppuccinFrappe, anySiteSettings(), pageFacts, anyPlan());
+    const background = /background-color: (#[\da-f]{6})/.exec(css)?.[1];
+    const foreground = /(?<!background-)color: (#[\da-f]{6})/.exec(css)?.[1];
+
+    expect(background).toBeDefined();
+    expect(foreground).toBeDefined();
+    expect(foreground).not.toBe(background);
+    if (background === undefined || foreground === undefined) {
+      throw new Error('expected mapped inline surface and text colors');
+    }
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('reports coverage over the union palette (svg + inline-style) vs the guarded mapping', () => {

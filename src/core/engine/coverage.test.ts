@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { toHex, type HexColor } from '../color/parseColor';
-import type { ColorMapping, SitePaletteEntry } from './colorMap';
+import { mappingKeyOf, type ColorMapping, type SitePaletteEntry } from './colorMap';
 import { aggregateCoverage, computeCoverage, coverageFromCounts } from './coverage';
 
 function hex(r: number, g: number, b: number): HexColor {
   return toHex({ r, g, b, a: 1 });
+}
+
+function mappingKey(r: number, g: number, b: number, bucket: SitePaletteEntry['bucket']): string {
+  return mappingKeyOf({ hex: hex(r, g, b), bucket });
 }
 
 describe('computeCoverage', () => {
@@ -24,8 +28,8 @@ describe('computeCoverage', () => {
       { hex: hex(0, 0, 255), color: { r: 0, g: 0, b: 255, a: 1 }, weight: 1, bucket: 'text' },
     ];
     const mapping: ColorMapping = new Map([
-      [hex(255, 0, 0), hex(255, 255, 255)],
-      [hex(0, 255, 0), hex(0, 0, 0)],
+      [mappingKey(255, 0, 0, 'text'), hex(255, 255, 255)],
+      [mappingKey(0, 255, 0, 'text'), hex(0, 0, 0)],
     ]);
 
     const result = computeCoverage(palette, mapping);
@@ -39,13 +43,33 @@ describe('computeCoverage', () => {
       { hex: hex(0, 255, 0), color: { r: 0, g: 255, b: 0, a: 1 }, weight: 1, bucket: 'text' },
     ];
     const mapping: ColorMapping = new Map([
-      [hex(255, 0, 0), hex(255, 255, 255)],
-      [hex(0, 255, 0), hex(0, 0, 0)],
+      [mappingKey(255, 0, 0, 'text'), hex(255, 255, 255)],
+      [mappingKey(0, 255, 0, 'text'), hex(0, 0, 0)],
     ]);
 
     const result = computeCoverage(palette, mapping);
 
     expect(result).toEqual({ discovered: 2, mapped: 2, ratio: 1 });
+  });
+
+  it('counts one raw color once when multiple roles map it independently', () => {
+    const background: SitePaletteEntry = {
+      hex: hex(119, 119, 119),
+      color: { r: 119, g: 119, b: 119, a: 1 },
+      weight: 1,
+      bucket: 'background',
+    };
+    const text: SitePaletteEntry = { ...background, bucket: 'text' };
+    const mapping: ColorMapping = new Map([
+      [mappingKeyOf(background), hex(30, 30, 30)],
+      [mappingKeyOf(text), hex(240, 240, 240)],
+    ]);
+
+    expect(computeCoverage([background, text], mapping)).toEqual({
+      discovered: 1,
+      mapped: 1,
+      ratio: 1,
+    });
   });
 });
 

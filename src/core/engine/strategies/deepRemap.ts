@@ -1,5 +1,10 @@
 import { isOpaque, toHex } from '../../color/parseColor';
-import { buildColorMapping, extractSitePalette, type ColorMapping } from '../colorMap';
+import {
+  buildColorMapping,
+  extractSitePalette,
+  mappingKeyOf,
+  type ColorMapping,
+} from '../colorMap';
 import { guardContrast } from '../contrastGuard';
 import { computeCoverage } from '../coverage';
 import type { AuthoredColorDeclaration, PageFacts, SvgPresentationColor } from '../pageFacts';
@@ -96,7 +101,7 @@ function svgAttributeSelector(entry: SvgPresentationColor): string {
 function mappedSvgValue(entry: SvgPresentationColor, mapping: ColorMapping): string | null {
   if (!entry.color) return null;
   if (!isOpaque(entry.color)) return null;
-  return mapping.get(toHex(entry.color)) ?? null;
+  return mapping.get(mappingKeyOf({ hex: toHex(entry.color), bucket: 'other' })) ?? null;
 }
 
 // SVG entries carry no document position of their own, so their selectors
@@ -136,7 +141,9 @@ function mappedInlineValue(
   if (declaration.color === null) return null;
   if (declaration.property.startsWith('--')) return null;
   if (!isOpaque(declaration.color)) return null;
-  return mapping.get(toHex(declaration.color)) ?? null;
+  return (
+    mapping.get(mappingKeyOf({ hex: toHex(declaration.color), bucket: declaration.bucket })) ?? null
+  );
 }
 
 // Same hinted-rule emission pattern computedFallback uses: inlineStyleColors

@@ -1,5 +1,10 @@
 import { isOpaque, toHex } from '../../color/parseColor';
-import { buildColorMapping, extractSitePalette, type ColorMapping } from '../colorMap';
+import {
+  buildColorMapping,
+  extractSitePalette,
+  mappingKeyOf,
+  type ColorMapping,
+} from '../colorMap';
 import { guardContrast } from '../contrastGuard';
 import { computeCoverage } from '../coverage';
 import type { AuthoredColorDeclaration } from '../pageFacts';
@@ -33,7 +38,9 @@ function mappedValueFor(
   // that an opaque occurrence of the same RGB created — that would discard
   // the alpha and turn e.g. a 50% modal scrim opaque.
   if (!isOpaque(declaration.color)) return null;
-  return mapping.get(toHex(declaration.color)) ?? null;
+  return (
+    mapping.get(mappingKeyOf({ hex: toHex(declaration.color), bucket: declaration.bucket })) ?? null
+  );
 }
 
 // Groups mappable declarations by (conditions, selector), in first-appearance

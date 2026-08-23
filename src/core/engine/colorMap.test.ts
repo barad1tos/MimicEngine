@@ -7,6 +7,7 @@ import {
   buildColorMapping,
   extractSitePalette,
   mapAccent,
+  mappingKeyOf,
   type SitePaletteEntry,
 } from './colorMap';
 import { elevationBackgroundHex } from './elevationScale';
@@ -73,8 +74,12 @@ function entry(
   };
 }
 
+function mappingKey(value: string, bucket: PaletteBucket, elevation?: number): string {
+  return mappingKeyOf(entry(value, bucket, 1, elevation));
+}
+
 describe('extractSitePalette', () => {
-  it('dedupes by hex; weight = occurrence count across both source arrays', () => {
+  it('keeps the same source hex separate when background and text use different roles', () => {
     const facts = makeFacts(
       [decl('#112233', 'background'), decl('#112233', 'background')],
       [decl('#112233', 'text')],
@@ -82,40 +87,19 @@ describe('extractSitePalette', () => {
 
     const palette = extractSitePalette(facts);
 
+    expect(palette).toEqual([
+      expect.objectContaining({ hex: '#112233', bucket: 'background', weight: 2 }),
+      expect.objectContaining({ hex: '#112233', bucket: 'text', weight: 1 }),
+    ]);
+  });
+
+  it('dedupes repeated uses within the same role', () => {
+    const facts = makeFacts([decl('#a1a1a1', 'text'), decl('#a1a1a1', 'text')]);
+
+    const palette = extractSitePalette(facts);
+
     expect(palette).toHaveLength(1);
-    expect(palette[0]).toMatchObject({ hex: '#112233', weight: 3 });
-  });
-
-  it('breaks dominant-bucket ties using background > text > border > other', () => {
-    const facts = makeFacts([
-      decl('#445566', 'text'),
-      decl('#445566', 'border'),
-      decl('#445566', 'background'),
-    ]);
-
-    const [winner] = extractSitePalette(facts);
-
-    expect(winner?.bucket).toBe('background');
-  });
-
-  it('breaks a border/other tie in favor of border', () => {
-    const facts = makeFacts([decl('#778899', 'other'), decl('#778899', 'border')]);
-
-    const [winner] = extractSitePalette(facts);
-
-    expect(winner?.bucket).toBe('border');
-  });
-
-  it('picks the bucket with the strict majority even without a tie', () => {
-    const facts = makeFacts([
-      decl('#a1a1a1', 'text'),
-      decl('#a1a1a1', 'text'),
-      decl('#a1a1a1', 'border'),
-    ]);
-
-    const [winner] = extractSitePalette(facts);
-
-    expect(winner?.bucket).toBe('text');
+    expect(palette[0]).toMatchObject({ hex: '#a1a1a1', bucket: 'text', weight: 2 });
   });
 
   it('sorts by weight desc, then hex asc (codepoint order)', () => {
@@ -193,11 +177,21 @@ describe('buildColorMapping — background ladder', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(hex('#101010'))).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
-    expect(mapping.get(hex('#404040'))).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
-    expect(mapping.get(hex('#808080'))).toBe(elevationBackgroundHex(catppuccinFrappe, 2));
-    expect(mapping.get(hex('#c0c0c0'))).toBe(elevationBackgroundHex(catppuccinFrappe, 3));
-    expect(mapping.get(hex('#f0f0f0'))).toBe(elevationBackgroundHex(catppuccinFrappe, 3));
+    expect(mapping.get(mappingKey('#101010', 'background'))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 0),
+    );
+    expect(mapping.get(mappingKey('#404040', 'background'))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 1),
+    );
+    expect(mapping.get(mappingKey('#808080', 'background'))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 2),
+    );
+    expect(mapping.get(mappingKey('#c0c0c0', 'background'))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 3),
+    );
+    expect(mapping.get(mappingKey('#f0f0f0', 'background'))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 3),
+    );
   });
 
   it('walks the ladder descending by l in light mode', () => {
@@ -209,8 +203,12 @@ describe('buildColorMapping — background ladder', () => {
       { preserveBrandColors: false },
     );
 
-    expect(mapping.get(hex('#f0f0f0'))).toBe(elevationBackgroundHex(lightTheme, 0));
-    expect(mapping.get(hex('#101010'))).toBe(elevationBackgroundHex(lightTheme, 1));
+    expect(mapping.get(mappingKey('#f0f0f0', 'background'))).toBe(
+      elevationBackgroundHex(lightTheme, 0),
+    );
+    expect(mapping.get(mappingKey('#101010', 'background'))).toBe(
+      elevationBackgroundHex(lightTheme, 1),
+    );
   });
 
   it('breaks equal-l ties by ascending hex', () => {
@@ -225,8 +223,12 @@ describe('buildColorMapping — background ladder', () => {
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: false });
 
-    expect(mapping.get(hex('#aaaaaa'))).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
-    expect(mapping.get(hex('#bbbbbb'))).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
+    expect(mapping.get(mappingKey('#aaaaaa', 'background'))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 0),
+    );
+    expect(mapping.get(mappingKey('#bbbbbb', 'background'))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 1),
+    );
   });
 });
 
@@ -236,8 +238,12 @@ describe('buildColorMapping — elevation-aware background ladder', () => {
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
 
-    expect(mapping.get('#ffffff@0')).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
-    expect(mapping.get('#ffffff@1')).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
+    expect(mapping.get(mappingKey('#ffffff', 'background', 0))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 0),
+    );
+    expect(mapping.get(mappingKey('#ffffff', 'background', 1))).toBe(
+      elevationBackgroundHex(catppuccinFrappe, 1),
+    );
   });
 
   it('elevation IS the level directly: entries sharing an elevation collapse onto the same rung regardless of luminance or raw hex', () => {
@@ -254,22 +260,25 @@ describe('buildColorMapping — elevation-aware background ladder', () => {
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
 
-    expect(mapping.get('#f4f2ee@0')).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
-    expect(mapping.get('#ffffff@0')).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
-    expect(mapping.get('#f4f2ee@0')).toBe(mapping.get('#ffffff@0'));
-    expect(mapping.get('#ffffff@1')).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
-    expect(mapping.get('#ffffff@1')).not.toBe(mapping.get('#ffffff@0'));
+    const groundKey = mappingKey('#ffffff', 'background', 0);
+    const darkerGroundKey = mappingKey('#f4f2ee', 'background', 0);
+    const raisedKey = mappingKey('#ffffff', 'background', 1);
+    expect(mapping.get(darkerGroundKey)).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
+    expect(mapping.get(groundKey)).toBe(elevationBackgroundHex(catppuccinFrappe, 0));
+    expect(mapping.get(darkerGroundKey)).toBe(mapping.get(groundKey));
+    expect(mapping.get(raisedKey)).toBe(elevationBackgroundHex(catppuccinFrappe, 1));
+    expect(mapping.get(raisedKey)).not.toBe(mapping.get(groundKey));
   });
 
-  it('entries without elevation keep plain-hex keys end to end', () => {
+  it('entries without elevation keep role-aware keys end to end', () => {
     const palette = [entry('#101010', 'background', 3)];
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: true });
 
-    expect(mapping.has(hex('#101010'))).toBe(true);
+    expect(mapping.has(mappingKey('#101010', 'background'))).toBe(true);
   });
 
-  it('an accent-classified background entry that also carries elevation is present under its composite key (regression: partitionAccents keyed its map by plain hex, not mappingKeyOf, silently dropping the entry)', () => {
+  it('keeps an elevated accent background under its full mapping identity', () => {
     // Confirms this fixture actually exercises the accent-partition path
     // (chroma above ACCENT_CHROMA_THRESHOLD), not the background ladder.
     expect(oklchOf('#dd2222').c).toBeGreaterThan(0.09);
@@ -280,7 +289,9 @@ describe('buildColorMapping — elevation-aware background ladder', () => {
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: false });
 
     expect(mapping.size).toBe(1);
-    expect(mapping.get('#dd2222@1')).toBe(mapAccent(accentEntry, catppuccinFrappe, false));
+    expect(mapping.get(mappingKey('#dd2222', 'background', 1))).toBe(
+      mapAccent(accentEntry, catppuccinFrappe, false),
+    );
   });
 });
 
@@ -292,8 +303,8 @@ describe('buildColorMapping — text bucket', () => {
       { preserveBrandColors: false },
     );
 
-    expect(mapping.get(hex('#cccccc'))).toBe(catppuccinFrappe.tokens.text);
-    expect(mapping.get(hex('#eeeeee'))).toBe(catppuccinFrappe.tokens.textMuted);
+    expect(mapping.get(mappingKey('#cccccc', 'text'))).toBe(catppuccinFrappe.tokens.text);
+    expect(mapping.get(mappingKey('#eeeeee', 'text'))).toBe(catppuccinFrappe.tokens.textMuted);
   });
 });
 
@@ -305,8 +316,8 @@ describe('buildColorMapping — border bucket', () => {
       { preserveBrandColors: false },
     );
 
-    expect(mapping.get(hex('#333333'))).toBe(catppuccinFrappe.tokens.border);
-    expect(mapping.get(hex('#444444'))).toBe(catppuccinFrappe.tokens.border);
+    expect(mapping.get(mappingKey('#333333', 'border'))).toBe(catppuccinFrappe.tokens.border);
+    expect(mapping.get(mappingKey('#444444', 'border'))).toBe(catppuccinFrappe.tokens.border);
   });
 });
 
@@ -321,7 +332,7 @@ describe('buildColorMapping — accents', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(hex(successHex))).toBe(catppuccinFrappe.tokens.success);
+    expect(mapping.get(mappingKey(successHex, 'other'))).toBe(catppuccinFrappe.tokens.success);
   });
 
   it('breaks hue-distance ties using the fixed accent, link, success, warning, danger order', () => {
@@ -335,7 +346,7 @@ describe('buildColorMapping — accents', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(hex(accentHex))).toBe(catppuccinFrappe.tokens.accent);
+    expect(mapping.get(mappingKey(accentHex, 'other'))).toBe(catppuccinFrappe.tokens.accent);
   });
 
   it('still maps accents in the 0.09 < c <= 0.14 band when preserveBrandColors is true', () => {
@@ -348,7 +359,7 @@ describe('buildColorMapping — accents', () => {
       preserveBrandColors: true,
     });
 
-    expect(mapping.has(midChromaHex)).toBe(true);
+    expect(mapping.has(mappingKey(midChromaHex, 'other'))).toBe(true);
   });
 
   it('excludes accents above the brand-preserve threshold (c > 0.14) when preserveBrandColors is true', () => {
@@ -363,8 +374,8 @@ describe('buildColorMapping — accents', () => {
       preserveBrandColors: false,
     });
 
-    expect(preserved.has(highChromaHex)).toBe(false);
-    expect(notPreserved.has(highChromaHex)).toBe(true);
+    expect(preserved.has(mappingKey(highChromaHex, 'other'))).toBe(false);
+    expect(notPreserved.has(mappingKey(highChromaHex, 'other'))).toBe(true);
   });
 });
 
@@ -377,9 +388,10 @@ describe('buildColorMapping — high-chroma text-bucket entries (finding 7)', ()
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(hex(successHex))).toBe(catppuccinFrappe.tokens.success);
-    expect(mapping.get(hex(successHex))).not.toBe(catppuccinFrappe.tokens.text);
-    expect(mapping.get(hex(successHex))).not.toBe(catppuccinFrappe.tokens.textMuted);
+    const successKey = mappingKey(successHex, 'text');
+    expect(mapping.get(successKey)).toBe(catppuccinFrappe.tokens.success);
+    expect(mapping.get(successKey)).not.toBe(catppuccinFrappe.tokens.text);
+    expect(mapping.get(successKey)).not.toBe(catppuccinFrappe.tokens.textMuted);
   });
 
   it('excludes a high-chroma (>0.14) text-bucket entry from the map when preserveBrandColors is set — guardContrast, not colorMap, owns its legibility repair (finding 5)', () => {
@@ -389,7 +401,7 @@ describe('buildColorMapping — high-chroma text-bucket entries (finding 7)', ()
       preserveBrandColors: true,
     });
 
-    expect(mapping.has(hex(brandTextHex))).toBe(false);
+    expect(mapping.has(mappingKey(brandTextHex, 'text'))).toBe(false);
   });
 });
 
@@ -406,7 +418,7 @@ describe('buildColorMapping — other bucket', () => {
 
     const mapping = buildColorMapping(palette, catppuccinFrappe, { preserveBrandColors: false });
 
-    expect(mapping.get(nearCanvasHex)).toBe(catppuccinFrappe.tokens.canvas);
+    expect(mapping.get(mappingKey(nearCanvasHex, 'other'))).toBe(catppuccinFrappe.tokens.canvas);
   });
 
   it('falls back to surface1 when the ladder assigned nothing (no background entries)', () => {
@@ -414,7 +426,7 @@ describe('buildColorMapping — other bucket', () => {
       preserveBrandColors: false,
     });
 
-    expect(mapping.get(hex('#909090'))).toBe(catppuccinFrappe.tokens.surface1);
+    expect(mapping.get(mappingKey('#909090', 'other'))).toBe(catppuccinFrappe.tokens.surface1);
   });
 });
 
@@ -439,16 +451,16 @@ describe('buildColorMapping — golden palette', () => {
 
     expect(JSON.stringify(Object.fromEntries(mapping), null, 2)).toMatchInlineSnapshot(`
       "{
-        "#101014": "#303446",
-        "#1c1c22": "#414559",
-        "#26262e": "#51576d",
-        "#f5f5f7": "#c6d0f5",
-        "#c9c9d1": "#a5adce",
-        "#3a3a44": "#626880",
-        "#7a7a82": "#51576d",
-        "#4287f5": "#8caaee",
-        "#27ae60": "#a6d189",
-        "#c0392b": "#e78284"
+        "#101014|background": "#303446",
+        "#1c1c22|background": "#414559",
+        "#26262e|background": "#51576d",
+        "#f5f5f7|text": "#c6d0f5",
+        "#c9c9d1|text": "#a5adce",
+        "#3a3a44|border": "#626880",
+        "#7a7a82|other": "#51576d",
+        "#4287f5|other": "#8caaee",
+        "#27ae60|other": "#a6d189",
+        "#c0392b|other": "#e78284"
       }"
     `);
   });
