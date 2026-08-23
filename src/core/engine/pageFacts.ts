@@ -7,7 +7,17 @@ export type CustomPropertyFact = {
   name: string;
   value: string;
   color: RgbaColor | null;
+  references: string[];
   usage: { background: number; text: number; border: number; other: number };
+  uses: CustomPropertyUse[];
+};
+
+export type CustomPropertyUse = {
+  selector: string;
+  property: string;
+  value: string;
+  bucket: AuthoredColorDeclaration['bucket'];
+  conditions: string[];
 };
 
 export type AuthoredColorDeclaration = {
@@ -70,6 +80,8 @@ type RuleWalkBudgets = Pick<CollectPageFactsOptions, 'maxRules' | 'maxAuthoredDe
 type RuleWalkState = {
   declarations: Map<string, string>;
   usage: Map<string, CustomPropertyFact['usage']>;
+  uses: Map<string, CustomPropertyUse[]>;
+  useCount: number;
   authoredRules: AuthoredColorDeclaration[];
   rulesVisited: number;
   budgets: RuleWalkBudgets;
@@ -84,14 +96,19 @@ export function collectPageFacts(
   const sheets = [...Array.from(doc.styleSheets), ...doc.adoptedStyleSheets].filter(
     (sheet) => !ownStyleSheets.includes(sheet),
   );
-  const { declarations, usage, authoredRules, stylesheetCount, unreadableStylesheetCount } =
+  const { declarations, usage, uses, authoredRules, stylesheetCount, unreadableStylesheetCount } =
     collectFromSheets(sheets, {
       maxRules: resolved.maxRules,
       maxAuthoredDeclarations: resolved.maxAuthoredDeclarations,
     });
   collectInlineRootDeclarations(doc, declarations);
 
-  const customProperties = buildCustomProperties(declarations, usage, resolved.maxCustomProperties);
+  const customProperties = buildCustomProperties(
+    declarations,
+    usage,
+    uses,
+    resolved.maxCustomProperties,
+  );
   // maxAuthoredDeclarations is one shared budget across authoredRules and
   // inlineStyleColors: the sheet walk (document order) consumes it first,
   // the DOM inline-style walk gets whatever remains.
@@ -146,6 +163,7 @@ export function collectFromSheets(
 ): {
   declarations: Map<string, string>;
   usage: Map<string, CustomPropertyFact['usage']>;
+  uses: Map<string, CustomPropertyUse[]>;
   authoredRules: AuthoredColorDeclaration[];
   stylesheetCount: number;
   unreadableStylesheetCount: number;
@@ -153,6 +171,8 @@ export function collectFromSheets(
   const state: RuleWalkState = {
     declarations: new Map(),
     usage: new Map(),
+    uses: new Map(),
+    useCount: 0,
     authoredRules: [],
     rulesVisited: 0,
     budgets,
@@ -175,6 +195,7 @@ export function collectFromSheets(
   return {
     declarations: state.declarations,
     usage: state.usage,
+    uses: state.uses,
     authoredRules: state.authoredRules,
     stylesheetCount,
     unreadableStylesheetCount,
@@ -196,7 +217,7 @@ function visitRuleList(
 function visitRule(rule: CSSRule, state: RuleWalkState, conditions: readonly string[]): void {
   if (rule instanceof CSSStyleRule) {
     collectDeclarations(rule, state.declarations);
-    collectUsage(rule, state.usage);
+    collectUsage(rule, state, conditions);
     collectRuleColors(rule, state, conditions);
     return;
   }
@@ -342,16 +363,53 @@ function emptyUsage(): CustomPropertyFact['usage'] {
   return { background: 0, text: 0, border: 0, other: 0 };
 }
 
-function collectUsage(rule: CSSStyleRule, usage: Map<string, CustomPropertyFact['usage']>): void {
+function collectUsage(
+  rule: CSSStyleRule,
+  state: RuleWalkState,
+  conditions: readonly string[],
+): void {
+  const selectors = splitSelectorList(rule.selectorText);
   for (const property of Array.from(rule.style)) {
     const value = rule.style.getPropertyValue(property);
-    for (const match of value.matchAll(USAGE_PATTERN)) {
-      const name = match[1];
-      if (!name) continue;
-      const bucket = usage.get(name) ?? emptyUsage();
-      bucket[usageBucket(property)] += 1;
-      usage.set(name, bucket);
+    const references = customPropertyReferences(value);
+    if (references.length === 0) continue;
+
+    const bucket = usageBucket(property);
+    recordUsageCounts(references, bucket, state.usage);
+    if (!property.startsWith('--'))
+      recordPropertyUses(references, selectors, property, value, bucket, conditions, state);
+  }
+}
+
+function recordUsageCounts(
+  references: readonly string[],
+  bucket: keyof CustomPropertyFact['usage'],
+  usage: Map<string, CustomPropertyFact['usage']>,
+): void {
+  for (const name of references) {
+    const counts = usage.get(name) ?? emptyUsage();
+    counts[bucket] += 1;
+    usage.set(name, counts);
+  }
+}
+
+function recordPropertyUses(
+  references: readonly string[],
+  selectors: readonly string[],
+  property: string,
+  value: string,
+  bucket: AuthoredColorDeclaration['bucket'],
+  conditions: readonly string[],
+  state: RuleWalkState,
+): void {
+  for (const name of references) {
+    const uses = state.uses.get(name) ?? [];
+    for (const selector of selectors) {
+      if (state.useCount >= state.budgets.maxAuthoredDeclarations) return;
+      uses.push({ selector, property, value: value.trim(), bucket, conditions: [...conditions] });
+      state.useCount += 1;
     }
+    state.uses.set(name, uses);
   }
 }
 
@@ -376,18 +434,26 @@ function collectInlineRootDeclarations(doc: Document, declarations: Map<string, 
 function buildCustomProperties(
   declarations: Map<string, string>,
   usage: Map<string, CustomPropertyFact['usage']>,
+  uses: Map<string, CustomPropertyUse[]>,
   maxCustomProperties: number,
 ): CustomPropertyFact[] {
   return Array.from(declarations.entries())
-    .filter(([, value]) => !value.includes('var('))
     .sort(([a], [b]) => compareStrings(a, b))
     .slice(0, maxCustomProperties)
     .map(([name, value]) => ({
       name,
       value,
       color: parseCssColor(value),
+      references: customPropertyReferences(value),
       usage: usage.get(name) ?? emptyUsage(),
+      uses: uses.get(name) ?? [],
     }));
+}
+
+function customPropertyReferences(value: string): string[] {
+  return [...new Set(Array.from(value.matchAll(USAGE_PATTERN), (match) => match[1]))].filter(
+    (name): name is string => name !== undefined,
+  );
 }
 
 function walkDom(

@@ -37,7 +37,64 @@ describe('collectPageFacts', () => {
     expect(bg?.usage).toEqual({ background: 1, text: 0, border: 0, other: 0 });
   });
 
-  it('skips var() chained declarations and our own style element', () => {
+  it('records each typed consumer of a shared custom property with its condition chain', () => {
+    const doc = buildDocument(`
+      :root { --shared: #f5f5f5; }
+      .panel { background-color: var(--shared); }
+      .label { color: var(--shared); }
+      @media (min-width: 1px) {
+        .outlined { border-color: var(--shared); }
+      }
+    `);
+
+    const facts = collectPageFacts(doc);
+    const shared = facts.customProperties.find((property) => property.name === '--shared');
+
+    expect(shared?.uses).toEqual([
+      {
+        selector: '.panel',
+        property: 'background-color',
+        value: 'var(--shared)',
+        bucket: 'background',
+        conditions: [],
+      },
+      {
+        selector: '.label',
+        property: 'color',
+        value: 'var(--shared)',
+        bucket: 'text',
+        conditions: [],
+      },
+      {
+        selector: '.outlined',
+        property: 'border-color',
+        value: 'var(--shared)',
+        bucket: 'border',
+        conditions: ['@media (min-width: 1px)'],
+      },
+    ]);
+  });
+
+  it('keeps direct dependencies for root custom-property aliases', () => {
+    const doc = buildDocument(`
+      :root {
+        --source: #f5f5f5;
+        --alias: var(--source);
+      }
+      body { color: var(--alias); }
+    `);
+
+    const facts = collectPageFacts(doc);
+    const alias = facts.customProperties.find((property) => property.name === '--alias');
+
+    expect(alias).toMatchObject({
+      value: 'var(--source)',
+      references: ['--source'],
+      usage: { background: 0, text: 1, border: 0, other: 0 },
+    });
+  });
+
+  it('keeps var() aliases while excluding custom properties from our own style element', () => {
     document.head.innerHTML = `
       <style>
         .theme { --brand-bg: #101010; }
@@ -46,7 +103,8 @@ describe('collectPageFacts', () => {
       <style id="${STYLE_ELEMENT_ID}">:root { --pm-canvas: #000000; }</style>
     `;
     const facts = collectPageFacts(document);
-    expect(facts.customProperties.map((p) => p.name)).toEqual([]);
+    expect(facts.customProperties.map((property) => property.name)).toEqual(['--alias']);
+    expect(facts.customProperties[0]?.references).toEqual(['--brand-bg']);
   });
 
   it('counts elements and respects maxCustomProperties budget', () => {

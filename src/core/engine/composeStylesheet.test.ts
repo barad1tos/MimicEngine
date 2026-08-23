@@ -208,7 +208,9 @@ describe('composeStylesheet', () => {
           name: '--page-bg',
           value: '#1f2430',
           color: { r: 0x1f, g: 0x24, b: 0x30, a: 1 },
+          references: [],
           usage: { background: 1, text: 0, border: 0, other: 0 },
+          uses: [],
         },
       ],
       svgPresentationColors: [

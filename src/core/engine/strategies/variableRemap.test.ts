@@ -15,7 +15,14 @@ function colorProperty(
   color: RgbaColor | null,
   usage: CustomPropertyFact['usage'] = { background: 0, text: 0, border: 0, other: 0 },
 ): CustomPropertyFact {
-  return { name, value: color ? toHex(color) : 'transparent', color, usage };
+  return {
+    name,
+    value: color ? toHex(color) : 'transparent',
+    color,
+    references: [],
+    usage,
+    uses: [],
+  };
 }
 
 function anySiteSettings(): SiteSettings {
