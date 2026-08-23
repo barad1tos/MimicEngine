@@ -59,8 +59,8 @@ export const computedFallback: PaletteEngine = {
     // is the only strategy that can see the page's colors at all) must
     // remap every opaque color it finds, authored-visible or not.
     const stoplistActive = planStrategies(plan).includes('authoredRemap');
-    const authoredHexes = stoplistActive ? collectAuthoredHexes(facts) : new Set<HexColor>();
-    const novelDeclarations = toNovelDeclarations(snapshot, authoredHexes);
+    const authoredRoleKeys = stoplistActive ? collectAuthoredRoleKeys(facts) : new Set<string>();
+    const novelDeclarations = toNovelDeclarations(snapshot, authoredRoleKeys);
     const syntheticFacts = buildSyntheticFacts(novelDeclarations);
 
     const palette = extractSitePalette(syntheticFacts);
@@ -72,18 +72,18 @@ export const computedFallback: PaletteEngine = {
     const rules = buildRules(novelDeclarations, guardedMapping, theme);
     const mappedCount = mappedHexCount(palette, guardedMapping);
     // Coverage's denominator must stay disjoint from authoredRemap's own
-    // report: distinctColorsSeen counts every opaque value the census saw,
-    // authored-covered or not, and summing that with authoredRemap's report
-    // in aggregateCoverage double-counts every color both strategies can
-    // see (a fully-themed mixed-visibility page reporting ~50% instead of
-    // ~100%). When the stoplist is active, only census-seen hexes ABSENT
-    // from authoredHexes count as discovered — mirroring which colors
-    // toNovelDeclarations kept. When the stoplist is inactive (no
-    // authoredRemap in the plan), every hex-deduped opaque value counts, same
-    // as before this fix, just deduped by hex rather than by raw string.
+    // report: summing authored-covered census colors with authoredRemap's own
+    // report double-counts them. With a role-aware stoplist, raw hex alone can
+    // no longer decide whether a color is covered: one role may be authored
+    // while another remains novel. Count distinct novel declaration hexes,
+    // plus census-seen hexes that disappeared from the emitted snapshot due
+    // to divergence. Without authoredRemap, every raw opaque census hex stays
+    // in the denominator as before.
     const censusHexes = distinctOpaqueHexes(snapshot.opaqueValuesSeen);
+    const snapshotHexes = distinctSnapshotHexes(snapshot);
+    const novelHexes = distinctDeclarationHexes(novelDeclarations);
     const discovered = stoplistActive
-      ? [...censusHexes].filter((hex) => !authoredHexes.has(hex)).length
+      ? new Set([...novelHexes, ...[...censusHexes].filter((hex) => !snapshotHexes.has(hex))]).size
       : censusHexes.size;
     const coverage = coverageFromCounts(discovered, mappedCount);
 
@@ -91,22 +91,34 @@ export const computedFallback: PaletteEngine = {
   },
 };
 
-// Mirrors the opacity gate in toNovelDeclarations below (and the one
-// collectPageFacts' palette callers use): a translucent authored declaration
-// must never suppress an unrelated opaque novel sample that happens to share
-// its RGB — toHex drops alpha, so admitting it here would let a 50% scrim
-// stop a genuinely opaque color from ever being remapped.
-function collectAuthoredHexes(facts: PageFacts): Set<HexColor> {
-  const hexes = new Set<HexColor>();
+// Mirrors the opacity gate in toNovelDeclarations below. Declaration role is
+// part of stoplist identity, so an authored background never suppresses census
+// text with the same RGB. Authored declarations with a known elevation cover
+// only that exact surface; an elevation-less background records the base role
+// key and therefore covers every census elevation for that authored role.
+function collectAuthoredRoleKeys(facts: PageFacts): Set<string> {
+  const keys = new Set<string>();
 
   for (const declaration of [...facts.authoredRules, ...facts.inlineStyleColors]) {
-    if (declaration.color && isOpaque(declaration.color)) hexes.add(toHex(declaration.color));
+    if (!declaration.color || !isOpaque(declaration.color)) continue;
+    keys.add(
+      mappingKeyOf({
+        hex: toHex(declaration.color),
+        bucket: declaration.bucket,
+        ...(declaration.elevation === undefined ? {} : { elevation: declaration.elevation }),
+      }),
+    );
   }
   for (const property of facts.customProperties) {
-    if (property.color && isOpaque(property.color)) hexes.add(toHex(property.color));
+    if (!property.color || !isOpaque(property.color)) continue;
+    const hex = toHex(property.color);
+    for (const use of property.uses) {
+      if (use.bucket === 'other') continue;
+      keys.add(mappingKeyOf({ hex, bucket: use.bucket }));
+    }
   }
 
-  return hexes;
+  return keys;
 }
 
 // Coverage's numerator: the count of DISTINCT RAW HEXES represented in
@@ -142,46 +154,67 @@ function distinctOpaqueHexes(values: readonly string[]): Set<HexColor> {
   return hexes;
 }
 
+function distinctSnapshotHexes(snapshot: CensusSnapshot): Set<HexColor> {
+  return distinctOpaqueHexes(
+    snapshot.entries.flatMap((entry) => entry.colors.map((color) => color.value)),
+  );
+}
+
+function distinctDeclarationHexes(declarations: readonly NovelDeclaration[]): Set<HexColor> {
+  return new Set(declarations.map((declaration) => toHex(declaration.color)));
+}
+
 // Parses each census color, drops unparseable values, then drops every color
-// whose hex is already covered by the authored-CSS analysis — what's left is
-// "novel": present in computed style but invisible to collectPageFacts.
+// whose role identity is already covered by the authored-CSS analysis — what's
+// left is "novel": present in computed style but invisible to collectPageFacts.
 // Translucent colors (e.g. a computed `color: rgba(0,0,0,0.5)`) are dropped
 // too: toHex discards alpha, so keeping them would let a translucent color
 // dedupe against — and later be remapped through — an unrelated opaque
 // occurrence of the same RGB.
 function toNovelDeclarations(
   snapshot: CensusSnapshot,
-  authoredHexes: ReadonlySet<HexColor>,
+  authoredRoleKeys: ReadonlySet<string>,
 ): NovelDeclaration[] {
   const declarations: NovelDeclaration[] = [];
 
   for (const entry of snapshot.entries) {
     for (const censusColor of entry.colors) {
-      const color = parseCssColor(censusColor.value);
-      if (!color) continue;
-      if (!isOpaque(color)) continue;
-      // Plain-hex comparison, deliberately elevation-blind: an authored rule
-      // covering this hex at all means authoredRemap already emits a rule
-      // for it, regardless of which stacking depth the census sampled it at.
-      if (authoredHexes.has(toHex(color))) continue;
-
-      declarations.push({
-        signature: entry.signature,
-        selector: entry.selector,
-        property: censusColor.cssProperty,
-        value: censusColor.value,
-        color,
-        bucket: censusColor.bucket,
-        // Census colors never carry @media/@supports context —
-        // getComputedStyle already resolves the current cascade, so there is
-        // no condition chain left to preserve.
-        conditions: [],
-        ...(censusColor.elevation === undefined ? {} : { elevation: censusColor.elevation }),
-      });
+      const declaration = toNovelDeclaration(entry, censusColor, authoredRoleKeys);
+      if (declaration) declarations.push(declaration);
     }
   }
 
   return declarations;
+}
+
+function toNovelDeclaration(
+  entry: CensusSnapshot['entries'][number],
+  censusColor: CensusSnapshot['entries'][number]['colors'][number],
+  authoredRoleKeys: ReadonlySet<string>,
+): NovelDeclaration | null {
+  const color = parseCssColor(censusColor.value);
+  if (!color || !isOpaque(color)) return null;
+  const hex = toHex(color);
+  const baseRoleKey = mappingKeyOf({ hex, bucket: censusColor.bucket });
+  const exactRoleKey = mappingKeyOf({
+    hex,
+    bucket: censusColor.bucket,
+    ...(censusColor.elevation === undefined ? {} : { elevation: censusColor.elevation }),
+  });
+  if (authoredRoleKeys.has(baseRoleKey) || authoredRoleKeys.has(exactRoleKey)) return null;
+
+  return {
+    signature: entry.signature,
+    selector: entry.selector,
+    property: censusColor.cssProperty,
+    value: censusColor.value,
+    color,
+    bucket: censusColor.bucket,
+    // Census colors never carry @media/@supports context — getComputedStyle
+    // already resolves the current cascade, so no condition chain remains.
+    conditions: [],
+    ...(censusColor.elevation === undefined ? {} : { elevation: censusColor.elevation }),
+  };
 }
 
 // extractSitePalette expects a PageFacts-shaped bag of authored declarations;

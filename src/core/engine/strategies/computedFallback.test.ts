@@ -221,6 +221,85 @@ describe('computedFallback strategy', () => {
     expect(css).toBe('');
   });
 
+  it('keeps a sampled text color when authored analysis only covers the same hex as a background', () => {
+    installRedHero();
+    const facts = factsWithAuthoredRule({
+      selector: '.surface',
+      property: 'background-color',
+      value: 'rgb(255, 0, 0)',
+      color: { r: 255, g: 0, b: 0, a: 1 },
+      bucket: 'background',
+      conditions: [],
+    });
+
+    const { css, coverage } = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      facts,
+      planWithAuthoredRemap,
+    );
+
+    expect(css).toContain('html[data-pm-active="true"] :where(p.hero) {');
+    expect(css).toContain('color:');
+    expect(coverage).toEqual({ discovered: 1, mapped: 1, ratio: 1 });
+  });
+
+  it('uses each custom property consumer role when building the authored stoplist', () => {
+    installRedHero();
+    const property = {
+      name: '--shared',
+      value: 'rgb(255, 0, 0)',
+      color: { r: 255, g: 0, b: 0, a: 1 },
+      references: [],
+      usage: { background: 0, text: 1, border: 0, other: 0 },
+      uses: [
+        {
+          selector: '.hero',
+          property: 'color',
+          value: 'var(--shared)',
+          bucket: 'text' as const,
+          conditions: [],
+        },
+      ],
+    };
+
+    const textFacts: PageFacts = { ...emptyFacts(), customProperties: [property] };
+    const backgroundFacts: PageFacts = {
+      ...emptyFacts(),
+      customProperties: [
+        {
+          ...property,
+          usage: { background: 1, text: 0, border: 0, other: 0 },
+          uses: [
+            {
+              selector: '.hero',
+              property: 'background-color',
+              value: 'var(--shared)',
+              bucket: 'background' as const,
+              conditions: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const textResult = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      textFacts,
+      planWithAuthoredRemap,
+    );
+    const backgroundResult = computedFallback.produce(
+      catppuccinFrappe,
+      anySiteSettings(),
+      backgroundFacts,
+      planWithAuthoredRemap,
+    );
+
+    expect(textResult.css).toBe('');
+    expect(backgroundResult.css).toContain('color:');
+  });
+
   it('remaps an authored-covered color when the plan has no authoredRemap (stoplist not built)', () => {
     // Same fixture as the suppression test above, but authoredRemap is not
     // in the plan — e.g. an opaque page where computedFallback is the only
@@ -244,7 +323,7 @@ describe('computedFallback strategy', () => {
     // The authored side has only a translucent (a: 0.5) red; the page's
     // actual computed color for .hero is fully opaque. The stoplist must not
     // treat the translucent authored entry as covering the opaque sample —
-    // isOpaque gates what enters collectAuthoredHexes, same as the pipeline
+    // isOpaque gates what enters collectAuthoredRoleKeys, same as the pipeline
     // gate that decides what enters toNovelDeclarations in the first place.
     installRedHero();
 
