@@ -97,11 +97,37 @@ describe('stylesheetCache', () => {
   });
 
   it('degrades an unavailable background listener to a miss or no-op', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     fakeBrowser.runtime.sendMessage.mockRejectedValue(new Error('receiving end does not exist'));
 
     await expect(readCachedStylesheet(context())).resolves.toBeNull();
     await expect(writeCachedStylesheet(context(), VALID_CSS)).resolves.toBeUndefined();
     expect(fakeBrowser.storage.session.get).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      '[Palette Mimicry] failed to read cached stylesheet',
+      expect.any(Error),
+    );
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      '[Palette Mimicry] failed to write cached stylesheet',
+      expect.any(Error),
+    );
+  });
+
+  it('degrades a malformed background response to a visible cache miss', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fakeBrowser.runtime.sendMessage.mockResolvedValue({
+      channel: STYLE_CACHE_KEY,
+      operation: 'read',
+      css: 42,
+    });
+
+    await expect(readCachedStylesheet(context())).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[Palette Mimicry] failed to read cached stylesheet',
+      expect.any(Error),
+    );
   });
 
   it.each([
@@ -216,6 +242,7 @@ describe('stylesheetCache', () => {
   });
 
   it('degrades storage failures to a miss or no-op', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     fakeBrowser.storage.session.get.mockRejectedValueOnce(new Error('read failed'));
     await expect(readCachedStylesheet(context())).resolves.toBeNull();
 
@@ -227,6 +254,23 @@ describe('stylesheetCache', () => {
       throw new Error('write failed');
     });
     await expect(writeCachedStylesheet(context(), VALID_CSS)).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      '[Palette Mimicry] failed to read cached stylesheet',
+      expect.any(Error),
+    );
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      '[Palette Mimicry] failed to write cached stylesheet',
+      expect.any(Error),
+    );
+    expect(warn).toHaveBeenNthCalledWith(
+      3,
+      '[Palette Mimicry] failed to write cached stylesheet',
+      expect.any(Error),
+    );
   });
 
   it('degrades digest failures to a miss or no-op', async () => {

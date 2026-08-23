@@ -55,8 +55,17 @@ export async function readCachedStylesheet(context: StyleCacheContext): Promise<
       operation: 'read',
       fingerprint,
     } satisfies CacheRequest);
-    return readResponseCss(response);
-  } catch {
+    const css = readResponseCss(response);
+    if (css === undefined) {
+      console.warn(
+        '[Palette Mimicry] failed to read cached stylesheet',
+        new Error('background returned an invalid cache response'),
+      );
+      return null;
+    }
+    return css;
+  } catch (error) {
+    console.warn('[Palette Mimicry] failed to read cached stylesheet', error);
     return null;
   }
 }
@@ -71,14 +80,20 @@ export async function writeCachedStylesheet(
   try {
     const fingerprint = await contextFingerprint(context);
     if (generation !== clientWriteGeneration) return;
-    await browser.runtime.sendMessage({
+    const response: unknown = await browser.runtime.sendMessage({
       channel: MESSAGE_CHANNEL,
       operation: 'write',
       fingerprint,
       css,
     } satisfies CacheRequest);
-  } catch {
-    // Warm restore is advisory. Bootstrap and live analysis remain available.
+    if (!isStoredWriteResponse(response)) {
+      console.warn(
+        '[Palette Mimicry] failed to write cached stylesheet',
+        new Error('background rejected cached stylesheet'),
+      );
+    }
+  } catch (error) {
+    console.warn('[Palette Mimicry] failed to write cached stylesheet', error);
   }
 }
 
@@ -105,7 +120,8 @@ async function readStoredStylesheet(fingerprint: string): Promise<string | null>
     const store = normalizeStore(result[STYLE_CACHE_KEY]);
     const entry = store?.entries[fingerprint];
     return entry && isFresh(entry, Date.now()) ? entry.css : null;
-  } catch {
+  } catch (error) {
+    console.warn('[Palette Mimicry] failed to read cached stylesheet', error);
     return null;
   }
 }
@@ -167,11 +183,22 @@ function normalizeRequest(message: unknown): CacheRequest | null {
   return null;
 }
 
-function readResponseCss(response: unknown): string | null {
-  if (!isRecord(response)) return null;
-  if (response.channel !== MESSAGE_CHANNEL || response.operation !== 'read') return null;
+function readResponseCss(response: unknown): string | null | undefined {
+  if (!isRecord(response)) return undefined;
+  if (response.channel !== MESSAGE_CHANNEL || response.operation !== 'read') return undefined;
   if (response.css === null) return null;
-  return typeof response.css === 'string' && isCacheableCss(response.css) ? response.css : null;
+  return typeof response.css === 'string' && isCacheableCss(response.css)
+    ? response.css
+    : undefined;
+}
+
+function isStoredWriteResponse(response: unknown): boolean {
+  return (
+    isRecord(response) &&
+    response.channel === MESSAGE_CHANNEL &&
+    response.operation === 'write' &&
+    response.stored === true
+  );
 }
 
 function isCacheablePath(pathname: string): boolean {
