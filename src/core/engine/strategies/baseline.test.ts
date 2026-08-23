@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { builtInThemes } from '../../themes';
+import { renderStrategy } from '../../testing/renderStrategy';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { PageFacts } from '../pageFacts';
 import type { SiteSettings } from '../../storage/settingsStore';
-import { baseline } from './baseline';
+import { baseline as baselineStrategy } from './baseline';
+
+const baseline = renderStrategy(baselineStrategy);
 
 function anySiteSettings(): SiteSettings {
   return {

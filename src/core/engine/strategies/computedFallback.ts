@@ -23,7 +23,7 @@ import {
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
-import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
+import { groupSelectors, type StyleRule } from '../stylePlan';
 
 // A census color only ever becomes a declaration once its value has parsed
 // to a color (see toNovelDeclarations), so `color` is narrowed non-null here
@@ -49,7 +49,7 @@ export const computedFallback: PaletteEngine = {
   label: 'Computed fallback',
   produce(theme, siteSettings, facts, plan) {
     const census = installedCensus();
-    if (!census) return { css: '' };
+    if (!census) return { content: { kind: 'rules', rules: [] } };
     const snapshot = census.snapshot();
 
     // The stoplist only makes sense when authoredRemap is also running on
@@ -69,8 +69,7 @@ export const computedFallback: PaletteEngine = {
     });
     const { mapping: guardedMapping } = guardContrast(mapping, palette, theme);
 
-    const groups = buildSelectorGroups(novelDeclarations, guardedMapping, theme);
-    const css = emitGroupedRules(groups);
+    const rules = buildRules(novelDeclarations, guardedMapping, theme);
     const mappedCount = mappedHexCount(palette, guardedMapping);
     // Coverage's denominator must stay disjoint from authoredRemap's own
     // report: distinctColorsSeen counts every opaque value the census saw,
@@ -88,7 +87,7 @@ export const computedFallback: PaletteEngine = {
       : censusHexes.size;
     const coverage = coverageFromCounts(discovered, mappedCount);
 
-    return { css, coverage };
+    return { content: { kind: 'rules', rules }, coverage };
   },
 };
 
@@ -224,11 +223,11 @@ function declarationMappingKey(declaration: NovelDeclaration): string {
 // own tag/classes (or its refined parent-prefixed form), never a fabricated
 // approximation — so the ambiguity-tracking machinery groupSelectors applies
 // to hint-based declarations does not apply here.
-function buildSelectorGroups(
+function buildRules(
   declarations: readonly NovelDeclaration[],
   mapping: ColorMapping,
   theme: PaletteTheme,
-): SelectorGroup[] {
+): StyleRule[] {
   const resolved: ResolvedNovelDeclaration[] = [];
 
   for (const declaration of declarations) {
@@ -243,7 +242,7 @@ function buildSelectorGroups(
 
   return [
     ...buildPositionalGroups(new Set(islands.values())),
-    ...buildBleedNeutralizerGroups(islands, followers),
+    ...buildBleedResets(islands, followers),
     ...groupSelectors(substituted),
   ];
 }
@@ -340,11 +339,11 @@ function mappedRungLevel(item: ResolvedNovelDeclaration, theme: PaletteTheme): n
 // via the shared :where() gate wrap) specificity; nesting past level 3
 // keeps matching the level-3 rule — the natural cap. Empty island set
 // emits nothing, byte-stable with a no-island page.
-function buildPositionalGroups(islandSelectors: ReadonlySet<string>): SelectorGroup[] {
+function buildPositionalGroups(islandSelectors: ReadonlySet<string>): StyleRule[] {
   if (islandSelectors.size === 0) return [];
 
   const islandList = `:is(${[...islandSelectors].sort(compareStrings).join(', ')})`;
-  const groups: SelectorGroup[] = [];
+  const groups: StyleRule[] = [];
 
   for (let level = 1; level < ELEVATION_LEVELS; level += 1) {
     groups.push({
@@ -376,10 +375,10 @@ function buildPositionalGroups(islandSelectors: ReadonlySet<string>): SelectorGr
 // reality by definition — a qualifying shadow would have classified it
 // island. Bleed-free pages emit zero extra bytes; groups sort by follower
 // selector for deterministic output.
-function buildBleedNeutralizerGroups(
+function buildBleedResets(
   islands: ReadonlyMap<string, string>,
   followers: ReadonlyMap<string, string>,
-): SelectorGroup[] {
+): StyleRule[] {
   const selectors: string[] = [];
 
   for (const [followerSignature, followerSelector] of followers) {

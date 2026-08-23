@@ -5,7 +5,7 @@ import { computeCoverage } from '../coverage';
 import type { AuthoredColorDeclaration, PageFacts, SvgPresentationColor } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
-import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
+import { groupSelectors, type StyleRule } from '../stylePlan';
 
 // Manual-only, last in registry order (see strategyId.ts): fill/stroke
 // attribute values and inline-style declarations that survive here are the
@@ -24,14 +24,11 @@ export const deepRemap: PaletteEngine = {
     });
     const { mapping: guardedMapping } = guardContrast(mapping, palette, theme);
 
-    const svgCss = buildSvgRules(facts.svgPresentationColors, guardedMapping);
-    const inlineCss = emitGroupedRules(
-      buildInlineStyleGroups(facts.inlineStyleColors, guardedMapping),
-    );
-    const css = [svgCss, inlineCss].filter((block) => block.length > 0).join('\n\n');
+    const svgRules = buildSvgRules(facts.svgPresentationColors, guardedMapping);
+    const inlineRules = buildInlineRules(facts.inlineStyleColors, guardedMapping);
     const coverage = computeCoverage(palette, guardedMapping);
 
-    return { css, coverage };
+    return { content: { kind: 'rules', rules: [...svgRules, ...inlineRules] }, coverage };
   },
 };
 
@@ -102,27 +99,29 @@ function mappedSvgValue(entry: SvgPresentationColor, mapping: ColorMapping): str
   return mapping.get(toHex(entry.color)) ?? null;
 }
 
-// One block per mapped svg entry, via emitGroupedRules so the gate/:where/
-// !important formatting is byte-identical to every other strategy's
-// emission — then re-sorted by the full rule text (codepoint order), since
-// groupSelectors' first-appearance ordering isn't what determinism requires
-// here: two svg colors carry no document position of their own.
-function buildSvgRules(svgColors: readonly SvgPresentationColor[], mapping: ColorMapping): string {
-  const blocks: string[] = [];
+// SVG entries carry no document position of their own, so their selectors
+// sort by codepoint before the page-plan emitter serializes them. Every rule
+// shares the same empty condition chain and gate prefix, making selector order
+// byte-identical to the former full-rule-text order.
+function buildSvgRules(
+  svgColors: readonly SvgPresentationColor[],
+  mapping: ColorMapping,
+): StyleRule[] {
+  const rules: StyleRule[] = [];
 
   for (const entry of svgColors) {
     const mappedValue = mappedSvgValue(entry, mapping);
     if (mappedValue === null) continue;
 
-    const group: SelectorGroup = {
+    const rule: StyleRule = {
       conditions: [],
       selector: svgAttributeSelector(entry),
       declarations: new Map([[entry.attribute, mappedValue]]),
     };
-    blocks.push(emitGroupedRules([group]));
+    rules.push(rule);
   }
 
-  return [...blocks].sort(compareStrings).join('\n\n');
+  return rules.toSorted((first, second) => compareStrings(first.selector, second.selector));
 }
 
 // Inline-style rules
@@ -143,10 +142,10 @@ function mappedInlineValue(
 // Same hinted-rule emission pattern computedFallback uses: inlineStyleColors
 // carry buildSelectorHint approximations rather than real CSS selectors, so
 // they're ambiguity-tracked by groupSelectors (isSelectorHint: true).
-function buildInlineStyleGroups(
+function buildInlineRules(
   inlineStyleColors: readonly AuthoredColorDeclaration[],
   mapping: ColorMapping,
-): SelectorGroup[] {
+): StyleRule[] {
   const resolved: {
     declaration: AuthoredColorDeclaration;
     mappedValue: string;

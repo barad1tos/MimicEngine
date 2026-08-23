@@ -13,6 +13,11 @@ export const baseline: PaletteEngine = {
   // unconditional either way.
   produce(theme, _siteSettings, _facts, plan) {
     const omitInteractiveFloor = planStrategies(plan).includes('computedFallback');
-    return { css: buildBaseStylesheet(theme, { omitInteractiveFloor }) };
+    return {
+      content: {
+        kind: 'block',
+        css: buildBaseStylesheet(theme, { omitInteractiveFloor }),
+      },
+    };
   },
 };

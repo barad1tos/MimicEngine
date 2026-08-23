@@ -24,8 +24,8 @@ export function composeOverrideStylesheet(overrides: readonly SiteOverride[]): s
 }
 
 // Override-wins cascade contract: strategy blocks (authoredRemap,
-// computedFallback, via emitGroupedRules' :where(...) wrapping — see its doc
-// comment) always carry zero site-selector specificity beyond the gate.
+// computedFallback, via StylePlan's :where(...) wrapping) always carry zero
+// site-selector specificity beyond the gate.
 // SiteOverride rules (buildOverrideRule, from siteSettings.overrides) are
 // emitted last, verbatim and unwrapped, at their own full specificity. The
 // combination means a SiteOverride always wins over a strategy-emitted rule
@@ -49,11 +49,9 @@ export function composeStylesheet(
   const overrideStylesheet = composeOverrideStylesheet(siteSettings.overrides);
   const stylePlan: StylePlan = {
     sections: [
-      { css: tokenVariablesCss(theme) },
-      ...outputs.map((output) =>
-        output.coverage ? { css: output.css, coverage: output.coverage } : { css: output.css },
-      ),
-      { css: overrideStylesheet },
+      { content: { kind: 'block', css: tokenVariablesCss(theme) } },
+      ...outputs,
+      { content: { kind: 'block', css: overrideStylesheet } },
     ],
   };
 

@@ -5,7 +5,10 @@ import { builtInThemes } from '../../themes';
 import type { SiteSettings } from '../../storage/settingsStore';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { CustomPropertyFact, PageFacts } from '../pageFacts';
-import { assignTokens, variableRemap } from './variableRemap';
+import { renderStrategy } from '../../testing/renderStrategy';
+import { assignTokens, variableRemap as variableRemapStrategy } from './variableRemap';
+
+const variableRemap = renderStrategy(variableRemapStrategy);
 
 function colorProperty(
   name: string,

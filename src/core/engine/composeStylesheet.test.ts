@@ -112,7 +112,7 @@ describe('composeStylesheet', () => {
   it('override-wins cascade contract: a SiteOverride beats a higher-raw-specificity strategy rule', () => {
     // The strategy (authoredRemap) rule targets a deliberately high-specificity
     // selector; the override targets a plain, low-specificity one that still
-    // matches the same element. Per emitGroupedRules' :where(...) wrapping,
+    // matches the same element. Per StylePlan's :where(...) wrapping,
     // the strategy rule's selector contributes zero specificity beyond the
     // gate, so the override's own selector — however plain — always wins,
     // and composeStylesheet emits overrides last as a source-order backstop
