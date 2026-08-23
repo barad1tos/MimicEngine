@@ -6,6 +6,7 @@ const baseMetrics: PageMetrics = {
   colorCustomPropertyCount: 0,
   domElementCount: 100,
   shadowRootCount: 0,
+  unreadableStylesheetCount: 0,
   unreadableStylesheetRatio: 0,
   authoredColorCount: 0,
   inlineStyleColorCount: 0,
@@ -106,6 +107,35 @@ describe('decideStrategies', () => {
       reasons: [],
       tableVersion: TABLE_VERSION,
     });
+  });
+
+  it('selects style-starved when unreadable stylesheets leave at most three authored colors', () => {
+    const styleStarvedPlan = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 3, unreadableStylesheetCount: 1 },
+      'auto',
+    );
+    const authoredBoundaryPlan = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 4, unreadableStylesheetCount: 1 },
+      'auto',
+    );
+    const readableStylesPlan = decideStrategies(
+      { ...baseMetrics, authoredColorCount: 3, unreadableStylesheetCount: 0 },
+      'auto',
+    );
+
+    expect(planStrategies(styleStarvedPlan)).toEqual(['baseline', 'computedFallback']);
+    expect(styleStarvedPlan.provenance).toEqual({
+      kind: 'auto',
+      rule: 'style-starved',
+      strategies: ['baseline', 'computedFallback'],
+      reasons: [
+        { metric: 'authoredColorCount', value: 3, condition: { lte: 3 } },
+        { metric: 'unreadableStylesheetCount', value: 1, condition: { gte: 1 } },
+      ],
+      tableVersion: TABLE_VERSION,
+    });
+    expect(planStrategies(authoredBoundaryPlan)).toEqual(['baseline']);
+    expect(planStrategies(readableStylesPlan)).toEqual(['baseline']);
   });
 
   it('boundary: colorCustomPropertyCount 8 selects calm-variables-rich, 7 falls through to default', () => {
@@ -236,6 +266,7 @@ describe('decideStrategies', () => {
         }, // mixed-visibility
         { ...baseMetrics, authoredColorCount: 12, mutationRate: 5 }, // authored-rich
         { ...baseMetrics, unreadableStylesheetRatio: 0.5 }, // opaque-styles
+        { ...baseMetrics, authoredColorCount: 3, unreadableStylesheetCount: 1 }, // style-starved
         baseMetrics, // default
       ];
 

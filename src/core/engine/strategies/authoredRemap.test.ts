@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { oklchToRgba } from '../../color/oklch';
 import { parseCssColor, toHex, type RgbaColor } from '../../color/parseColor';
 import type { SiteSettings } from '../../storage/settingsStore';
+import { renderStrategy } from '../../testing/renderStrategy';
 import { builtInThemes } from '../../themes';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
-import { authoredRemap } from './authoredRemap';
+import { authoredRemap as authoredRemapStrategy } from './authoredRemap';
 
 const catppuccinFrappe = builtInThemes[0];
+const authoredRemap = renderStrategy(authoredRemapStrategy);
 
 function requireColor(hex: string): RgbaColor {
   const color = parseCssColor(hex);

@@ -7,6 +7,7 @@ import { ELEVATION_LEVELS, elevationVariable } from '../elevationScale';
 import type { CustomPropertyFact } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
+import type { StyleRule } from '../stylePlan';
 import { tokenToCssVariableSuffix } from '../tokenVariables';
 
 type DirectToken = Exclude<ThemeTokenName, 'canvas' | 'surface1' | 'surface2' | 'surface3'>;
@@ -72,7 +73,12 @@ export const variableRemap: PaletteEngine = {
       theme.mode,
       siteSettings.preserveBrandColors,
     );
-    return { css: assignments.size === 0 ? '' : emitCss(assignments) };
+    return {
+      content: {
+        kind: 'rules',
+        rules: assignments.size === 0 ? [] : [buildRule(assignments)],
+      },
+    };
   },
 };
 
@@ -208,11 +214,12 @@ function cssVariableFor(assignment: Assignment): string {
     : `--pm-${tokenToCssVariableSuffix(assignment)}`;
 }
 
-function emitCss(assignments: Map<string, Assignment>): string {
-  const declarations = [...assignments.entries()]
-    .sort(([nameA], [nameB]) => compareStrings(nameA, nameB))
-    .map(([name, assignment]) => `  ${name}: var(${cssVariableFor(assignment)}) !important;`)
-    .join('\n');
-
-  return `html[data-pm-active="true"] {\n${declarations}\n}`;
+function buildRule(assignments: Map<string, Assignment>): StyleRule {
+  return {
+    conditions: [],
+    selector: 'html',
+    declarations: new Map(
+      [...assignments].map(([name, assignment]) => [name, `var(${cssVariableFor(assignment)})`]),
+    ),
+  };
 }

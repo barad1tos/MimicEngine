@@ -113,7 +113,7 @@ jobs:
   # Tier 3: production build per browser target, artifact integrity, size budget.
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -125,6 +125,12 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Build extension
         run: pnpm wxt build -b ${{ matrix.browser }}
+      - name: Install Playwright Chromium
+        if: matrix.browser == 'chrome'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser final-paint smoke
+        if: matrix.browser == 'chrome'
+        run: pnpm exec playwright test
       - name: Verify manifest integrity
         if: matrix.browser == 'chrome'
         run: |

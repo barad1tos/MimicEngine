@@ -1,6 +1,5 @@
 import type { SiteSettings } from '../storage/settingsStore';
 import type { PaletteTheme } from '../themes';
-import type { CoverageReport } from './coverage';
 import type { StrategyPlan } from './decisionTable';
 import type { PageFacts } from './pageFacts';
 import { authoredRemap } from './strategies/authoredRemap';
@@ -9,11 +8,9 @@ import { computedFallback } from './strategies/computedFallback';
 import { deepRemap } from './strategies/deepRemap';
 import { variableRemap } from './strategies/variableRemap';
 import type { StrategyId } from './strategyId';
+import type { StyleSection } from './stylePlan';
 
-export type StrategyOutput = {
-  css: string;
-  coverage?: CoverageReport;
-};
+export type StrategyOutput = StyleSection;
 
 export type PaletteEngine = {
   id: StrategyId;

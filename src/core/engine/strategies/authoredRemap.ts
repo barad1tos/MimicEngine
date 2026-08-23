@@ -4,7 +4,7 @@ import { guardContrast } from '../contrastGuard';
 import { computeCoverage } from '../coverage';
 import type { AuthoredColorDeclaration } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
-import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
+import { groupSelectors, type StyleRule } from '../stylePlan';
 
 export const authoredRemap: PaletteEngine = {
   id: 'authoredRemap',
@@ -16,15 +16,10 @@ export const authoredRemap: PaletteEngine = {
     });
     const { mapping: guardedMapping } = guardContrast(mapping, palette, theme);
 
-    const groups = buildSelectorGroups(
-      facts.authoredRules,
-      facts.inlineStyleColors,
-      guardedMapping,
-    );
-    const css = emitGroupedRules(groups);
+    const rules = buildRules(facts.authoredRules, facts.inlineStyleColors, guardedMapping);
     const coverage = computeCoverage(palette, guardedMapping);
 
-    return { css, coverage };
+    return { content: { kind: 'rules', rules }, coverage };
   },
 };
 
@@ -51,11 +46,11 @@ function mappedValueFor(
 // instead of real selectors, so they're ambiguity-tracked: see groupSelectors'
 // doc comment for why a hint collision drops the property rather than
 // guessing a winner.
-function buildSelectorGroups(
+function buildRules(
   authoredRules: readonly AuthoredColorDeclaration[],
   inlineStyleColors: readonly AuthoredColorDeclaration[],
   mapping: ColorMapping,
-): SelectorGroup[] {
+): StyleRule[] {
   const resolved: {
     declaration: AuthoredColorDeclaration;
     mappedValue: string;

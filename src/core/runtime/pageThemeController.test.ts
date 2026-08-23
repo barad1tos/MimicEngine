@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 // src/core/runtime/pageThemeController.test.ts
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { browser } from 'wxt/browser';
 import { installedCensus } from '../analyzer/signatureCensus';
-import { planStorageKey, type PlanDiagnostics } from '../engine/diagnostics';
+import { planStorageKey, routePlanDiagnostics, type PlanDiagnostics } from '../engine/diagnostics';
 import * as shadowStylesModule from '../injector/shadowStyles';
 import * as styleElementModule from '../injector/styleElement';
 import { STYLE_ELEMENT_ID, TRANSITION_KILL_ELEMENT_ID } from '../injector/styleElement';
@@ -11,7 +11,13 @@ import { observeDomChanges } from '../live/observeDomChanges';
 import { IMPORTED_THEMES_KEY, type ImportedTheme } from '../storage/importedThemesStore';
 import { createDefaultSiteSettings, STORAGE_KEY, type AppSettings } from '../storage/settingsStore';
 import { normalizeHostname } from '../storage/siteKey';
+import {
+  readCachedStylesheet,
+  routeStyleCache,
+  writeCachedStylesheet,
+} from '../storage/stylesheetCache';
 import type { createStorageArea } from '../testing/storageArea';
+import { catppuccinFrappe } from '../themes/built-in/catppuccin';
 import { THEME_TOKEN_NAMES, type ThemeTokens } from '../themes';
 import { createPageThemeController } from './pageThemeController';
 
@@ -75,6 +81,9 @@ vi.mock('wxt/browser', async () => {
 
   return {
     browser: {
+      runtime: {
+        sendMessage: vi.fn<(message: unknown) => Promise<unknown>>(),
+      },
       storage: {
         local: createStorageArea(),
         session: createStorageArea(),
@@ -91,6 +100,7 @@ vi.mock('wxt/browser', async () => {
 });
 
 const fakeBrowser = browser as unknown as {
+  runtime: { sendMessage: Mock<(message: unknown) => Promise<unknown>> };
   storage: {
     local: ReturnType<typeof createStorageArea>;
     session: ReturnType<typeof createStorageArea>;
@@ -147,11 +157,21 @@ function bigFixture(elementCount: number): string {
 beforeEach(() => {
   capturedObserverCallbacks.length = 0;
   observerStopSpy.mockClear();
+  vi.mocked(observeDomChanges).mockClear();
+  fakeBrowser.runtime.sendMessage.mockImplementation(
+    (message: unknown) =>
+      new Promise((resolve) => {
+        if (routeStyleCache(message, resolve)) return;
+        if (routePlanDiagnostics(message, resolve)) return;
+        resolve(undefined);
+      }),
+  );
 });
 
 afterEach(() => {
   fakeBrowser.storage.local.data.clear();
   fakeBrowser.storage.session.data.clear();
+  fakeBrowser.runtime.sendMessage.mockReset();
   fakeBrowser.storage.local.get.mockReset();
   fakeBrowser.storage.local.set.mockClear();
   fakeBrowser.storage.session.set.mockClear();
@@ -220,34 +240,34 @@ describe('createPageThemeController — apply() generation guard', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(injectSpy).toHaveBeenCalledTimes(2);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
 
     // Stall the settings read the next settings-changed apply() will make —
-    // this becomes generation 2, and it never gets past this await.
+    // this becomes generation 3, and it never gets past this await.
     const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
     fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
 
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
-    // Generation 2 is stuck awaiting settings — nothing new injected or written yet.
-    expect(injectSpy).toHaveBeenCalledTimes(1);
+    // Generation 3 is stuck awaiting settings — nothing new injected or written yet.
+    expect(injectSpy).toHaveBeenCalledTimes(2);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
 
-    // Generation 3: a second settings change, resolving normally, becomes
-    // "the newest" — it injects and writes diagnostics while generation 2 is
+    // Generation 4: a second settings change, resolving normally, becomes
+    // "the newest" — it injects and writes diagnostics while generation 3 is
     // still stalled.
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
-    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(3);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
 
-    // Generation 2's stalled settings read finally resolves — it must abort
-    // instead of re-injecting/re-writing over generation 3's results.
+    // Generation 3's stalled settings read finally resolves — it must abort
+    // instead of re-injecting/re-writing over generation 4's results.
     stalledSettings.resolve({});
     await flushMicrotasks();
 
-    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(3);
     expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
 
     controller.stop();
@@ -276,12 +296,17 @@ describe('createPageThemeController — stop() invalidates in-flight apply()', (
     delete document.documentElement.dataset.pmActive;
 
     const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
-    fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
+    fakeBrowser.storage.local.get
+      .mockResolvedValueOnce({ [STORAGE_KEY]: settings })
+      .mockImplementationOnce(() => stalledSettings.promise);
 
     const controller = createPageThemeController();
-    // start() calls apply(), which suspends synchronously at the settings
-    // read above — by the time this line returns, apply() is stalled.
+    // The provisional read resolves, then the authoritative apply suspends
+    // at its own settings read.
     const startPromise = controller.start();
+    await vi.waitFor(() => {
+      expect(injectSpy).toHaveBeenCalledTimes(1);
+    });
 
     controller.stop();
 
@@ -290,24 +315,19 @@ describe('createPageThemeController — stop() invalidates in-flight apply()', (
     await startPromise;
     await flushMicrotasks();
 
-    expect(injectSpy).not.toHaveBeenCalled();
+    expect(injectSpy).toHaveBeenCalledTimes(1);
     expect(syncSpy).not.toHaveBeenCalled();
-    expect(document.getElementById(styleElementModule.STYLE_ELEMENT_ID)).toBeNull();
-    expect(document.documentElement.dataset.pmActive).toBeUndefined();
+    expect(document.getElementById(styleElementModule.STYLE_ELEMENT_ID)).not.toBeNull();
+    expect(document.documentElement.dataset.pmActive).toBe('true');
     expect(errorSpy).not.toHaveBeenCalled();
 
-    // LISTENER-AFTER-STOP: start() only registers its settings-changed
-    // listener after its initial apply() settles — stop() ran while that
-    // apply() was still stalled, so start() must skip registration entirely
-    // once the stall resolves, rather than registering a listener on an
-    // already-stopped controller. A settings change here must therefore
-    // trigger nothing; this replaces the previous workaround of calling
-    // controller.stop() a second time just to silence the leaked listener
-    // for later tests.
+    // The two-phase start registers its settings listener before the
+    // authoritative apply. stop() must remove that listener while the apply
+    // is stalled, so a later settings change cannot start another generation.
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
 
-    expect(injectSpy).not.toHaveBeenCalled();
+    expect(injectSpy).toHaveBeenCalledTimes(1);
     expect(fakeBrowser.storage.session.set).not.toHaveBeenCalled();
   });
 });
@@ -351,8 +371,8 @@ describe('createPageThemeController — coverage gating', () => {
   });
 });
 
-describe('createPageThemeController — initial apply failure', () => {
-  it('start() with a throwing first apply still registers the settings-changed listener', async () => {
+describe('createPageThemeController — initial bootstrap failure', () => {
+  it('start() with a throwing bootstrap still registers the settings-changed listener', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     fakeBrowser.storage.local.get.mockImplementationOnce(() =>
       Promise.reject(new Error('storage read failed')),
@@ -362,7 +382,7 @@ describe('createPageThemeController — initial apply failure', () => {
     await expect(controller.start()).resolves.toBeUndefined();
 
     expect(errorSpy).toHaveBeenCalledWith(
-      '[Palette Mimicry] initial apply failed',
+      '[Palette Mimicry] initial bootstrap failed',
       expect.any(Error),
     );
     // The settings-changed listener registers via browser.storage.onChanged
@@ -372,20 +392,191 @@ describe('createPageThemeController — initial apply failure', () => {
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
 
-    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(1);
+    expect(fakeBrowser.storage.session.set).toHaveBeenCalledTimes(2);
+
+    controller.stop();
+  });
+});
+
+describe('createPageThemeController — two-phase start', () => {
+  const siteKey = normalizeHostname(window.location.hostname);
+
+  afterEach(() => {
+    styleElementModule.removeStylesheet();
+  });
+
+  it('publishes bootstrap css while loading and delays live analysis until DOMContentLoaded', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await vi.waitFor(() => {
+      expect(injectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    expect(injectSpy.mock.calls[0]?.[0]).not.toContain(
+      'html[data-pm-active="true"] :where(button, [role="button"], input, select, textarea) {\n  background-color:',
+    );
+    expect(vi.mocked(observeDomChanges)).not.toHaveBeenCalled();
+    expect(installedCensus()).toBeNull();
+
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(observeDomChanges)).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+  });
+
+  it('uses the latest settings for the authoritative phase', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    const initialSettings: AppSettings = {
+      schemaVersion: 2,
+      globalThemeId: 'catppuccin-frappe',
+      sites: {},
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, initialSettings);
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await vi.waitFor(() => {
+      expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).toContain('#303446');
+    });
+
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, {
+      ...initialSettings,
+      sites: {
+        [siteKey]: createDefaultSiteSettings('ayu-mirage'),
+      },
+    });
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    const finalCss = document.getElementById(STYLE_ELEMENT_ID)?.textContent;
+    expect(finalCss).toContain('#1f2430');
+    expect(finalCss).not.toContain('#303446');
+
+    controller.stop();
+  });
+
+  it('does not start live analysis after stop while waiting for DOMContentLoaded', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await vi.waitFor(() => {
+      expect(injectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    controller.stop();
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(1);
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(observeDomChanges)).not.toHaveBeenCalled();
+    expect(installedCensus()).toBeNull();
+  });
+});
+
+describe('createPageThemeController — warm stylesheet restore', () => {
+  const siteKey = normalizeHostname(window.location.hostname);
+  const cachedCss =
+    ':root {\n  --pm-canvas: #303446;\n}\nhtml[data-pm-active="true"] .cache-marker { color: #c6d0f5; }';
+
+  function cacheContext(settings = createDefaultSiteSettings(catppuccinFrappe.id)) {
+    return {
+      siteKey,
+      pathname: window.location.pathname,
+      theme: catppuccinFrappe,
+      settings,
+    };
+  }
+
+  afterEach(() => {
+    styleElementModule.removeStylesheet();
+    document.body.innerHTML = '';
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('publishes a cache hit provisionally and still replaces it from live analysis', async () => {
+    vi.spyOn(document, 'readyState', 'get').mockReturnValue('loading');
+    await writeCachedStylesheet(cacheContext(), cachedCss);
+    fakeBrowser.storage.session.get.mockClear();
+    const controller = createPageThemeController();
+
+    const startPromise = controller.start();
+    await vi.waitFor(() => {
+      expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).toBe(cachedCss);
+    });
+    expect(installedCensus()).toBeNull();
+
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await startPromise;
+
+    expect(document.getElementById(STYLE_ELEMENT_ID)?.textContent).not.toContain('cache-marker');
+    expect(vi.mocked(observeDomChanges)).toHaveBeenCalledTimes(1);
+
+    controller.stop();
+  });
+
+  it('writes only a complete published computed-fallback stylesheet', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 0),
+    );
+    vi.stubGlobal('cancelIdleCallback', (handle: number) => {
+      window.clearTimeout(handle);
+    });
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.body.innerHTML = '<button class="warm-target">Open to</button>';
+    const settings = {
+      ...createDefaultSiteSettings(catppuccinFrappe.id),
+      strategy: 'computedFallback' as const,
+    };
+    fakeBrowser.storage.local.data.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      globalThemeId: catppuccinFrappe.id,
+      sites: { [siteKey]: settings },
+    });
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await expect(readCachedStylesheet(cacheContext(settings))).resolves.toBeNull();
+
+    await vi.runAllTimersAsync();
+    await flushMicrotasks();
+
+    const liveCss = document.getElementById(STYLE_ELEMENT_ID)?.textContent;
+    expect(liveCss).toContain('.warm-target');
+    await expect(readCachedStylesheet(cacheContext(settings))).resolves.toBe(liveCss);
 
     controller.stop();
   });
 });
 
 describe('createPageThemeController — batched storage read', () => {
-  it('reads settings and imported themes in exactly one storage.get call carrying both keys', async () => {
+  it('reads one settings/imported-themes snapshot per startup phase', async () => {
     const controller = createPageThemeController();
 
     await controller.start();
 
-    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(1);
-    expect(fakeBrowser.storage.local.get).toHaveBeenCalledWith([STORAGE_KEY, IMPORTED_THEMES_KEY]);
+    expect(fakeBrowser.storage.local.get).toHaveBeenCalledTimes(2);
+    expect(fakeBrowser.storage.local.get).toHaveBeenNthCalledWith(1, [
+      STORAGE_KEY,
+      IMPORTED_THEMES_KEY,
+    ]);
+    expect(fakeBrowser.storage.local.get).toHaveBeenNthCalledWith(2, [
+      STORAGE_KEY,
+      IMPORTED_THEMES_KEY,
+    ]);
 
     controller.stop();
   });
@@ -408,12 +599,12 @@ describe('createPageThemeController — batched storage read', () => {
     const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
     const controller = createPageThemeController();
     await controller.start();
-    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(injectSpy).toHaveBeenCalledTimes(2);
 
     fakeBrowser.storage.emitChange({ [IMPORTED_THEMES_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
 
-    expect(injectSpy).toHaveBeenCalledTimes(2);
+    expect(injectSpy).toHaveBeenCalledTimes(3);
 
     controller.stop();
   });
@@ -572,24 +763,24 @@ describe('createPageThemeController — shadow stylesheet lifecycle', () => {
     expect(syncSpy).toHaveBeenCalledTimes(1);
 
     // Stall the settings read the next settings-changed apply() will make —
-    // this becomes generation 2, and it never gets past this await.
+    // this becomes generation 3, and it never gets past this await.
     const stalledSettings = Promise.withResolvers<Record<string, unknown>>();
     fakeBrowser.storage.local.get.mockImplementationOnce(() => stalledSettings.promise);
 
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
-    // Generation 2 is stuck awaiting settings — no new shadow sync yet.
+    // Generation 3 is stuck awaiting settings — no new shadow sync yet.
     expect(syncSpy).toHaveBeenCalledTimes(1);
 
-    // Generation 3: a second settings change, resolving normally, becomes
-    // "the newest" — it syncs shadow stylesheets while generation 2 is still
+    // Generation 4: a second settings change, resolving normally, becomes
+    // "the newest" — it syncs shadow stylesheets while generation 3 is still
     // stalled.
     fakeBrowser.storage.emitChange({ [STORAGE_KEY]: { newValue: {} } }, 'local');
     await flushMicrotasks();
     expect(syncSpy).toHaveBeenCalledTimes(2);
 
-    // Generation 2's stalled settings read finally resolves — it must abort
-    // instead of syncing shadow stylesheets over generation 3's results.
+    // Generation 3's stalled settings read finally resolves — it must abort
+    // instead of syncing shadow stylesheets over generation 4's results.
     stalledSettings.resolve({});
     await flushMicrotasks();
 
@@ -725,30 +916,28 @@ describe('createPageThemeController — census lifecycle', () => {
     document.body.innerHTML = '';
   });
 
-  it('installs a census on start and clears it on stop', async () => {
+  it('keeps a synchronous census private through the settle window', async () => {
     const controller = createPageThemeController();
 
     await controller.start();
+    expect(installedCensus()).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(500);
+
     expect(installedCensus()).not.toBeNull();
 
     controller.stop();
     expect(installedCensus()).toBeNull();
   });
 
-  it('writes the live census snapshot into the diagnostics record and keeps it current across re-applies', async () => {
+  it('writes only a published census snapshot into diagnostics', async () => {
     document.body.innerHTML = bigFixture(1200); // exceeds CENSUS_FIRST_CHUNK (800)
     seedComputedFallbackStrategy(); // so the chunk-completion reapply isn't withheld
     const controller = createPageThemeController();
 
     await controller.start();
-    const snapshotAfterInitialApply = installedCensus()?.snapshot();
-    expect(lastWrittenDiagnostics(siteKey).census).toEqual({
-      complete: snapshotAfterInitialApply?.complete,
-      signatureCount: snapshotAfterInitialApply?.signatureCount,
-      elementsVisited: snapshotAfterInitialApply?.elementsVisited,
-      droppedProperties: snapshotAfterInitialApply?.droppedProperties,
-    });
-    expect(lastWrittenDiagnostics(siteKey).census?.complete).toBe(false);
+    expect(installedCensus()).toBeNull();
+    expect(lastWrittenDiagnostics(siteKey).census).toBeUndefined();
 
     await vi.runAllTimersAsync(); // drains idle callbacks + the census debounce
 
@@ -771,9 +960,9 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    // The synchronous first chunk (800) cannot have finished walking a
-    // 1200+-element document yet.
-    expect(installedCensus()?.snapshot().complete).toBe(false);
+    // The synchronous first chunk (800) cannot finish this document, so the
+    // incomplete census stays private instead of feeding transient CSS.
+    expect(installedCensus()).toBeNull();
     const injectCountAfterInitialApply = injectSpy.mock.calls.length;
 
     await vi.runAllTimersAsync(); // drains idle callbacks + the census debounce
@@ -782,6 +971,122 @@ describe('createPageThemeController — census lifecycle', () => {
     // The census-driven debounced re-apply must have fired at least once
     // beyond the initial apply from start().
     expect(injectSpy.mock.calls.length).toBeGreaterThan(injectCountAfterInitialApply);
+
+    controller.stop();
+  });
+
+  it('withholds census re-apply until a slow multi-chunk walk completes', async () => {
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 500),
+    );
+    document.body.innerHTML = bigFixture(2500);
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const initialInjectCount = injectSpy.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(750);
+
+    expect(installedCensus()).toBeNull();
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount);
+
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount + 1);
+
+    controller.stop();
+  });
+
+  it('keeps the completed census published while a slow attribute refresh is incomplete', async () => {
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 500),
+    );
+    document.body.innerHTML = bigFixture(2500);
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    await vi.runAllTimersAsync();
+
+    const publishedCensus = installedCensus();
+    const injectCountBeforeRefresh = injectSpy.mock.calls.length;
+    expect(publishedCensus?.snapshot().complete).toBe(true);
+
+    document.querySelector('.rotating-a')?.classList.add('refreshed');
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(installedCensus()).toBe(publishedCensus);
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(injectCountBeforeRefresh);
+
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()).not.toBe(publishedCensus);
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(injectCountBeforeRefresh + 1);
+
+    controller.stop();
+  });
+
+  it('coalesces census completion with a late attribute refresh into one stylesheet update', async () => {
+    vi.stubGlobal('requestIdleCallback', (callback: IdleRequestCallback) =>
+      window.setTimeout(() => {
+        callback({ didTimeout: false, timeRemaining: () => 50 });
+      }, 100),
+    );
+    document.body.innerHTML = bigFixture(1200);
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const initialInjectCount = injectSpy.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(400);
+    document.querySelector('.rotating-a')?.classList.add('refreshed');
+    await flushMicrotasks();
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount + 1);
+
+    controller.stop();
+  });
+
+  it('publishes after the maximum settle window during a continuous attribute burst', async () => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
+    document.body.innerHTML = '<span class="item">x</span>';
+    seedComputedFallbackStrategy();
+    const injectSpy = vi.spyOn(styleElementModule, 'injectStylesheet');
+    const controller = createPageThemeController();
+
+    await controller.start();
+    const initialInjectCount = injectSpy.mock.calls.length;
+
+    for (const elapsed of [400, 800, 1200]) {
+      await vi.advanceTimersByTimeAsync(400);
+      document.querySelector('.item')?.classList.toggle(`at-${String(elapsed)}`);
+      await flushMicrotasks();
+      expect(installedCensus()).toBeNull();
+    }
+
+    await vi.advanceTimersByTimeAsync(299);
+    expect(installedCensus()).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.runAllTimersAsync();
+
+    expect(installedCensus()?.snapshot().complete).toBe(true);
+    expect(injectSpy).toHaveBeenCalledTimes(initialInjectCount + 1);
 
     controller.stop();
   });
@@ -833,7 +1138,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    expect(installedCensus()?.snapshot().complete).toBe(false);
+    expect(installedCensus()).toBeNull();
 
     // A page mutation fires the (mocked) live observer's callback before the
     // first scheduled idle timeout runs — this apply() bumps applyGeneration
@@ -860,6 +1165,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
+    await vi.runAllTimersAsync();
     // Trip the cap through the mocked live-observer path (matches the
     // "mutation cap gating" describe block's own firing pattern).
     for (let firing = 1; firing <= MAX_REAPPLIES_PER_MINUTE + 1; firing++) {
@@ -1036,8 +1342,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
-    expect(installedCensus()).not.toBeNull();
-    expect(installedCensus()?.snapshot().complete).toBe(false); // the idle chunk hasn't run yet
+    expect(installedCensus()).toBeNull(); // the incomplete walk is still private
     const injectCountAfterInitialApply = injectSpy.mock.calls.length;
 
     // Disable the site mid-census, before the pending idle chunk fires.
@@ -1082,6 +1387,7 @@ describe('createPageThemeController — census lifecycle', () => {
     const controller = createPageThemeController();
 
     await controller.start();
+    await vi.runAllTimersAsync();
     expect(installedCensus()).not.toBeNull();
 
     // Disable — tears the census down (Finding 4a).
@@ -1202,7 +1508,7 @@ describe('createPageThemeController — census lifecycle', () => {
 
   it('consumes a pending census-stale flag once the cap clears via a settings change (C-2 residual)', async () => {
     // Residual edge from the re-review: a significant attribute mutation
-    // during a cap-tripped window sets censusStale, but scheduleCensusReapply
+    // during a cap-tripped window sets censusStale, but scheduleCensusPublish
     // is gated on !capTripped so it's never called — the flag then sits
     // unconsumed forever unless some UNRELATED later mutation happens to
     // fire the census observer again. The settings-changed handler is the

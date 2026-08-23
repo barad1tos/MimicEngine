@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { builtInThemes } from '../../themes';
+import { renderStrategy } from '../../testing/renderStrategy';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import type { PageFacts } from '../pageFacts';
 import type { SiteSettings } from '../../storage/settingsStore';
-import { baseline } from './baseline';
+import { baseline as baselineStrategy } from './baseline';
+
+const baseline = renderStrategy(baselineStrategy);
 
 function anySiteSettings(): SiteSettings {
   return {
@@ -74,6 +77,10 @@ const interactiveUnconditionalBlock =
   '  border-color: var(--pm-border) !important;\n' +
   '  caret-color: var(--pm-accent) !important;\n' +
   '}';
+const neutralAnchorBlock =
+  'html[data-pm-active="true"] :where(a, a:visited) {\n' +
+  '  color: var(--pm-text) !important;\n' +
+  '}';
 
 describe('baseline strategy', () => {
   it('emits gated generic rules without the :root preamble', () => {
@@ -89,6 +96,24 @@ describe('baseline strategy', () => {
     expect(css).toContain('html[data-pm-active="true"]');
     expect(css).not.toContain(':root {');
     expect(css).toContain('var(--pm-elevation-0)');
+  });
+
+  it('keeps generic anchors neutral until a richer strategy identifies a link color', () => {
+    const theme = builtInThemes[0];
+
+    const { css } = baseline.produce(
+      theme,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithComputedFallback(),
+    );
+
+    expect(css).toContain(neutralAnchorBlock);
+    expect(css).not.toContain(
+      'html[data-pm-active="true"] :where(a, a:visited) {\n' +
+        '  color: var(--pm-link) !important;\n' +
+        '}',
+    );
   });
 
   it('keeps the interactive-surface background floor when the plan has no computedFallback', () => {

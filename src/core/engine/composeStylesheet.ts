@@ -1,11 +1,12 @@
 import { buildOverrideRule } from '../injector/buildBaseStylesheet';
-import type { SiteSettings } from '../storage/settingsStore';
+import type { SiteOverride, SiteSettings } from '../storage/settingsStore';
 import type { PaletteTheme } from '../themes';
 import type { CoverageReport } from './coverage';
 import { planStrategies, type StrategyPlan } from './decisionTable';
 import type { PageFacts } from './pageFacts';
 import { strategyRegistry } from './registry';
 import { compareStrings } from './sort';
+import { emitStylePlan, type StylePlan } from './stylePlan';
 import { tokenVariablesCss } from './tokenVariables';
 
 function compareOverrides(
@@ -15,9 +16,16 @@ function compareOverrides(
   return compareStrings(a.selector, b.selector) || compareStrings(a.property, b.property);
 }
 
+export function composeOverrideStylesheet(overrides: readonly SiteOverride[]): string {
+  return [...overrides]
+    .sort(compareOverrides)
+    .map((override) => buildOverrideRule(override))
+    .join('\n\n');
+}
+
 // Override-wins cascade contract: strategy blocks (authoredRemap,
-// computedFallback, via emitGroupedRules' :where(...) wrapping — see its doc
-// comment) always carry zero site-selector specificity beyond the gate.
+// computedFallback, via StylePlan's :where(...) wrapping) always carry zero
+// site-selector specificity beyond the gate.
 // SiteOverride rules (buildOverrideRule, from siteSettings.overrides) are
 // emitted last, verbatim and unwrapped, at their own full specificity. The
 // combination means a SiteOverride always wins over a strategy-emitted rule
@@ -38,16 +46,14 @@ export function composeStylesheet(
     .filter((engine) => selectedStrategies.includes(engine.id))
     .map((engine) => engine.produce(theme, siteSettings, facts, plan));
 
-  const overrideBlocks = [...siteSettings.overrides]
-    .sort(compareOverrides)
-    .map((override) => buildOverrideRule(override));
+  const overrideStylesheet = composeOverrideStylesheet(siteSettings.overrides);
+  const stylePlan: StylePlan = {
+    sections: [
+      { content: { kind: 'block', css: tokenVariablesCss(theme) } },
+      ...outputs,
+      { content: { kind: 'block', css: overrideStylesheet } },
+    ],
+  };
 
-  const css = [tokenVariablesCss(theme), ...outputs.map((output) => output.css), ...overrideBlocks]
-    .filter((block) => block.length > 0)
-    .join('\n\n')
-    .trim();
-
-  const coverages = outputs.flatMap((output) => (output.coverage ? [output.coverage] : []));
-
-  return { css, coverages };
+  return emitStylePlan(stylePlan);
 }

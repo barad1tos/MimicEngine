@@ -9,7 +9,7 @@ export type DecisionRow = {
   strategies: StrategyId[];
 };
 
-export const TABLE_VERSION = 3;
+export const TABLE_VERSION = 5;
 
 export const DECISION_TABLE: readonly DecisionRow[] = [
   {
@@ -46,6 +46,11 @@ export const DECISION_TABLE: readonly DecisionRow[] = [
   {
     name: 'opaque-styles',
     when: { unreadableStylesheetRatio: { gte: 0.5 } },
+    strategies: ['baseline', 'computedFallback'],
+  },
+  {
+    name: 'style-starved',
+    when: { authoredColorCount: { lte: 3 }, unreadableStylesheetCount: { gte: 1 } },
     strategies: ['baseline', 'computedFallback'],
   },
   { name: 'default', when: {}, strategies: ['baseline'] },

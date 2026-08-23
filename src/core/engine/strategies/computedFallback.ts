@@ -23,7 +23,7 @@ import {
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { PaletteEngine } from '../registry';
 import { compareStrings } from '../sort';
-import { emitGroupedRules, groupSelectors, type SelectorGroup } from './emitGroupedRules';
+import { groupSelectors, type StyleRule } from '../stylePlan';
 
 // A census color only ever becomes a declaration once its value has parsed
 // to a color (see toNovelDeclarations), so `color` is narrowed non-null here
@@ -49,7 +49,7 @@ export const computedFallback: PaletteEngine = {
   label: 'Computed fallback',
   produce(theme, siteSettings, facts, plan) {
     const census = installedCensus();
-    if (!census) return { css: '' };
+    if (!census) return { content: { kind: 'rules', rules: [] } };
     const snapshot = census.snapshot();
 
     // The stoplist only makes sense when authoredRemap is also running on
@@ -69,8 +69,7 @@ export const computedFallback: PaletteEngine = {
     });
     const { mapping: guardedMapping } = guardContrast(mapping, palette, theme);
 
-    const groups = buildSelectorGroups(novelDeclarations, guardedMapping, theme);
-    const css = emitGroupedRules(groups);
+    const rules = buildRules(novelDeclarations, guardedMapping, theme);
     const mappedCount = mappedHexCount(palette, guardedMapping);
     // Coverage's denominator must stay disjoint from authoredRemap's own
     // report: distinctColorsSeen counts every opaque value the census saw,
@@ -88,7 +87,7 @@ export const computedFallback: PaletteEngine = {
       : censusHexes.size;
     const coverage = coverageFromCounts(discovered, mappedCount);
 
-    return { css, coverage };
+    return { content: { kind: 'rules', rules }, coverage };
   },
 };
 
@@ -224,11 +223,11 @@ function declarationMappingKey(declaration: NovelDeclaration): string {
 // own tag/classes (or its refined parent-prefixed form), never a fabricated
 // approximation — so the ambiguity-tracking machinery groupSelectors applies
 // to hint-based declarations does not apply here.
-function buildSelectorGroups(
+function buildRules(
   declarations: readonly NovelDeclaration[],
   mapping: ColorMapping,
   theme: PaletteTheme,
-): SelectorGroup[] {
+): StyleRule[] {
   const resolved: ResolvedNovelDeclaration[] = [];
 
   for (const declaration of declarations) {
@@ -238,12 +237,12 @@ function buildSelectorGroups(
   }
 
   const backgroundBySelector = buildBackgroundBySelector(declarations, mapping);
-  const guarded = applyPairedTextGuard(resolved, backgroundBySelector, theme);
+  const guarded = guardSurfaceText(resolved, declarations, backgroundBySelector, theme);
   const { substituted, islands, followers } = substituteElevationBackgrounds(guarded, theme);
 
   return [
     ...buildPositionalGroups(new Set(islands.values())),
-    ...buildBleedNeutralizerGroups(islands, followers),
+    ...buildBleedResets(islands, followers),
     ...groupSelectors(substituted),
   ];
 }
@@ -340,11 +339,11 @@ function mappedRungLevel(item: ResolvedNovelDeclaration, theme: PaletteTheme): n
 // via the shared :where() gate wrap) specificity; nesting past level 3
 // keeps matching the level-3 rule — the natural cap. Empty island set
 // emits nothing, byte-stable with a no-island page.
-function buildPositionalGroups(islandSelectors: ReadonlySet<string>): SelectorGroup[] {
+function buildPositionalGroups(islandSelectors: ReadonlySet<string>): StyleRule[] {
   if (islandSelectors.size === 0) return [];
 
   const islandList = `:is(${[...islandSelectors].sort(compareStrings).join(', ')})`;
-  const groups: SelectorGroup[] = [];
+  const groups: StyleRule[] = [];
 
   for (let level = 1; level < ELEVATION_LEVELS; level += 1) {
     groups.push({
@@ -376,10 +375,10 @@ function buildPositionalGroups(islandSelectors: ReadonlySet<string>): SelectorGr
 // reality by definition — a qualifying shadow would have classified it
 // island. Bleed-free pages emit zero extra bytes; groups sort by follower
 // selector for deterministic output.
-function buildBleedNeutralizerGroups(
+function buildBleedResets(
   islands: ReadonlyMap<string, string>,
   followers: ReadonlyMap<string, string>,
-): SelectorGroup[] {
+): StyleRule[] {
   const selectors: string[] = [];
 
   for (const [followerSignature, followerSelector] of followers) {
@@ -426,23 +425,27 @@ function buildBackgroundBySelector(
   return backgroundBySelector;
 }
 
-// guardContrast (contrastGuard.ts) already repairs each text-bucket mapping
-// against an approximation of "the" page background (its heaviest
-// background-bucket entry) — a reasonable global default, but a signature's
-// OWN background can be a different, more saturated surface than that
-// approximation (an accent-colored pill, a badge), and the global repair
-// never sees that pairing. This is the per-selector second pass: when the
-// SAME census entry has a paired background (mapped or preserved-original,
-// see buildBackgroundBySelector) and a text-bucket mapped value, replace the
-// text mapping with pairedTextOverride's result whenever the pair itself
-// fails 4.5:1. Border declarations are untouched — only 'text' entries are
-// ever replaced. Pure: returns a new array, never mutates `resolved`.
-function applyPairedTextGuard(
+// guardContrast (contrastGuard.ts) supplies a global text default, but each
+// sampled surface still needs a local foreground. Existing text entries
+// are repaired against their own mapped/preserved background; a surface
+// whose text was removed by the authoredRemap stop-list receives a synthetic
+// text entry so inherited descendants resolve against that surface instead
+// of an unrelated outer control. Border declarations are untouched. Pure:
+// returns a new array, never mutates `resolved`.
+function guardSurfaceText(
   resolved: readonly ResolvedNovelDeclaration[],
+  declarations: readonly NovelDeclaration[],
   backgroundBySelector: ReadonlyMap<string, string>,
   theme: PaletteTheme,
 ): ResolvedNovelDeclaration[] {
-  return resolved.map((entry) => {
+  const textSelectors = new Set<string>();
+  const surfaces = new Map<string, NovelDeclaration>();
+  for (const declaration of declarations) {
+    if (declaration.bucket === 'text') textSelectors.add(declaration.selector);
+    if (declaration.bucket === 'background') surfaces.set(declaration.selector, declaration);
+  }
+
+  const guarded = resolved.map((entry) => {
     if (entry.declaration.bucket !== 'text') return entry;
     const mappedBackground = backgroundBySelector.get(entry.declaration.selector);
     if (mappedBackground === undefined) return entry;
@@ -450,6 +453,33 @@ function applyPairedTextGuard(
     const override = pairedTextOverride(entry.mappedValue, mappedBackground, theme);
     return override === null ? entry : { ...entry, mappedValue: override };
   });
+
+  const defaultText = themeTokenHex(theme, 'text');
+  const defaultTextColor = parseCssColor(defaultText);
+  if (!defaultTextColor) throw new Error(`invalid theme text token color: ${defaultText}`);
+
+  for (const [selector, surface] of surfaces) {
+    if (textSelectors.has(selector)) continue;
+    const mappedBackground = backgroundBySelector.get(selector);
+    if (mappedBackground === undefined) continue;
+    const mappedValue = pairedTextOverride(defaultText, mappedBackground, theme) ?? defaultText;
+
+    guarded.push({
+      declaration: {
+        signature: surface.signature,
+        selector,
+        property: 'color',
+        value: defaultText,
+        color: defaultTextColor,
+        bucket: 'text',
+        conditions: surface.conditions,
+      },
+      mappedValue,
+      isSelectorHint: false,
+    });
+  }
+
+  return guarded;
 }
 
 // null when the pair already clears 4.5:1, or when contrastRatio can't parse

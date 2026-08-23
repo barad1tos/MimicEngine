@@ -6,14 +6,17 @@ import { contrastRatio } from '../../color/contrast';
 import { oklchToRgba } from '../../color/oklch';
 import { toHex } from '../../color/parseColor';
 import type { SiteSettings } from '../../storage/settingsStore';
+import { renderStrategy } from '../../testing/renderStrategy';
 import { builtInThemes, type PaletteTheme } from '../../themes';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
 import { elevationBackgroundHex } from '../elevationScale';
 import type { AuthoredColorDeclaration, PageFacts } from '../pageFacts';
 import type { StrategyId } from '../strategyId';
-import { computedFallback } from './computedFallback';
+import { computedFallback as computedFallbackStrategy } from './computedFallback';
 
 const catppuccinFrappe = builtInThemes[0];
+const ayuMirage = builtInThemes[1];
+const computedFallback = renderStrategy(computedFallbackStrategy);
 
 const VISIBLE_RECT = {
   x: 0,
@@ -87,19 +90,51 @@ function censusFromCurrentDom(): void {
   installCensus(census);
 }
 
-beforeEach(() => {
+function installRedHero(): void {
+  document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
+  document.body.innerHTML = '<p class="hero">text</p>';
+  censusFromCurrentDom();
+}
+
+function redHeroFacts(): PageFacts {
+  return factsWithAuthoredRule({
+    selector: '.hero',
+    property: 'color',
+    value: '#ff0000',
+    color: { r: 255, g: 0, b: 0, a: 1 },
+    bucket: 'text',
+    conditions: [],
+  });
+}
+
+function expectReadablePair(block: string): { background: string; text: string } {
+  const background = /background-color: (#\w{6})/.exec(block)?.[1];
+  const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
+  expect(background).toBeDefined();
+  expect(text).toBeDefined();
+  if (background === undefined || text === undefined) {
+    throw new Error('expected both background and text');
+  }
+  expect(contrastRatio(text, background)).toBeGreaterThanOrEqual(4.5);
+  return { background, text };
+}
+
+function exposeFixtureLayout(): void {
   // happy-dom's layout engine always reports zero-size rects; stub it so
   // the census' visibility filter lets our fixture elements through, same
   // as any real, laid-out page element would be.
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(VISIBLE_RECT);
-});
+}
 
-afterEach(() => {
+function resetFixture(): void {
   vi.restoreAllMocks();
   installCensus(null);
   document.head.innerHTML = '';
   document.body.innerHTML = '';
-});
+}
+
+beforeEach(exposeFixtureLayout);
+afterEach(resetFixture);
 
 describe('computedFallback strategy', () => {
   it('emits nothing when no census is installed', () => {
@@ -174,23 +209,12 @@ describe('computedFallback strategy', () => {
   });
 
   it('does not re-emit a sampled color already covered by authored facts', () => {
-    document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
-    document.body.innerHTML = '<p class="hero">text</p>';
-    censusFromCurrentDom();
-
-    const facts = factsWithAuthoredRule({
-      selector: '.hero',
-      property: 'color',
-      value: '#ff0000',
-      color: { r: 255, g: 0, b: 0, a: 1 },
-      bucket: 'text',
-      conditions: [],
-    });
+    installRedHero();
 
     const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
-      facts,
+      redHeroFacts(),
       planWithAuthoredRemap,
     );
 
@@ -203,23 +227,12 @@ describe('computedFallback strategy', () => {
     // strategy that can see colors at all. Without authoredRemap running,
     // there is nothing for the stoplist to protect against double-emission,
     // so the red the page actually authored must still get remapped.
-    document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
-    document.body.innerHTML = '<p class="hero">text</p>';
-    censusFromCurrentDom();
-
-    const facts = factsWithAuthoredRule({
-      selector: '.hero',
-      property: 'color',
-      value: '#ff0000',
-      color: { r: 255, g: 0, b: 0, a: 1 },
-      bucket: 'text',
-      conditions: [],
-    });
+    installRedHero();
 
     const { css } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
-      facts,
+      redHeroFacts(),
       planWithoutAuthoredRemap,
     );
 
@@ -233,9 +246,7 @@ describe('computedFallback strategy', () => {
     // treat the translucent authored entry as covering the opaque sample —
     // isOpaque gates what enters collectAuthoredHexes, same as the pipeline
     // gate that decides what enters toNovelDeclarations in the first place.
-    document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
-    document.body.innerHTML = '<p class="hero">text</p>';
-    censusFromCurrentDom();
+    installRedHero();
 
     const facts = factsWithAuthoredRule({
       selector: '.scrim',
@@ -343,23 +354,12 @@ describe('computedFallback strategy', () => {
     // aggregateCoverage, that double-counted this color and could report a
     // fully-themed page at ~50%. The census side of this page must
     // contribute 0/0: nothing left over for computedFallback to discover.
-    document.head.innerHTML = '<style>.hero { color: rgb(255, 0, 0); }</style>';
-    document.body.innerHTML = '<p class="hero">text</p>';
-    censusFromCurrentDom();
-
-    const facts = factsWithAuthoredRule({
-      selector: '.hero',
-      property: 'color',
-      value: '#ff0000',
-      color: { r: 255, g: 0, b: 0, a: 1 },
-      bucket: 'text',
-      conditions: [],
-    });
+    installRedHero();
 
     const { coverage } = computedFallback.produce(
       catppuccinFrappe,
       anySiteSettings(),
-      facts,
+      redHeroFacts(),
       planWithAuthoredRemap,
     );
 
@@ -390,18 +390,20 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    const groundBlock = /:where\(div\.ground\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const groundBlock = /:where\(div\.ground\) \{[^}]*}/.exec(css)?.[0] ?? '';
     expect(groundBlock).toContain(
       'background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;',
     );
     expect(groundBlock).not.toContain('box-shadow');
 
-    // The island's background left the per-signature groups entirely — no
-    // `:where(div.card)` group remains (background was its only
-    // declaration), and the level-1 positional rule now carries background,
-    // shadow, and the surface variable for followers painted inside it.
-    expect(css).not.toMatch(/:where\(div\.card\) \{/);
-    const levelOneBlock = /:where\(:is\(div\.card\)\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    // The island's background left the per-signature group entirely; its
+    // local foreground remains so descendants inherit readable text. The
+    // level-1 positional rule carries background, shadow, and the surface
+    // variable for followers painted inside it.
+    const cardBlock = /:where\(div\.card\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    expect(cardBlock).toContain('color:');
+    expect(cardBlock).not.toContain('background-color');
+    const levelOneBlock = /:where\(:is\(div\.card\)\) \{[^}]*}/.exec(css)?.[0] ?? '';
     expect(levelOneBlock).toContain('background-color: var(--pm-elevation-1) !important;');
     expect(levelOneBlock).toContain('box-shadow: var(--pm-shadow-1) !important;');
     expect(levelOneBlock).toContain('--pm-current-surface: var(--pm-elevation-1) !important;');
@@ -451,6 +453,15 @@ describe('computedFallback strategy', () => {
 
       html[data-pm-active="true"] :where(div.ground) {
         background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;
+        color: #c6d0f5 !important;
+      }
+
+      html[data-pm-active="true"] :where(div.card) {
+        color: #c6d0f5 !important;
+      }
+
+      html[data-pm-active="true"] :where(div.aside) {
+        color: #c6d0f5 !important;
       }"
     `);
   });
@@ -495,13 +506,15 @@ describe('computedFallback strategy', () => {
     expect(css.indexOf(neutralizer)).toBeGreaterThan(css.indexOf(levelThree));
 
     // …and before the follower's own per-signature background group.
-    const followerBackground =
-      /:where\(div\.card\.flat\) \{\n {2}background-color: var\(--pm-current-surface, var\(--pm-elevation-0\)\) !important;\n\}/.exec(
-        css,
-      );
-    expect(followerBackground).not.toBeNull();
-    if (followerBackground === null) throw new Error('expected a follower background group');
-    expect(css.indexOf(neutralizer)).toBeLessThan(followerBackground.index);
+    const followerBlock = [...css.matchAll(/:where\(div\.card\.flat\) \{[^}]*}/g)].find((match) =>
+      match[0].includes('background-color:'),
+    );
+    expect(followerBlock).toBeDefined();
+    if (followerBlock === undefined) throw new Error('expected a follower group');
+    expect(followerBlock[0]).toContain(
+      'background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;',
+    );
+    expect(css.indexOf(neutralizer)).toBeLessThan(followerBlock.index);
   });
 
   it('emits no neutralizer for followers whose class sets are not supersets of any island', () => {
@@ -581,9 +594,104 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    const pillBlock = /:where\(span\.pill\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const pillBlock = /:where\(span\.pill\) \{[^}]*}/.exec(css)?.[0] ?? '';
     expect(pillBlock).toMatch(/background-color: #\w{6} !important;/);
     expect(css).not.toContain(':is(');
+  });
+
+  it('emits a readable foreground for an accent surface whose text is inherited', () => {
+    document.head.innerHTML = `
+      <style>
+        .control { color: rgb(203, 204, 198); }
+        .surface { background-color: rgb(1, 117, 79); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <button class="control"><span class="surface"><span>Open to</span></span></button>
+    `;
+    censusFromCurrentDom();
+    const facts = factsWithAuthoredRule({
+      selector: '.control',
+      property: 'color',
+      value: 'rgb(203, 204, 198)',
+      color: { r: 203, g: 204, b: 198, a: 1 },
+      bucket: 'text',
+      conditions: [],
+    });
+
+    const { css } = computedFallback.produce(
+      ayuMirage,
+      anySiteSettings(),
+      facts,
+      planWithAuthoredRemap,
+    );
+
+    const surfaceBlock = /:where\(span\.surface\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    const background = /background-color: (#\w{6})/.exec(surfaceBlock)?.[1];
+    const foreground = /(?<!background-)color: (#\w{6})/.exec(surfaceBlock)?.[1];
+
+    expect(background).toBe(ayuMirage.tokens.success);
+    expect(foreground).toBeDefined();
+    if (background === undefined || foreground === undefined)
+      throw new Error('expected both surface background and foreground');
+    expect(foreground).toBe(ayuMirage.tokens.canvas);
+    expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('does not replace an explicit preserved foreground when guarding a surface', () => {
+    document.head.innerHTML = `
+      <style>
+        .badge { background-color: rgb(255, 255, 255); color: rgb(255, 255, 0); }
+      </style>
+    `;
+    document.body.innerHTML = '<span class="badge">New</span>';
+    censusFromCurrentDom();
+
+    const { css } = computedFallback.produce(
+      ayuMirage,
+      anySiteSettings(true),
+      emptyFacts(),
+      planWithoutAuthoredRemap,
+    );
+
+    const badgeBlock = /:where\(span\.badge\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    expect(badgeBlock).toContain('background-color:');
+    expect(/(?<!background-)color:/.test(badgeBlock)).toBe(false);
+  });
+
+  it('guards inherited text against a preserved brand surface', () => {
+    document.head.innerHTML = `
+      <style>
+        .control { color: rgb(203, 204, 198); }
+        .badge { background-color: rgb(255, 0, 0); }
+      </style>
+    `;
+    document.body.innerHTML = `
+      <button class="control"><span class="badge"><span>New</span></span></button>
+    `;
+    censusFromCurrentDom();
+    const facts = factsWithAuthoredRule({
+      selector: '.control',
+      property: 'color',
+      value: 'rgb(203, 204, 198)',
+      color: { r: 203, g: 204, b: 198, a: 1 },
+      bucket: 'text',
+      conditions: [],
+    });
+
+    const { css } = computedFallback.produce(
+      ayuMirage,
+      anySiteSettings(true),
+      facts,
+      planWithAuthoredRemap,
+    );
+
+    const badgeBlock = /:where\(span\.badge\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    expect(badgeBlock).not.toContain('background-color:');
+    const foreground = /(?<!background-)color: (#\w{6})/.exec(badgeBlock)?.[1];
+    expect(foreground).toBeDefined();
+    if (foreground === undefined) throw new Error('expected a guarded foreground');
+    expect(contrastRatio(foreground, '#ff0000')).toBeGreaterThanOrEqual(4.5);
   });
 
   it('emits no positional block at all when the page has no islands', () => {
@@ -642,7 +750,7 @@ describe('computedFallback strategy', () => {
 
     // The island background moved to the positional block; the text stays
     // in the per-signature group.
-    const cardBlock = /:where\(div\.card\) \{[^}]*\}/.exec(first)?.[0] ?? '';
+    const cardBlock = /:where\(div\.card\) \{[^}]*}/.exec(first)?.[0] ?? '';
     expect(cardBlock).not.toContain('background-color');
     const text = /(?<!background-)color: (#\w{6})/.exec(cardBlock)?.[1];
     expect(text).toBeDefined();
@@ -735,6 +843,7 @@ describe('computedFallback strategy', () => {
 
       html[data-pm-active="true"] :where(div.panel) {
         background-color: var(--pm-current-surface, var(--pm-elevation-0)) !important;
+        color: #c6d0f5 !important;
       }"
     `);
   });
@@ -758,13 +867,8 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    const block = /:where\(span\.pill\) \{[^}]*\}/.exec(css)?.[0] ?? '';
-    const bg = /background-color: (#\w{6})/.exec(block)?.[1];
-    const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
-    expect(bg).toBeDefined();
-    expect(text).toBeDefined();
-    if (bg === undefined || text === undefined) throw new Error('expected both bg and text');
-    expect(contrastRatio(text, bg)).toBeGreaterThanOrEqual(4.5);
+    const block = /:where\(span\.pill\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    expectReadablePair(block);
   });
 
   it("leaves a readable pair's text color identical to the plain text-bucket mapping", () => {
@@ -843,13 +947,8 @@ describe('computedFallback strategy', () => {
 
     expect(second).toBe(first);
 
-    const block = /:where\(span\.pill\) \{[^}]*\}/.exec(second)?.[0] ?? '';
-    const bg = /background-color: (#\w{6})/.exec(block)?.[1];
-    const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
-    expect(bg).toBeDefined();
-    expect(text).toBeDefined();
-    if (bg === undefined || text === undefined) throw new Error('expected both bg and text');
-    expect(contrastRatio(text, bg)).toBeGreaterThanOrEqual(4.5);
+    const block = /:where\(span\.pill\) \{[^}]*}/.exec(second)?.[0] ?? '';
+    expectReadablePair(block);
   });
 
   it("overrides only the selector whose own pair fails contrast, leaving a sibling selector's mapping untouched", () => {
@@ -879,16 +978,10 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    const pillBlock = /:where\(span\.pill\) \{[^}]*\}/.exec(css)?.[0] ?? '';
-    const pillBg = /background-color: (#\w{6})/.exec(pillBlock)?.[1];
-    const pillText = /(?<!background-)color: (#\w{6})/.exec(pillBlock)?.[1];
-    expect(pillBg).toBeDefined();
-    expect(pillText).toBeDefined();
-    if (pillBg === undefined || pillText === undefined)
-      throw new Error('expected both bg and text for .pill');
-    expect(contrastRatio(pillText, pillBg)).toBeGreaterThanOrEqual(4.5);
+    const pillBlock = /:where\(span\.pill\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    expectReadablePair(pillBlock);
 
-    const plainBlock = /:where\(div\.plain\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const plainBlock = /:where\(div\.plain\) \{[^}]*}/.exec(css)?.[0] ?? '';
     const plainText = /(?<!background-)color: (#\w{6})/.exec(plainBlock)?.[1];
     expect(plainText).toBeDefined();
     expect(plainText).toBe(catppuccinFrappe.tokens.text);
@@ -919,7 +1012,7 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    const block = /:where\(span\.badge\) \{[^}]*\}/.exec(css)?.[0] ?? '';
+    const block = /:where\(span\.badge\) \{[^}]*}/.exec(css)?.[0] ?? '';
     // Preserved means untouched: no background rule is ever emitted for it.
     expect(block).not.toContain('background-color');
 
@@ -986,13 +1079,8 @@ describe('computedFallback strategy', () => {
       planWithoutAuthoredRemap,
     );
 
-    const block = /:where\(span\.badge\) \{[^}]*\}/.exec(css)?.[0] ?? '';
-    const bg = /background-color: (#\w{6})/.exec(block)?.[1];
-    const text = /(?<!background-)color: (#\w{6})/.exec(block)?.[1];
-    expect(bg).toBeDefined();
-    expect(text).toBeDefined();
-    if (bg === undefined || text === undefined) throw new Error('expected both bg and text');
-    expect(bg).toBe('#969696');
-    expect(contrastRatio(text, bg)).toBeGreaterThanOrEqual(4.5);
+    const block = /:where\(span\.badge\) \{[^}]*}/.exec(css)?.[0] ?? '';
+    const { background } = expectReadablePair(block);
+    expect(background).toBe('#969696');
   });
 });

@@ -30,12 +30,8 @@ const BASE_RULES: readonly GatedRule[] = [
   {
     selectors: ['', 'body'],
     declarations: [
-      // Amendment 3 (2026-08-21, signature-census-design.md): the ground
-      // rung of the universal elevation ramp, not the theme's own canvas
-      // token directly -- elevation-0 IS the canvas verbatim
-      // (elevationBackgroundHex), so this is byte-identical in value, just
-      // resolved through the same ramp variableRemap's surface ladder and
-      // computedFallback's background ladder now target.
+      // The ground rung of the semantic elevation ladder. Elevation 0 is the
+      // theme canvas; raised levels use surface1 through surface3.
       `background-color: var(${elevationVariable(0)}) !important;`,
       'color: var(--pm-text) !important;',
     ],
@@ -52,7 +48,10 @@ const BASE_RULES: readonly GatedRule[] = [
   },
   {
     selectors: [':where(a, a:visited)'],
-    declarations: ['color: var(--pm-link) !important;'],
+    // An anchor can be an action control, not a semantic link. Richer
+    // strategies restore link/accent colors when the authored color proves
+    // that role; baseline keeps structurally identical actions consistent.
+    declarations: ['color: var(--pm-text) !important;'],
   },
   {
     // Omittable: the only piece of the original combined rule computedFallback

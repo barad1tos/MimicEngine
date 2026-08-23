@@ -23,12 +23,16 @@ export function isOwnElement(node: Node): boolean {
 
 export function injectStylesheet(css: string): void {
   const styleElement = getOrCreateStyleElement();
+  const needsCssWrite = styleElement.textContent !== css;
+  const needsActivation = document.documentElement.dataset.pmActive !== 'true';
   // Skipping identical writes keeps our own childList mutation out of the DOM
   // observer, so re-apply cycles terminate instead of looping every debounce.
-  if (styleElement.textContent !== css) {
-    styleElement.textContent = css;
+  if (needsCssWrite || needsActivation) {
+    withTransitionsDisabled(() => {
+      if (needsCssWrite) styleElement.textContent = css;
+      document.documentElement.dataset.pmActive = 'true';
+    });
   }
-  document.documentElement.dataset.pmActive = 'true';
 }
 
 export function removeStylesheet(): void {
@@ -53,19 +57,35 @@ export function removeStylesheet(): void {
 // regardless of whether our sheet is present — and is always removed again
 // before returning, even when fn throws.
 export function withStylesheetDisabled<T>(fn: () => T): T {
+  return withTransitionsDisabled(() => {
+    const styleElement = document.getElementById(STYLE_ELEMENT_ID);
+    const ownStyleElement = styleElement instanceof HTMLStyleElement ? styleElement : null;
+    if (ownStyleElement) ownStyleElement.disabled = true;
+
+    try {
+      return fn();
+    } finally {
+      if (ownStyleElement) ownStyleElement.disabled = false;
+    }
+  });
+}
+
+function withTransitionsDisabled<T>(fn: () => T): T {
   const killElement = createTransitionKillElement();
   document.documentElement.append(killElement);
-
-  const styleElement = document.getElementById(STYLE_ELEMENT_ID);
-  const ownStyleElement = styleElement instanceof HTMLStyleElement ? styleElement : null;
-  if (ownStyleElement) ownStyleElement.disabled = true;
+  flushStyles();
 
   try {
-    return fn();
+    const result = fn();
+    flushStyles();
+    return result;
   } finally {
-    if (ownStyleElement) ownStyleElement.disabled = false;
     killElement.remove();
   }
+}
+
+function flushStyles(): string {
+  return getComputedStyle(document.documentElement).transitionProperty;
 }
 
 function createTransitionKillElement(): HTMLStyleElement {

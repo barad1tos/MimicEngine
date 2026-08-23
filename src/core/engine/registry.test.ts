@@ -48,12 +48,12 @@ describe('strategyRegistry', () => {
     expect(strategyRegistry.map((engine) => engine.id)).toEqual([...STRATEGY_IDS]);
   });
 
-  it('every registry entry exposes produce returning { css: string }', () => {
+  it('every registry entry produces declarative style content', () => {
     const theme = builtInThemes[0];
 
     for (const engine of strategyRegistry) {
       const output = engine.produce(theme, anySiteSettings(), emptyFacts(), anyPlan());
-      expect(typeof output.css).toBe('string');
+      expect(['block', 'rules']).toContain(output.content.kind);
     }
   });
 });

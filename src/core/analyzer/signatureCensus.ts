@@ -1,9 +1,18 @@
 // src/core/analyzer/signatureCensus.ts
-import { type HexColor, isOpaque, parseCssColor, parseRgbColor, toHex } from '../color/parseColor';
+import { compositeOverOpaque } from '../color/contrast';
+import {
+  type HexColor,
+  isOpaque,
+  parseCssColor,
+  parseRgbColor,
+  type RgbaColor,
+  toHex,
+} from '../color/parseColor';
 import { withStylesheetDisabled } from '../injector/styleElement';
 import { computeRefinedSignature, computeSignature, signatureToSelector } from './styleSignature';
 
 export const REPRESENTATIVES_PER_SIGNATURE = 3;
+const SURFACE_ALPHA_FLOOR = 0.85;
 
 export type CensusColor = {
   cssProperty: string;
@@ -163,12 +172,12 @@ export function createSignatureCensus(): SignatureCensus {
   // `hasTransparentRepresentative` above. Returns whether either reading was
   // genuinely new information.
   const recordBackgroundExtras = (slot: PropertySlot, value: string, element: Element): boolean => {
-    const elevation = elevationOf(element);
+    const background = parseCssColor(value);
+    const elevation = elevationOf(element, background);
     const learnedElevation = !slot.elevations.has(elevation);
     if (learnedElevation) slot.elevations.add(elevation);
 
-    const color = parseCssColor(value);
-    if (color && isOpaque(color)) slot.hasOpaqueValue = true;
+    if (background && isOpaque(background)) slot.hasOpaqueValue = true;
 
     return learnedElevation;
   };
@@ -218,7 +227,8 @@ export function createSignatureCensus(): SignatureCensus {
         continue;
       }
       if (!isRelevantValue(declaration.value)) continue;
-      if (recordRelevantValue(record, declaration, element)) sampledNewValue = true;
+      const normalized = normalizeSurface(declaration, element, style);
+      if (recordRelevantValue(record, normalized, element)) sampledNewValue = true;
     }
     record.representativeCount += 1;
     return sampledNewValue;
@@ -439,10 +449,10 @@ export function createSignatureCensus(): SignatureCensus {
 
 let installed: SignatureCensus | null = null;
 
-// The controller installs its live census on start() and clears it on
-// stop(); computedFallback.produce reads whatever is installed. No census
-// (unit tests, non-page contexts) reads as null — the strategy emits
-// nothing, same as an empty-sample page.
+// The controller installs a completed census after its settle window and
+// clears it on stop(); computedFallback.produce reads whatever is currently
+// published. No census (unit tests, non-page contexts) reads as null — the
+// strategy emits nothing, same as an empty-sample page.
 export function installCensus(census: SignatureCensus | null): void {
   installed = census;
 }
@@ -465,6 +475,51 @@ function isTransparentValue(value: string): boolean {
 
 function isRelevantValue(value: string): boolean {
   return Boolean(value) && !isTransparentValue(value);
+}
+
+// A nearly opaque background behaves as a painted surface rather than a
+// scrim: resolve the color users actually see over the nearest known opaque
+// ancestor, then let the ordinary opaque palette/elevation pipeline remap it.
+// Lower-alpha overlays remain untouched, as do image-backed or group-opacity
+// cases whose real backdrop cannot be derived from background-color alone.
+function normalizeSurface(
+  declaration: SampledDeclaration,
+  element: Element,
+  style: CSSStyleDeclaration,
+): SampledDeclaration {
+  if (declaration.bucket !== 'background') return declaration;
+
+  const foreground = parseCssColor(declaration.value);
+  if (!foreground || isOpaque(foreground) || foreground.a < SURFACE_ALPHA_FLOOR) {
+    return declaration;
+  }
+  if (hasUnknownBackdrop(style)) return declaration;
+
+  const backdrop = opaqueBackdropOf(element);
+  if (!backdrop) return declaration;
+
+  return { ...declaration, value: toHex(compositeOverOpaque(foreground, backdrop)) };
+}
+
+function opaqueBackdropOf(element: Element): ReturnType<typeof parseCssColor> {
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    if (hasUnknownBackdrop(style)) return null;
+
+    const background = parseCssColor(style.backgroundColor);
+    if (background && isOpaque(background)) return background;
+    if (background && background.a > 0) return null;
+  }
+
+  return null;
+}
+
+function hasUnknownBackdrop(style: CSSStyleDeclaration): boolean {
+  const opacity = Number.parseFloat(style.opacity);
+  return (
+    (style.backgroundImage !== '' && style.backgroundImage !== 'none') ||
+    (!Number.isNaN(opacity) && opacity < 1)
+  );
 }
 
 function emptyPropertySlot(bucket: CensusColor['bucket']): PropertySlot {
@@ -539,39 +594,38 @@ function isProbablyVisible(element: Element): boolean {
 // no surface beneath it to be raised from. Called only from inside the
 // withStylesheetDisabled window sampleInto already runs in, so these
 // getComputedStyle reads see the page's authored colors, not ours.
-function elevationOf(element: Element): 0 | 1 {
+function elevationOf(element: Element, background: RgbaColor | null): 0 | 1 {
   const style = getComputedStyle(element);
   let pendingWrapperCue = false;
 
   for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
     const ancestorStyle = getComputedStyle(ancestor);
-    const background = parseCssColor(ancestorStyle.backgroundColor);
+    const ancestorBackground = parseCssColor(ancestorStyle.backgroundColor);
 
-    if (!background || !isOpaque(background)) {
+    if (!ancestorBackground || !isOpaque(ancestorBackground)) {
       if (hasElevationShadow(ancestorStyle.boxShadow) || hasFullPerimeterBorder(ancestorStyle)) {
         pendingWrapperCue = true;
       }
       continue;
     }
 
-    return isIslandAgainst(style, toHex(background), pendingWrapperCue) ? 1 : 0;
+    return isIslandAgainst(style, background, toHex(ancestorBackground), pendingWrapperCue) ? 1 : 0;
   }
 
   return 0;
 }
 
 // The island decision against the nearest opaque ancestor's surface hex.
-// The element's own background can still be translucent here
-// (isRelevantValue admits e.g. rgba(x, y, z, 0.5)); toHex is alpha-blind,
-// so the hex-difference cue only fires for a genuinely opaque element
-// background — the other cues judge the element's box, not its color, and
-// apply either way.
+// The background is the declaration value after surface normalization. A
+// low-alpha value stays translucent and cannot trigger the hex-difference
+// cue; a nearly opaque surface arrives as its composited opaque color and can.
+// The other cues judge the element's box and apply either way.
 function isIslandAgainst(
   style: CSSStyleDeclaration,
+  background: RgbaColor | null,
   surfaceHex: HexColor,
   pendingWrapperCue: boolean,
 ): boolean {
-  const background = parseCssColor(style.backgroundColor);
   const hexDiffers =
     background !== null && isOpaque(background) && toHex(background) !== surfaceHex;
 

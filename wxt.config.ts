@@ -36,6 +36,9 @@ export default defineConfig({
     browser_specific_settings: {
       gecko: {
         id: 'palette-mimicry@barad1tos.github.io',
+        data_collection_permissions: {
+          required: ['none'],
+        },
       },
     },
   },

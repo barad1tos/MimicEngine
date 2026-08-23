@@ -16,7 +16,7 @@ export function contrastRatio(foreground: string, background: string): number | 
   // A translucent background composites with an unknown backdrop, so no ratio can be computed.
   if (!fg || !bg || fg.a === 0 || bg.a < 1) return null;
 
-  const fgLum = relativeLuminance(compositeOver(fg, bg));
+  const fgLum = relativeLuminance(compositeOverOpaque(fg, bg));
   const bgLum = relativeLuminance(bg);
   const lighter = Math.max(fgLum, bgLum);
   const darker = Math.min(fgLum, bgLum);
@@ -24,7 +24,8 @@ export function contrastRatio(foreground: string, background: string): number | 
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-function compositeOver(foreground: RgbaColor, backdrop: RgbaColor): RgbaColor {
+/** Resolves a foreground color against a known opaque backdrop. */
+export function compositeOverOpaque(foreground: RgbaColor, backdrop: RgbaColor): RgbaColor {
   if (foreground.a === 1) return foreground;
 
   const alpha = foreground.a;

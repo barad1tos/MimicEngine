@@ -85,6 +85,26 @@ describe('collectPageFacts', () => {
     expect(facts.inlineStyleColors).toHaveLength(1);
   });
 
+  it('collects adopted stylesheet declarations after document stylesheets', () => {
+    const doc = buildDocument('.document-rule { color: #111111; }');
+    const adoptedSheet = new CSSStyleSheet();
+    adoptedSheet.replaceSync('.adopted-rule { background-color: #abcdef; }');
+    const previousAdoptedSheets = doc.adoptedStyleSheets;
+    doc.adoptedStyleSheets = [adoptedSheet];
+
+    try {
+      const facts = collectPageFacts(doc);
+
+      expect(facts.stylesheetCount).toBe(2);
+      expect(facts.authoredRules.map((rule) => rule.selector)).toEqual([
+        '.document-rule',
+        '.adopted-rule',
+      ]);
+    } finally {
+      doc.adoptedStyleSheets = previousAdoptedSheets;
+    }
+  });
+
   // Amendment 3.8: withStylesheetDisabled's transition-kill element must be
   // excluded from facts collection exactly like the generated style element —
   // dormant today (collectPageFacts never runs inside that window), but spec
