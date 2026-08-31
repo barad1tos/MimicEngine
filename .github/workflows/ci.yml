@@ -71,6 +71,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
       - name: zizmor
         run: uvx zizmor --min-severity medium .
 
@@ -170,6 +172,8 @@ jobs:
         with:
           name: palette-mimicry-${{ matrix.browser }}
           path: .output/*.zip
+          include-hidden-files: true
+          if-no-files-found: error
 
   # Tier 2: the Go native-messaging host — format, vet, staticcheck, tests
   # with a coverage gate, and a cross-OS build smoke test.
@@ -258,29 +262,19 @@ jobs:
           # anyway — host/go.mod has zero external dependencies.
           cache: false
       - name: goreleaser check
-        # Informational, not gating: `check` hard-fails on ANY deprecated
-        # field, and this config deliberately keeps the deprecated `brews:`
-        # publisher — its replacement, `homebrew_casks`, is macOS-only,
-        # which would silently drop the Linux Homebrew support the design
-        # spec requires (docs/superpowers/specs/2026-08-18-native-messaging-
-        # design.md, "Install & distribution": "Homebrew tap ... (macOS +
-        # Linux)"). Verified locally: `goreleaser release --snapshot` still
-        # renders a correct on_macos/on_linux formula despite the warning.
-        # The snapshot release step below is the real functional gate.
-        continue-on-error: true
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: v2.17.1
           workdir: host
           args: check
       - name: goreleaser snapshot release (no publish)
-        # release, not build: exercises archives, checksums, and the brew/
+        # release, not build: exercises archives, checksums, and the cask/
         # scoop manifest templates too, not just the cross-compile step.
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: v2.17.1
           workdir: host
-          args: release --snapshot --clean --skip=publish,announce,validate
+          args: release --snapshot --clean --skip=publish,announce
 
   # Single required check: pass only when every needed job succeeded or was skipped.
   gate:

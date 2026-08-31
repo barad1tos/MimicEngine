@@ -55,12 +55,7 @@ archives:
       - goos: windows
         formats: [zip]
 
-# `brews` (Formula) is deprecated in favor of `homebrew_casks`, but Casks
-# are macOS-only — using one would silently drop the Linux Homebrew support
-# the design spec requires ("Homebrew tap ... (macOS + Linux)"). Formula is
-# still fully functional; only `goreleaser check` objects (see ci.yml's
-# host-goreleaser job, where that step is informational, not gating).
-brews:
+homebrew_casks:
   - name: mimicengine-host
     repository:
       owner: barad1tos
@@ -71,8 +66,6 @@ brews:
     caveats: |
       Run `mimicengine-host install` to register native-messaging manifests
       for your installed browsers.
-    test: |
-      system "#{bin}/mimicengine-host version"
 
 scoops:
   - name: mimicengine-host
