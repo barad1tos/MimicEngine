@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildUngatedBaseRules } from '../../injector/buildBaseStylesheet';
 import { builtInThemes } from '../../themes';
 import { renderStrategy } from '../../testing/renderStrategy';
 import { TABLE_VERSION, type StrategyPlan } from '../decisionTable';
@@ -59,7 +60,7 @@ function emptyFacts(): PageFacts {
 // Exact blocks (not loose substrings): the interactive selector
 // `:where(button, [role="button"], input, select, textarea)` is shared by
 // TWO separate rules post-split (Codex P2, PR #15) — an omittable
-// background-only rule and an unconditional color/border/caret rule — so
+// background-only rule and an unconditional text/caret rule — so
 // asserting on the bare selector string can't tell which rule(s) actually
 // fired. Asserting on full rule blocks (selector + its own declarations)
 // pins the right thing regardless of how many rules share that selector.
@@ -71,10 +72,9 @@ const interactiveHoverBackgroundBlock =
   'html[data-pm-active="true"] :where(button:hover, [role="button"]:hover, input:hover, select:hover, textarea:hover) {\n' +
   '  background-color: var(--pm-elevation-2) !important;\n' +
   '}';
-const interactiveUnconditionalBlock =
+const interactiveForegroundBlock =
   'html[data-pm-active="true"] :where(button, [role="button"], input, select, textarea) {\n' +
   '  color: var(--pm-text) !important;\n' +
-  '  border-color: var(--pm-border) !important;\n' +
   '  caret-color: var(--pm-accent) !important;\n' +
   '}';
 const neutralAnchorBlock =
@@ -128,7 +128,7 @@ describe('baseline strategy', () => {
 
     expect(css).toContain(interactiveBackgroundBlock);
     expect(css).toContain(interactiveHoverBackgroundBlock);
-    expect(css).toContain(interactiveUnconditionalBlock);
+    expect(css).toContain(interactiveForegroundBlock);
   });
 
   it('omits the interactive-surface background floor when the plan includes computedFallback, keeping caret-color and ground rules', () => {
@@ -136,7 +136,7 @@ describe('baseline strategy', () => {
     // BACKGROUND floor bled onto transparent, more-classed controls
     // (LinkedIn top-bar nav buttons) when the census could already see and
     // paint the page's real surfaces. Only the background declarations
-    // (base + :hover) yield — never color/border-color/caret-color: a
+    // (base + :hover) yield — never text/caret-color: a
     // computedFallback-bearing plan must still theme an input's caret,
     // since the census never samples caret-color at all (Codex P2, PR #15)
     // and nothing else could ever restore it.
@@ -151,8 +151,24 @@ describe('baseline strategy', () => {
 
     expect(css).not.toContain(interactiveBackgroundBlock);
     expect(css).not.toContain(interactiveHoverBackgroundBlock);
-    expect(css).toContain(interactiveUnconditionalBlock);
+    expect(css).toContain(interactiveForegroundBlock);
     expect(css).toContain('var(--pm-elevation-0)');
     expect(css).toContain('color: inherit;');
+  });
+
+  it('does not invent border paint in document or shadow baseline rules', () => {
+    const theme = builtInThemes[0];
+
+    const { css } = baseline.produce(
+      theme,
+      anySiteSettings(),
+      emptyFacts(),
+      planWithoutComputedFallback(),
+    );
+
+    expect(css).not.toContain('border-color: var(--pm-border) !important;');
+    expect(buildUngatedBaseRules()).not.toContain('border-color: var(--pm-border) !important;');
+    expect(css).toContain(interactiveForegroundBlock);
+    expect(css).toContain('outline: 2px solid var(--pm-focus) !important;');
   });
 });

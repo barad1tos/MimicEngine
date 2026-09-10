@@ -16,14 +16,14 @@ type CacheEntry = {
 
 type CacheStore = {
   schemaVersion: 1;
-  engineRevision: 1;
+  engineRevision: 3;
   entries: Record<string, CacheEntry>;
 };
 
 export const STYLE_CACHE_KEY = 'palette-mimicry:style-cache';
 
 const SCHEMA_VERSION = 1;
-const ENGINE_REVISION = 1;
+const ENGINE_REVISION = 3;
 const ENTRY_TTL_MS = 1_800_000;
 const MAX_ENTRIES = 32;
 const MAX_CSS_LENGTH = 65_536;

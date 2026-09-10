@@ -19,10 +19,8 @@ type GatedRule = {
   // surfaces genuinely opaque on the page; this floor then does nothing but
   // paint over transparent controls it has no business touching (the
   // LinkedIn top-bar hairline/checkerboard live finding). Marked ONLY on the
-  // background declarations (base + :hover) — see the Codex P2 note above
-  // the interactive-surface rules below for why color/border-color/
-  // caret-color stay in a separate, unconditional rule instead of sharing
-  // this flag. Every other rule (unmarked) is unconditional too.
+  // background declarations (base + :hover); text and caret-color stay in a
+  // separate unconditional rule. Every other rule is unconditional too.
   readonly interactiveFloor?: boolean;
 };
 
@@ -35,10 +33,6 @@ const BASE_RULES: readonly GatedRule[] = [
       `background-color: var(${elevationVariable(0)}) !important;`,
       'color: var(--pm-text) !important;',
     ],
-  },
-  {
-    selectors: ['body', 'main', 'article', 'section', 'aside', 'nav', 'header', 'footer'],
-    declarations: ['border-color: var(--pm-border) !important;'],
   },
   {
     selectors: [
@@ -62,19 +56,14 @@ const BASE_RULES: readonly GatedRule[] = [
     interactiveFloor: true,
   },
   {
-    // Codex P2 (PR #15): unconditional even when computedFallback runs.
-    // color/border-color ARE census-sampled buckets (text/border), so
-    // computedFallback's own later-in-source-order rule already overrides
-    // these for any signature it actually emits a rule for — keeping them
-    // here is a safe default, not a regression. caret-color is NEVER
-    // census-sampled (sampledDeclarationsFor covers text/background/border
-    // only) — nothing else can ever restore it, so it must never be tied to
-    // the omittable background rule above, or an input's original caret can
-    // end up invisible against the themed background.
+    // Unconditional even when computedFallback runs. Text remains a baseline
+    // readability default, while source-aware producers own border paint so
+    // transparent and translucent authored borders stay intact. caret-color
+    // is never census-sampled, so it must not be tied to the omittable
+    // background rule above or an input's caret can become invisible.
     selectors: [':where(button, [role="button"], input, select, textarea)'],
     declarations: [
       'color: var(--pm-text) !important;',
-      'border-color: var(--pm-border) !important;',
       'caret-color: var(--pm-accent) !important;',
     ],
   },
@@ -99,12 +88,7 @@ const BASE_RULES: readonly GatedRule[] = [
     declarations: [
       `background-color: var(${elevationVariable(1)}) !important;`,
       'color: var(--pm-text) !important;',
-      'border-color: var(--pm-border) !important;',
     ],
-  },
-  {
-    selectors: [':where(table, thead, tbody, tr, td, th)'],
-    declarations: ['border-color: var(--pm-border) !important;'],
   },
   {
     selectors: [':where(th)'],
@@ -118,7 +102,6 @@ const BASE_RULES: readonly GatedRule[] = [
     declarations: [
       `background-color: var(${elevationVariable(1)}) !important;`,
       'color: var(--pm-text) !important;',
-      'border-color: var(--pm-border) !important;',
     ],
   },
   {

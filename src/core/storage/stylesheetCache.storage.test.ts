@@ -338,7 +338,7 @@ describe('stylesheetCache', () => {
   });
 
   it.each([
-    { schemaVersion: 2, engineRevision: 1, entries: {} },
+    { schemaVersion: 2, engineRevision: 3, entries: {} },
     { schemaVersion: 1, engineRevision: 2, entries: {} },
   ])('misses an incompatible cache store', async (stored) => {
     fakeBrowser.storage.session.data.set(STYLE_CACHE_KEY, stored);
