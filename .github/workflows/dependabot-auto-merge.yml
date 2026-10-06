@@ -1,10 +1,10 @@
 name: Dependabot auto-merge
 
 # Dependabot only opens PRs: `@dependabot merge` was retired in January 2026.
-# This queues GitHub's native auto-merge on each of them, so the PR lands by
+# This queues GitHub's native auto-merge on each of them, so a PR lands by
 # itself once the required `gate` check passes on an up-to-date branch, and
-# never while `gate` is red. dependabot.yml keeps one PR per ecosystem open
-# at a time, which the up-to-date rule needs.
+# never while `gate` is red. When one merge leaves the rest of a batch behind
+# main, Dependabot rebases those auto-merge PRs itself.
 on:
   pull_request:
     branches: [main]
