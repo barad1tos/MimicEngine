@@ -1,10 +1,11 @@
 name: Dependabot auto-merge
 
-# Dependabot only opens PRs: `@dependabot merge` was retired in January 2026.
-# This queues GitHub's native auto-merge on each of them, so a PR lands by
-# itself once the required `gate` check passes on an up-to-date branch, and
-# never while `gate` is red. When one merge leaves the rest of a batch behind
-# main, Dependabot rebases those auto-merge PRs itself.
+# Dependabot no longer merges its own PRs: `@dependabot merge` was removed on
+# 2026-01-27. This queues GitHub's native auto-merge on each of them, so a PR
+# lands by itself once the required `gate` check passes on an up-to-date
+# branch. Dependabot rebases auto-merge PRs that fall behind main (observed in
+# ayu-jetbrains; not a documented rebase trigger); if one stays BEHIND,
+# comment `@dependabot rebase` on it.
 on:
   pull_request:
     branches: [main]
@@ -20,13 +21,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     # The PR author, not github.actor: the actor is whoever caused this event,
-    # and zizmor's bot-conditions audit flags actor checks as spoofable.
+    # and zizmor's bot-conditions audit flags actor checks as spoofable. The
+    # repository pin keeps forks from running it.
     if: >-
       github.event.pull_request.user.login == 'dependabot[bot]'
       && github.repository == 'barad1tos/MimicEngine'
+    # Enabling auto-merge needs both. GitHub then merges as
+    # github-actions[bot], so that merge starts no push workflows on main
+    # (e.g. CI, CodeQL, Semgrep).
     permissions:
-      contents: write # the queued merge runs with this token
-      pull-requests: write # to enable auto-merge on the PR
+      contents: write
+      pull-requests: write
     steps:
       - name: Queue auto-merge
         env:
