@@ -1,0 +1,35 @@
+name: Dependabot auto-merge
+
+# Dependabot only opens PRs: `@dependabot merge` was retired in January 2026.
+# This queues GitHub's native auto-merge on each of them, so the PR lands by
+# itself once the required `gate` check passes on an up-to-date branch, and
+# never while `gate` is red. dependabot.yml keeps one PR per ecosystem open
+# at a time, which the up-to-date rule needs.
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    # The PR author, not github.actor: the actor is whoever caused this event,
+    # and zizmor's bot-conditions audit flags actor checks as spoofable.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.repository == 'barad1tos/MimicEngine'
+    permissions:
+      contents: write # the queued merge runs with this token
+      pull-requests: write # to enable auto-merge on the PR
+    steps:
+      - name: Queue auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --merge "$PR_URL"
