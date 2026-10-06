@@ -1,10 +1,16 @@
 version: 2
+# Each ecosystem lands as ONE grouped PR, and the ecosystems run three hours
+# apart. `main` requires an up-to-date branch, between scheduled runs
+# Dependabot rebases only on conflicts, and it ignores `@dependabot rebase`
+# from github-actions[bot] — so a second PR open at the same time would stay
+# BEHIND after the first one auto-merges (workflows/dependabot-auto-merge.yml).
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
+      time: '07:00' # UTC
     cooldown:
       default-days: 7
     open-pull-requests-limit: 3
@@ -13,14 +19,15 @@ updates:
       prefix: ci
       include: scope
     groups:
-      codeql-action:
-        patterns: ['github/codeql-action*']
+      github-actions:
+        patterns: ['*']
 
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
       day: monday
+      time: '04:00' # UTC
     cooldown:
       default-days: 7
       semver-major-days: 7
@@ -30,11 +37,5 @@ updates:
       prefix: chore
       include: scope
     groups:
-      eslint:
-        patterns: ['eslint*', 'typescript-eslint', '@eslint/*']
-      react:
-        patterns: ['react', 'react-dom', '@types/react*']
-      wxt:
-        patterns: ['wxt', '@wxt-dev/*', '@vitejs/*']
-      vitest:
-        patterns: ['vitest', '@vitest/*']
+      npm:
+        patterns: ['*']
