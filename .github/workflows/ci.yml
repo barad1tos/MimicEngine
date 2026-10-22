@@ -71,6 +71,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          cache-dependency-glob: .github/workflows/ci.yml
       - name: zizmor
         run: uvx zizmor --min-severity medium .
 
@@ -170,6 +172,8 @@ jobs:
         with:
           name: palette-mimicry-${{ matrix.browser }}
           path: .output/*.zip
+          include-hidden-files: true
+          if-no-files-found: error
 
   # Tier 2: the Go native-messaging host — format, vet, staticcheck, tests
   # with a coverage gate, and a cross-OS build smoke test.
